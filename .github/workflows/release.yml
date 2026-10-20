@@ -1,0 +1,104 @@
+# On a tag, build the manual (PDF and HTML, English and Japanese) and attach
+# it to the Release,
+# whose text is the tag's section of CHANGELOG.md.
+#
+#   git tag -a v1.0.0 -m "Yuzen 1.0.0" && git push origin v1.0.0
+#
+# This is why the PDF and HTML are not kept in the repository. The HTML is
+# close to 6 MB, and a one-line fix to a chapter would fatten the whole
+# history. The sources are in docs/manual/, so `cd docs/manual && make`
+# produces the same files locally.
+#
+#  Copyright 2017-2026 Suguru Shiratori, Tokyo City University
+#  SPDX-License-Identifier: Apache-2.0
+name: Release
+
+on:
+  push:
+    tags: [ 'v*' ]
+  workflow_dispatch:          # For getting the artifacts without a tag
+
+permissions:
+  contents: write             # Needed to attach files to the Release
+
+jobs:
+  manual:
+    name: Build the manual
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # LuaLaTeX is required. The preamble uses fontspec and unicode-math, so
+      # pdflatex / xelatex cannot build it.
+      - name: Install TeX Live and the fonts
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            texlive-luatex texlive-latex-recommended texlive-latex-extra texlive-science \
+            texlive-fonts-extra fonts-texgyre fonts-texgyre-math fonts-inconsolata latexmk \
+            texlive-lang-japanese
+
+      # The runner's system Python refuses pip installs (PEP 668), so use a
+      # Python of our own; npm ci installs the version pinned in
+      # docs/manual/package-lock.json.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install the HTML toolchain
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install matplotlib cairosvg
+          npm ci --prefix docs/manual
+
+      - name: Build both editions
+        working-directory: docs/manual
+        run: make
+
+      # Undefined references and overfull lines are visible to the reader, so
+      # fail here.
+      - name: Check
+        working-directory: docs/manual
+        run: make check
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: yuzen-manual
+          path: |
+            docs/manual/yuzen-manual.pdf
+            docs/manual/yuzen-manual.html
+            docs/manual/yuzen-manual-ja.pdf
+            docs/manual/yuzen-manual-ja.html
+
+      # The release text is the tag's section of CHANGELOG.md ("## [1.0.0]"
+      # for v1.0.0, up to the next "## ["). A tag without a section fails
+      # here, so that a release is never published without its notes. A tag
+      # with a suffix (v1.0.0-test, v1.1.0-rc1) is a pre-release: it may go
+      # without a section, and is published as a pre-release, which is how
+      # this workflow is tried out before the real tag.
+      - name: Release notes from CHANGELOG.md
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          awk -v h="## [$v]" 'index($0, "## [") == 1 { on = ($0 == h); next } on' \
+            CHANGELOG.md > "$RUNNER_TEMP/notes.md"
+          if [ ! -s "$RUNNER_TEMP/notes.md" ]; then
+            case "$v" in
+              *-*) echo "Pre-release $v, made to try the release workflow." > "$RUNNER_TEMP/notes.md" ;;
+              *)   echo "CHANGELOG.md has no section ## [$v]"; exit 1 ;;
+            esac
+          fi
+
+      - name: Attach to the release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Yuzen ${{ github.ref_name }}
+          body_path: ${{ runner.temp }}/notes.md
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          files: |
+            docs/manual/yuzen-manual.pdf
+            docs/manual/yuzen-manual.html
+            docs/manual/yuzen-manual-ja.pdf
+            docs/manual/yuzen-manual-ja.html
+          fail_on_unmatched_files: true

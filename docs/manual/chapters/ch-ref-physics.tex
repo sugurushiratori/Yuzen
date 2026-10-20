@@ -1,0 +1,269 @@
+% ch-ref-physics.tex -- reference: the Physics block and its nine sub-blocks
+\chapter{Physics}
+\label{ch:ref-physics}
+
+\key{Physics} is required and must appear exactly once, but it carries no keys
+of its own. It is a container for nine sub-blocks, one per physical effect,
+each of which is optional and may appear at most once. Almost all of them are
+switched with a single \key{Enable} key, and the term they control contributes
+a coefficient to the flux in the height equation; when a term is disabled its
+dimensionless group is set to zero and the term is not assembled.
+
+This chapter lists the keys. What each term \emph{is} --- the flux it adds and
+the assumptions behind it --- is in the theory part, which each section points
+to.
+
+\begin{note}[An absent \key{Physics} sub-block is a term switched off]
+  A sub-block left out of the file reads as an empty one with its switch
+  off: the term is not computed, and every other key takes the default listed
+  in this chapter. For the four sub-blocks whose \key{Enable} defaults to
+  \val{true} --- \key{LaplacePressure}, \key{SolutoCapillarity},
+  \key{Evaporation} and \key{Source} --- leaving the block out is therefore
+  not the same as writing it empty: an empty \code{[Physics.Evaporation]}
+  switches evaporation on, a missing one leaves it off. A missing
+  \key{ConcField} means \key{Model}~$=$~\val{"None"}. Every shipped case
+  writes each sub-block it relies on.
+\end{note}
+
+\section{\key{Physics.ConcField}}
+\label{sec:ref-physics:concfield}
+
+This block decides how, or whether, the solute is transported, and its
+\key{Model} key together with \key{Grid.Dimension} selects the whole solver
+model. \val{"WM"} with \val{"xh"} gives the 1-D well-mixed model, \val{"WM"} with
+\val{"xyh"} the 2-D one, \val{"CZ"} with \val{"xh"} the model that resolves
+concentration through the thickness over a 1-D film, and \val{"CZ"} with
+\val{"xyh"} the same over a 2-D film (the pseudo-3D case).
+See \cref{ch:concentration}.
+
+\begin{keytable}{Keys of \key{Physics.ConcField}\label{tab:physics-concfield-keys}}\key{Model} & string & \reqd & \val{"WM"} = well-mixed, depth-averaged concentration solved alongside the film; \val{"CZ"} = concentration resolved through the thickness, over a 1-D or a 2-D film (needs $\mathrm{Nz}\ge 2$); \val{"None"} = no concentration equation; \val{"CZ\_flow"} = accepted but not implemented. Required whenever the block is present; without the block the model is \val{"None"}. \\
+\key{EnableConvection} & bool & \val{true} & Include the convective term in the concentration equation. Well-mixed models only. \\
+\key{EnableDiffusion} & bool & \val{true} & Include the diffusive term in the concentration equation. Well-mixed models only. \\
+\end{keytable}
+
+\begin{warn}[\val{"CZ\_flow"} passes the range check and then does nothing]
+  \val{"CZ\_flow"} is in the candidate list, so it is accepted without
+  complaint, but no model implements it. The run falls back to the well-mixed
+  model chosen by \key{Grid.Dimension} \emph{with the concentration equation
+  switched off} --- the same thing \val{"None"} does, and the same thing an
+  unknown string does if it somehow passes the check. The result is a
+  plausible-looking run at constant concentration. Do not use it.
+\end{warn}
+
+When the concentration equation is not built --- \val{"None"}, \val{"CZ\_flow"}
+or an unknown string --- \key{EnableConvection}, \key{EnableDiffusion},
+\key{Fluid.Diffusivity} and the whole of \key{Numerics.ConcEquation} have no
+effect.
+
+\section{\key{Physics.LaplacePressure}}
+\label{sec:ref-physics:laplace}
+
+The surface-tension term: the tendency of the free surface to flatten itself.
+It is what levels a film, what makes a drop a spherical cap, and what pulls
+liquid into the dips of a rough substrate. It contains a fourth spatial
+derivative, and it is the reason the height equation is fourth order, so
+essentially every run keeps it on. The curvature is measured on the free
+surface $h+s$, not on the film thickness, which is how the substrate shape
+enters. See \cref{sec:terms:laplace}.
+
+\begin{keytable}{Keys of \key{Physics.LaplacePressure}\label{tab:physics-laplace-keys}}\key{Enable} & bool & \val{true} & Switch on the capillary (Laplace) pressure term of the height equation. \\
+\end{keytable}
+
+\section{\key{Physics.SolutoCapillarity}}
+\label{sec:ref-physics:soluto}
+
+Solutal Marangoni flow: because surface tension depends on concentration, a
+concentration gradient is a surface stress that drags liquid along the free
+surface. It scales with $h^2$ rather than $h^3$, since it is a shear applied at
+the surface rather than a body force, and it is a common origin of drying
+streaks and coating mottle. See \cref{sec:terms:marangoni}.
+
+\begin{keytable}{Keys of \key{Physics.SolutoCapillarity}\label{tab:physics-soluto-keys}}\key{Enable} & bool & \val{true} & Switch on solutal Marangoni flow. When false, $\Ma$ is forced to 0 and \key{Fluid.SurfaceTension.Coef} is silently ignored. \\
+\end{keytable}
+
+\begin{warn}[Disabling it also makes surface tension concentration-independent]
+  $\Ma$ is not only the coefficient of the Marangoni stress; it is also what
+  makes $\sigma$ depend on $c$ in the mobility of the capillary-pressure term.
+  Setting \key{Enable = false} therefore removes the concentration dependence
+  of surface tension \emph{entirely}, so that a drying film levels at the rate
+  set by $\sigma_0$ alone. If you want the dependence without the Marangoni
+  stress, this switch will not give it to you.
+\end{warn}
+
+\section{\key{Physics.DisjoiningPressure}}
+\label{sec:ref-physics:disjoining}
+
+The disjoining pressure
+$\Pihat = (\Hstar/H)^n - (\Hstar/H)^m$ represents the interaction between
+substrate and free surface once the film becomes very thin. It is what gives
+the model partial wetting: a finite equilibrium contact angle, a moving contact
+line, and a precursor film of thickness $\Hstar$ left outside the drop. Its
+coefficient is fixed so that the angle you ask for is the one reproduced in the
+lubrication limit, so changing the exponents or the precursor ratio does not
+change the target angle --- it changes the thickness of the precursor and the
+width of the transition region. Because $\Pihat \sim H^{-n}$, this is by a wide
+margin the stiffest term in the model. See \cref{sec:terms:disjoining}.
+
+\begin{keytable}{Keys of \key{Physics.DisjoiningPressure}\label{tab:physics-disjoining-keys}}\key{Enable} & bool & \val{false} & Switch on the disjoining pressure, i.e.\ partial wetting with a finite contact angle. Requires \key{Initial.SurfaceShape.PrecursorRatio} $>0$. \\
+\key{ContactAngle} & double & \val{0} & Equilibrium contact angle $\thetae$ in \textbf{degrees}, range $[0:90]$, checked only when \key{Enable} is true. \val{0} gives zero disjoining pressure. \\
+\key{ExponentN} & double & \val{3} & Exponent $n$ of the repulsive branch, non-dimensional. Must satisfy $n>m>1$, checked only when \key{Enable} is true. \\
+\key{ExponentM} & double & \val{2} & Exponent $m$ of the attractive branch, non-dimensional, subject to the same constraint. \\
+\end{keytable}
+
+\begin{note}[The exponents default to $(n,m)=(3,2)$]
+  Whether the block is absent or is written with \key{Enable = true} and no
+  exponents, the pair is $(3,2)$.
+\end{note}
+
+\begin{warn}[A zero precursor ratio with disjoining pressure enabled aborts]
+  $\Hstar$ is the thickness at which $\Pihat$ vanishes, so it cannot be zero.
+  \key{Initial.SurfaceShape.PrecursorRatio = 0} together with
+  \key{Enable = true} is fatal in \code{NonDimensionalNumbers::Build}, before
+  any step is taken. The message in \file{FatalErrors.txt} reads
+  \code{Physics.DisjoiningPressure requires
+  Initial.SurfaceShape.PrecursorRatio > 0.}
+  (\cref{sec:output:warnings}). Sizing the precursor is a modeling decision,
+  not a formality: see \cref{sec:terms:disjoining}.
+\end{warn}
+
+\begin{note}[The \val{"CZ"} model ignores this block entirely]
+  With \key{Physics.ConcField.Model = "CZ"} the height equation is built from
+  capillary pressure, solutocapillarity, centrifugal force, vertical gravity
+  and horizontal gravity only. \key{Physics.DisjoiningPressure} and the whole
+  of \key{Physics.Source} have no effect, silently. Contact-line problems
+  belong to the well-mixed models.
+\end{note}
+
+\section{\key{Physics.VerticalGravity}}
+\label{sec:ref-physics:vgravity}
+
+Gravity normal to the substrate: hydrostatic pressure drives liquid from high
+parts of the free surface to low ones, so on a horizontal substrate it flattens
+bumps and works alongside capillary pressure. Like capillary pressure it is
+driven by $h+s$, so it too feels the substrate shape. If you are tilting the
+substrate by an angle $\alpha$, the value to give here is $g\cos\alpha$. See
+\cref{sec:terms:vgravity}.
+
+\begin{keytable}{Keys of \key{Physics.VerticalGravity}\label{tab:physics-vgravity-keys}}\key{Enable} & bool & \val{false} & Switch on the hydrostatic, film-leveling gravity term. When false, $\Bo$ is forced to 0. \\
+\key{Acceleration} & double & \val{9.80665} & Acceleration normal to the substrate in \si{\metre\per\second\squared}, non-negative; gives the Bond number $\Bo = \rho g L_0^2/\sigma_0$. Read even when \key{Enable} is false, and then discarded. \\
+\end{keytable}
+
+With the capillary length scale and \key{Acceleration = 9.80665} the Bond number is
+exactly 1; \key{Acceleration} is the key to change when you want to move $\Bo$.
+
+\section{\key{Physics.HorizontalGravity}}
+\label{sec:ref-physics:hgravity}
+
+An in-plane body force, that is, an inclined substrate. Unlike vertical
+gravity the driving field is a constant vector independent of position, so
+thicker parts of the film run faster and a front forms. For a substrate tilted
+by $\alpha$, give the in-plane component $g\sin\alpha$ --- \num{4.903} at
+$30^\circ$ --- and let its sign set the downhill direction. See
+\cref{sec:terms:hgravity}.
+
+\begin{keytable}{Keys of \key{Physics.HorizontalGravity}\label{tab:physics-hgravity-keys}}\key{Enable} & bool & \val{false} & Switch on the in-plane body force. When false, $\Pgx$ and $\Pgy$ are forced to 0. \\
+\key{Acceleration} & array & \val{[0, 0]} & In-plane acceleration $(g_x,g_y)$ in \si{\metre\per\second\squared}. Length must be exactly~2, in 1-D runs as well. \\
+\end{keytable}
+
+\section{\key{Physics.Centrifugal}}
+\label{sec:ref-physics:centrifugal}
+
+The centrifugal term of spin coating: a rotating substrate throws the film
+outwards, with a driving field proportional to the distance $r$ from the axis,
+so the effect is strongest at the rim. In a 1-D (\val{"xh"}) run the liquid
+thrown into the unsolved $y$ direction is accounted for as outflow, and
+counted in \code{OutflowedVol} of \file{History.dat}. A rotating film is not
+periodic, and a \val{"Periodic"} edge is refused with this term (except under
+\key{Numerics.ManufacturedSolution}). See \cref{sec:terms:centrifugal}.
+
+\begin{keytable}{Keys of \key{Physics.Centrifugal}\label{tab:physics-centrifugal-keys}}\key{Enable} & bool & \val{false} & Switch on the centrifugal (spin-coating) term. When false, $\Spn$ is forced to 0. \\
+\key{RotationRate} & double & \val{0} & Angular velocity $\omega$ of the substrate in \si{\radian\per\second}, any value; $\Spn = \rho\omega^2 L_0^4/(\sigma_0 h_0)$. \\
+\key{RotationAxis} & array & \val{[0, 0]} & In-plane position $(x,y)$ of the rotation axis, in meters. Length must be exactly~2. \\
+\end{keytable}
+
+\section{\key{Physics.Slip}}
+\label{sec:ref-physics:slip}
+
+A Navier slip length $\lambda$ at the substrate: the fluid slides over it with
+the velocity $\lambda\,\partial u/\partial z$. Every term driven by a pressure
+or a body force then has the mobility $h^{3}/3 + \lambda h^{2}$ in place of
+$h^{3}/3$, and the Marangoni term $h^{2}/2 + \lambda h$ in place of $h^{2}/2$
+(\cref{sec:terms:slip}). The dimensionless slip length is
+$\Lambda = \lambda/h_0$, printed as \code{Lambda} under
+\code{Nondimensional numbers} of the log when slip is on. Slip changes the
+dynamics only: an equilibrium is the same with it. A missing block is no
+slip; so is \key{Enable = true} with \key{Length = 0} (with a warning). The
+\val{"CZ"} model refuses the block (\cref{ch:notverified}). With slip the
+positivity of the film is guaranteed at one order less
+(\cref{sec:disc:positivity-slip}).
+
+\begin{keytable}{Keys of \key{Physics.Slip}\label{tab:physics-slip-keys}}\key{Enable} & bool & \val{false} & Switch on Navier slip at the substrate. When false, $\Lambda = 0$ and every term runs its no-slip expressions, bit for bit. \\
+\key{Length} & double & \val{0.0} & Slip length $\lambda$ in meters, non-negative; $\Lambda = \lambda/h_0$. \\
+\end{keytable}
+
+\section{\key{Physics.Evaporation}}
+\label{sec:ref-physics:evaporation}
+
+Evaporation removes solvent, so the film thins and what is left grows more
+concentrated. The rate is a product of a reference velocity, a function of
+concentration, a function of position and a thin-film correction; the
+concentration equation receives the same rate divided by the local thickness,
+which is why thin regions concentrate fastest. See
+\cref{sec:terms:evaporation}.
+
+\begin{keytable}{Keys of \key{Physics.Evaporation}\label{tab:physics-evap-keys}}\key{Enable} & bool & \val{true} & Switch on solvent evaporation. When false the evaporation model is not built at all and the rate is 0 everywhere. \\
+\key{Coef} & double & \val{1} & Reference evaporation velocity $E_0$ in \si{\metre\per\second}, non-negative; gives $\Ev = E_0 T_0/h_0$ and $\Pen = E_0 h_0/D_0$. \\
+\key{SpatialFunc} & string & \val{"uniform"} & Spatial distribution of the flux: \val{"uniform"}, or \val{"negPow"}, the radial power $k(1-r/R')^{-n}$ of \cref{eq:evap-negpow}, which for $n>0$ diverges as a negative power toward the rim of the pool (capped at 10), blended over 5 cells into a quarter cosine that takes over the curve's value and slope, peaks at \key{NegPowRmax} and is constant beyond it. \\
+\key{ConcFunc} & string & \val{"Raoult"} & Concentration dependence: \val{"Raoult"} for Raoult's law using the molar-mass ratio, or \val{"PowerN"} for $\max(1-c-\mathrm{ConcR},0)^{\mathrm{PowerN}}$. \\
+\key{NegPowExponent} & double & \val{0.25} & Exponent $n$ of the \val{"negPow"} distribution $k(1-r/R')^{-n}$, non-dimensional, less than 1: positive gives a rate diverging at the rim, 0 a uniform one, negative one falling to zero there; the prefactor $k=\frac{1}{2}(1-n)(2-n)$ keeps the mean over the pool at 1. Used only when \key{SpatialFunc} is \val{"negPow"}. \\
+\key{NegPowRmax} & double & \val{1} & Radius $R$ of the pool of the \val{"negPow"} distribution in meters, positive, measured from the origin of the grid coordinates. Used only with \val{"negPow"}. \\
+\key{PowerN} & double & \val{0.5} & Exponent of the \val{"PowerN"} law, non-dimensional, any value; with 0 the rate does not fall with $c$, and the solvent limit stops it at $c = 1$ (\cref{sec:terms:evaporation}). Used only with \val{"PowerN"}. \\
+\key{ConcR} & double & \val{0.0} & Residual concentration offset in the \val{"PowerN"} law, mass fraction in $[0:1)$: evaporation stops at $c = 1-\mathrm{ConcR}$. Used only with \val{"PowerN"}. \\
+\key{EndConcType} & string & \val{"mean"} & Which concentration statistic is compared against \key{EndConcValue}: \val{"mean"}, \val{"max"} or \val{"min"}; any other string is refused. \\
+\key{EndConcValue} & double & \val{0.95} & Dry-out threshold, mass fraction in $(0:1]$. The run stops with \code{Dry out} as soon as the chosen statistic exceeds it. \\
+\end{keytable}
+
+\begin{warn}[The dry-out test runs even with evaporation disabled]
+  \key{EndConcValue} is applied whether or not \key{Enable} is true, and a
+  file that leaves \key{Physics.Evaporation} out gets the default
+  \val{0.95}. A film whose concentration reaches the threshold by any other
+  route therefore stops with \code{Dry out} even with evaporation off.
+\end{warn}
+
+\key{PowerN}, \key{ConcR},
+\key{EndConcType} and \key{EndConcValue} are not exercised by any case in
+\file{cases/}.
+
+\section{\key{Physics.Source}}
+\label{sec:ref-physics:source}
+
+Liquid supplied to the film through a nozzle, optionally carried on a rotating
+arm --- the model of a dispensing head. Each cell receives supply in
+proportion to the fraction of it that the nozzle footprint covers, and that
+fraction is measured by subdividing the cell. See \cref{sec:terms:source}.
+
+\begin{keytable}{Keys of \key{Physics.Source}\label{tab:physics-source-keys}}\key{Enable} & bool & \val{true} & Switch on the source term. Note the default is \textbf{true}: writing the block without \key{Enable} turns the nozzle on; leaving the block out leaves it off. \\
+\key{Radius} & double & \val{1} & Radius of the nozzle footprint in meters, positive. \\
+\key{InletRate} & double & \val{0} & Steady-state supply velocity in \si{\metre\per\second} (volume flux per unit area), non-negative; non-dimensionalized by $h_0/T_0$. \\
+\key{ConcType} & string & \val{"local"} & The concentration the supplied liquid arrives at: \val{"local"}, that of the film where it lands (it thickens the film without changing $c$); \val{"supplied"}, \key{Conc}, mixed through the thickness of the column it lands on (\cref{sec:terms:source}). Any other string is refused. \\
+\key{Conc} & double & \val{0} & Concentration of the supplied liquid, mass fraction in $[0:1]$; outside it is refused with \key{ConcType = "supplied"}. Used only with \val{"supplied"}. \\
+\key{TimeConstant} & double & \val{0} & Exponential rise time $\tau$ of the flow rate in seconds, non-negative: $\mathrm{rate} = \mathrm{InletRate}\,(1-e^{-t/\tau})$. \val{0} means full rate from the first step. \\
+\key{ArmLength} & double & \val{1} & Length of the rotating arm carrying the nozzle, in meters, non-negative. \val{0} pins the nozzle at \key{ArmCenter}. \\
+\key{ArmCenter} & array & \val{[0, 0]} & Position $(x,y)$ of the arm pivot, in meters. Length must be exactly~2. \\
+\key{RotationRate} & double & \val{0} & Angular velocity of the arm in \si{\radian\per\second}, any value. Distinct from \key{Physics.Centrifugal.RotationRate}. \\
+\key{StartAngle} & double & \val{0} & Arm angle at $t=0$, in radians, any value. \\
+\key{RampTime} & double & \val{0} & Ramp-up and ramp-down time of the arm's rotation rate in seconds, non-negative. \\
+\key{PlateauTime} & double & \val{1e10} & How long the rotation rate stays at its plateau before ramping down, in seconds, non-negative. \\
+\key{SubRegions} & int & \val{1} & Number of sub-divisions per cell used when measuring the covered fraction, at least 1. Larger values smooth the source as the nozzle moves. \\
+\end{keytable}
+
+\begin{note}[\key{ConcType} decides whether \key{Conc} is used]
+  By default (\key{ConcType = "local"}) the supplied liquid takes the
+  concentration already present where it lands, and \key{Conc} is not used:
+  setting it alone does not dispense liquid of a different composition. With
+  \key{ConcType = "supplied"} the liquid arrives at \key{Conc}, and the
+  concentration under the nozzle follows from mixing it into the film
+  (\cref{eq:source-mixing}). \code{SuppliedResin} in \file{History.dat}
+  counts the solute either way brings. Without a concentration equation
+  (\key{Physics.ConcField.Model = "None"}) the key has no effect.
+\end{note}

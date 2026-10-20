@@ -1,0 +1,34 @@
+% preface.tex -- how to read this manual
+\chapter*{まえがき}
+\addcontentsline{toc}{chapter}{まえがき}
+\markboth{まえがき}{まえがき}
+
+本マニュアルでは、基板上の液膜の流れを解くソルバー Yuzen について説明する。
+読者の目的はさまざまであり、どの読者も全体を通読する必要はない。
+
+\begin{description}
+  \item[計算を実行したい場合] \cref{ch:introduction,ch:installation,ch:firstrun}を参照されたい。
+    そのあとは\crefrange{ch:inputformat}{ch:output}を手元に置いて参照されたい。
+    入力キーと出力ファイルはすべてここで説明している。
+  \item[何を解いているかを知りたい場合] 第III部を参照されたい。支配方程式、各項と各無次元数の意味、
+    接触線モデルを扱う。接触線が移動する計算では、格子は接触線モデル（\cref{ch:wetting}）で決まる。
+  \item[計算が遅い、または収束しない場合] 第IV部を\cref{ch:convergence}から順に参照されたい。
+    細かい格子で計算が遅くなる原因の大半は、ニュートン修正量の下限（フロア）と
+    絶対値による収束判定との衝突である。
+  \item[ソルバーを改変したい場合] 最初に\cref{ch:reproducibility}を参照されたい。
+    結果はスレッド数によらずビット単位で一致する。そのためのコードは乱雑に見えるが、
+    乱雑なわけではない。続いて\cref{ch:extending}、
+    \cref{ch:layout}、\cref{ch:policy}を参照されたい。
+\end{description}
+
+第V部では、何をどのような数値で確認したかを報告する。その際、解析解、測定した精度次数、
+保存される不変量、回帰テストを区別する。確認して\emph{いない}事項は
+\cref{ch:notverified}に挙げる。表記は次のとおりとする。キーは\key{Physics.Evaporation.Coef}、
+値は\val{"WM"}、ファイルは\file{JobInfo.txt}、コードとコマンドは\code{SetMatrixA()}、
+環境変数は\env{YUZEN\_DEBUG\_FLOOR}と書く。次元をもつ入力はすべて SI 単位とし、
+測定値には必ず再現用のコマンドを添える。
+
+\emph{Yuzen}は釉然と書く。釉は陶磁器の釉（うわぐすり）、然は「おのずからそうであること」を表す。
+
+\medskip
+\hfill 白鳥 英（東京都市大学）

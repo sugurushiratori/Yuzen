@@ -1,0 +1,447 @@
+% ch-extending.tex -- how to add physics to Yuzen, as a worked procedure
+\chapter{モデルの拡張}
+\label{ch:extending}
+
+本章は、Yuzenがまだ扱っていない問題を解かせたい読者に向けたものであり、手順の形で書いてある。
+まず拡張の種類を見定め、その種類の番号付き手順に従って実装し、最後にテストする。
+コード全体の構成は説明しない。どこに何があるかは\cref{ch:layout}に示す。
+数値解法の導出も繰り返さない。導出は\cref{ch:discretization,ch:timeintegration}にある。
+
+次の二つの章は、参考ではなく前提として読んでおく必要がある。\Cref{ch:reproducibility}では、
+スレッド数によらず結果をビット単位で一致させるために、コード中で守っている四つの事柄を述べる。
+そのうち三つは項の追加方法を制約し、一つ（登録順序）は以下の手順の一段階になっている。
+\Cref{sec:time:form,sec:time:jacobian}では、すべての方程式を帰着させる形と、項に必要なヤコビアンの程度の決め方を述べる。
+本章の内容はこれらを前提としており、繰り返さずに引用する。
+
+\section{コードを書く前に}
+\label{sec:extending:decide}
+
+必要な作業量は、次の三つの問いで決まる。コストの大きい順に並べてあるので、この順に答えるのが望ましい。
+
+\begin{description}
+  \item[効果は流束への寄与として入るか] つまり、\cref{eq:flux}の$\Qvec$に項を加えるか。
+    移動度と勾配の積、または移動度と体積力の積に比例する量であれば、これにあたる。この場合は
+    \emph{物理項}であり、行列$A$に入る。本章の主要な手順（\cref{sec:extending:term}）に従う。
+    三つの中で最も作業が多く、七つのメンバーとセル界面流束を実装するカーネル、無次元数、
+    入力ブロック、速度場、テストが必要になる。
+  \item[膜厚方程式の生成項または消滅項か] 液体を輸送せずに加えたり取り除いたりする効果である。
+    二つ目の蒸発機構、堆積速度、化学的な損失などがこれにあたる。この種の項は、蒸発や供給の項とともにベクトル$B$に入り、
+    \code{WellMixed\_HeightEquationBase::SetMatrixA()}の末尾で組み立てる。クラスは要らず、
+    数行で済む。ただし、この方法を選ぶ前に\cref{sec:time:form}の警告を参照されたい。
+    \textbf{$\theta$重み付けを受けるのは$A$に入る項だけである}。$B$に置いて古い状態だけで評価した項は
+    実質的に後退オイラー法となり、その項についてはスキームの時間精度が一次に落ちる。
+    蒸発の項と同様にステップにわたって平均する必要がある。そうしないと、書くのは簡単でも、
+    妥当性を示すのに手間がかかる。
+  \item[濃度方程式や物性値の変更か] 粘度、表面張力、拡散係数の新しい濃度依存性、
+    別の蒸発則、新しい形状関数などである。\textbf{三つの中で群を抜いて作業が少ない}。
+    クラスか分岐が一つ、入力キーが一つか二つで済み、行列の組み立ても、ヤコビアンも、
+    登録順序への配慮も要らない。これらは\Cref{sec:extending:other}で扱う。
+\end{description}
+
+効果が圧力、すなわち$\Qvec = M(H,C)\,\nabla p$と書けるものであれば、第一の種類にあたる。
+手本には分離圧の実装を用いるのが適切である。体積力も、一様かどうかによらず第一の種類であり、
+面内重力と遠心力の項が例になる。
+
+\section{物理項の追加手順}
+\label{sec:extending:term}
+
+\begin{enumerate}
+
+\item \textbf{無次元形を書き、無次元数を定める。}
+
+エディターではなく紙の上で始める。新しい寄与を既存の項と同じ形で流束に入れ
+（\cref{ch:terms}）、\cref{sec:governing:scales}のスケールで無次元化して、その項に掛かる無次元数を
+一つ読み取る。既存の項はどれも無次元数をちょうど一つもつ。毛管圧は$\As$、鉛直重力は$\Bo$、
+遠心力の項は$\Spn$、分離圧は$\Dpn$である。無次元数が二つ必要になる場合、一方はおそらく
+物性値の比であり、\file{FluidProperty.*}で扱うべきものである。
+
+符号もこの段階で決める。支配方程式は$\partial H/\partial T = -\nabla\cdot\Qvec$の形なので、
+発散を展開すれば係数の符号が決まる。鉛直重力では$-\Bo/3$、分離圧では$+\Dpn/3$となる。
+符号は\code{\_Magnitude}の中だけにもたせ、ほかの場所には置かない。こうすることで、合成速度を単純な和として計算できる
+（\cref{sec:verification:velocity}）。
+
+\item \textbf{無次元数を\code{NonDimensionalNumbers}に追加する。}
+
+\file{yuzen/src/model/NonDimensionalNumbers.h}に、\code{Bo()}、\code{Sp()}、\code{Dp()}と並べて
+メンバーとアクセサーを追加する。\file{NonDimensionalNumbers.cpp}では、\code{Build()}の中で
+有次元の入力から値を計算する。また\code{ToString()}に一行追加し、標準出力の実行ログでほかの
+無次元数と一緒に表示されるようにする（\cref{sec:output:running}）。
+
+\textbf{項が無効のとき、無次元数は厳密にゼロでなければならない。}既存のコードには二通りの書き方があり、
+どちらを用いてもよい。$\Dpn$は最初に\val{0}とし、\code{if(inp.Physics.\bk
+DisjoiningPressure.\bk Enable)}の中でだけ計算する。$\Bo$、$\Pgx$、$\Pgy$、$\Spn$、$\Ma$は
+条件なしに計算し、\code{Build()}の末尾で、対応する\key{Enable}キーが偽ならゼロにする。
+
+この規則が重要な理由を明確にしておく。項を追加しても既存の結果が変わらないと言える根拠は、
+すべてここにあるからである。無効な項のコストはゼロである。\code{WellMixed\_HeightEquationBase}は
+\code{Enabled()}が偽の項を飛ばすので、その項の\code{SetMatrixA}は呼ばれない。仮に呼ばれたとしても、
+\code{\_Magnitude}は厳密に\val{0}の無次元数から作られるので、何も変わらない。
+手順5の「末尾に追加する」規則と合わせて、追加した項を含まないケースはすべて、
+変更の前後で\textbf{ビット単位で一致}する（\cref{sec:repro:order}）。
+
+\item \textbf{入力ブロックとキーを追加する。}
+
+変更するファイルは二つである。\file{yuzen/src/IO/Input.h}では、\code{I\_Physics}の中に入れ子クラスを追加し、
+キーごとにメンバーを一つもたせる。\code{I\_DisjoiningPressure}が手本になる。
+\file{yuzen/src/IO/Input.cpp}では、\code{ReadPhysics()}にブロックの読み込みを追加する。
+書き方はほかのブロックと同じで、次のとおりである。
+
+\begin{itemize}
+  \item \code{try}\,/\,\code{catch(const
+    BlockNotFound\&)}の中で\code{getBlockSize}を呼び、ブロックがなければ\code{bnum = 0}とする。
+  \item 物理ブロックは繰り返せないので、\code{bnum > 1}なら\code{Error}を呼ぶ。
+  \item 各キーは\code{getin("Name", member, default)}で読む。\textbf{三番目の引数を省略すると、
+    そのキーは必須になる}。
+  \item ブロックがまったくない場合に通る\code{else}分岐では、\key{DisjoiningPressure}
+    ブロックと同様に、すべてのメンバーに明示的に値を与える。これを省くと、メンバーは
+    コンストラクターが設定した値のままになる。
+  \item 範囲は\code{CheckRange}で、文字列値のキーは\code{CheckCandidates}で候補リストと照合し、
+    不正なら\code{Error}を呼ぶ。複数のブロックにまたがるチェックはここに書かず、
+    \file{yuzen/src/IO/CheckParameters.cpp}に置く。
+\end{itemize}
+
+\begin{warn}[\code{else}分岐の既定値が利用者の得る値になる]
+  ブロック名やキー名を書き誤ると計算は停止する（\cref{sec:inputformat:unknown}）。しかし
+  ブロックを書かないことはエラーではない。そのブロックを書かない利用者には、
+  警告もなく\code{else}分岐の値が使われる。ほかの\key{Physics}サブブロックと同じく、
+  何も書かなければ項が\emph{無効}になるように値を選ぶ必要がある。
+\end{warn}
+
+あわせて、同じ変更の中で\cref{ch:ref-physics}にキーの説明を書き、型、既定値、単位を示す。
+
+\item \textbf{カーネルを書く。}
+
+\file{yuzen/src/model/well\_mixed/}にヘッダーを一つ置く。カーネルはトレイトクラスを引数とするテンプレートとし、
+\code{PhysicsTermBase<T>}（\file{PhysicsTermBase.h}）から派生させる。トレイトでテンプレート化
+しておけば、一つの実装で1次元と2次元の両方に対応できる。方向の数、ステンシル、
+格子間隔、サイトから行への対応、二つの方向順序など、1次元と2次元で異なるものはすべて\code{T}（\file{GridTraits.h}）を通して
+参照するので、カーネルの中に次元は現れない。
+
+駆動場に勾配を含まない体積力の項であれば、七つのメンバーを書く必要はない。
+\code{BodyForceKernel<T>}から派生させ、\code{Drive}、\code{DriveFace}、\code{Weight}、\code{Mag}、
+\code{SideOutflow}、\code{VelocityField}、\code{VelocitySign}だけを与えれば十分である。
+\file{CentrifugalKernel.h}はライセンスヘッダーを含めて155行であり、遠心力に固有の部分は、
+駆動場が回転軸からの距離であることだけである。移動度と何かの勾配の積の形の項であれば、
+\file{VerticalGravityKernel.h}の骨組みを写し、\cref{sec:extending:contract}の七つのメンバーと
+セル界面流束（七つのメンバーの後に述べる\code{FaceFlux}。体積力では\code{BodyForceKernel}が提供する）を
+実装する。
+
+このクラスを登録する箇所がほかに四つある。\file{WellMixedTraits.h}では、\code{WM1D\_Traits}と
+\code{WM2D\_Traits}の\textbf{両方}に\code{typedef}を追加する。\file{HeightEquationBase.h}では、
+\code{WellMixed\_\bk HeightEquationBase}にその型のメンバーを追加する。
+\code{WellMixed\_\bk HeightEquationBase::\bk Build}の中では、ほかの項と並べてその\code{Build}を呼ぶ。
+さらに、項が速度を生む場合（純粋な消滅項でなければ生む）は、\file{model/LubFields.h}の
+\code{Velocity\_WM1D}と\code{Velocity\_WM2D}に速度場を追加し、\file{LubFields.cpp}の
+\code{Cal\_MixedVelocity()}の和にそれを加え、\code{WellMixed\_\bk HeightEquationBase::\bk CalVelocity()}に
+\code{SetVelocityBC}の行を追加する。
+
+\begin{warn}[合成速度は単純な和とし、その形を崩さない]
+  \code{Cal\_MixedVelocity()}には、自分の場を\code{+}一つで加える。合成を差の連鎖として
+  書いてはならない。符号は各項の\code{\_Magnitude}の中で既に正しく付いているので、差の連鎖にすると、
+  その後に加えた項の符号がすべて反転する。この欠陥は実際にこのコードにあったものであり、
+  再発を防ぐために\file{yuzen/tests/test\_mixed\_velocity.cpp}を設けている
+  （\cref{sec:verification:velocity}）。
+\end{warn}
+
+\item \textbf{\code{RegisterPhysics()}の末尾に登録する。}
+
+\file{HeightEquationBase.h}の\code{WellMixed\_HeightEquationBase::RegisterPhysics()}は、
+決まった順序で項を\code{\_physics}に積む。この順序が行列への\code{+=}演算の順序になり、
+それがCRSの各行の列挿入順序になり、さらに行にわたるすべての和の丸めを決める。
+\textbf{\code{\_physics.push\_back(\&\_YourTerm)}は最終行の後に追加する必要がある。途中に挿入しては
+ならず、リストをアルファベット順に並べ替えてもならない。}末尾に追加すれば既存の結果はビット単位で
+一致する。その理由は\cref{sec:repro:order}で述べる。
+
+\item \textbf{ソースファイルがあれば\file{CMakeLists.txt}に追加する。}
+
+ヘッダーだけのテンプレートであるカーネルは登録しなくてよい。実際、七つのカーネルヘッダーはどれも
+\file{CMakeLists.txt}には現れない。項に次元ごとの\file{.cpp}がある場合は、
+最上位の\file{CMakeLists.txt}の\code{YUZEN\_CORE\_SRC}に追加する。たとえば毛管圧の項には
+\file{LaplacePressure\_1D.cpp}と\file{LaplacePressure\_2D.cpp}がある。新しいテストファイルは
+\file{yuzen/tests/CMakeLists.txt}の\code{YUZEN\_TEST\_SRC}に加える。
+
+\item \textbf{テストを書く。}
+
+よいテストの条件は\Cref{sec:extending:testing}に示す。テストはケースを実行する前に書く必要がある。
+図で見てもっともらしいだけの項は、半年後に誤りが見つかる類の項だからである。
+
+\end{enumerate}
+
+\section{七つのメンバーの役割}
+\label{sec:extending:contract}
+
+各メンバーが満たすべき約束（契約）は\file{yuzen/src/model/\bk well\_mixed/\bk PhysicsTermBase.h}で宣言している。
+四つのメンバーはpublic、三つはprotectedである。七つとも純粋仮想関数なので、
+一つでも書き忘れるとコンパイルが通らない。
+
+契約全体を通して、\textbf{格子とスキームだけで決まる係数}と\textbf{場に依存する量}を区別する。
+前者は\code{Build()}で一度だけ作り、配列\code{C(d)}と\code{CV(a)}に保持する。後者は、
+外側反復のたびに場が変わるので、呼ばれるたびに一から計算し直す。場に依存する量を前者に入れると、
+ニュートン反復が収束しないというバグになる。格子だけで決まる係数を後者に入れても、
+遅くなるだけである。
+
+\begin{description}
+
+  \item[\code{Build(inp\_phys, g, nonDim, bc)}] 求解を始める前に、
+    \code{WellMixed\_HeightEquationBase::Build}から一度だけ呼ばれる。引数は入力の\key{Physics}ブロック、
+    格子、無次元数の組、境界条件である。これらのポインターを保存し、自分の\key{Enable}キーから
+    \code{\_enabled}を設定する。\code{\_Magnitude}には項全体の係数を\emph{符号込みで}設定する。
+    移動度$H^{3}/3$をもつ項では無次元数を3で割った値、移動度$H^{2}/2$をもつ溶質マランゴニ効果では
+    $\As\,\Ma/2$である。さらに\code{T::SetExtent}を呼んで格子の範囲を記録し、最後に
+    \code{SetLinearCoef()}を呼ぶ。場を読んではならない。この時点では初期条件がまだ入っていないからである。
+    また入力を読めるのはここだけなので、項が必要とする入力ファイルの内容は、すべてここで
+    メンバーに写しておく。
+
+  \item[\code{SetLinearCoef()}] protectedであり、\code{Build()}からだけ呼ばれる。
+    方向\code{d}に対するステンシル点\code{s}の差分係数\code{C(d)[s]}と、軸\code{a}方向の速度に対する
+    同様の係数\code{CV(a)[s]}を設定する。これらは格子間隔\code{T::Spacing}とスキームだけで決まる。
+    \textbf{場を参照してはならない}。参照しないので、一度だけ呼べば足りる。
+
+  \item[\code{SetMatrixA(crsA, field)}] 外側反復のたびに呼ばれる（\cref{sec:time:newton}）。
+    \code{field}は確定した場ではなく、ニュートン法の現在の推定値である。\textbf{\code{!\_enabled}なら
+    直ちに戻る}。\code{crsA.IsBC(irow)}が真の行はすべて飛ばす。寄与は\code{+=}で
+    \textbf{加える}。対角には\code{crsA.Diag(irow)}を、それ以外には
+    \code{crsA(irow, col)}を用いる。代入、行列のクリア、$B$への書き込みは決して行わない。
+    クリアは呼び出し側が行い、$B$はその後で膜厚方程式が組み立てる。一つの行の中で方向について和をとるときは、
+    \textbf{軸の順序}\code{T::Dir(d)}に従う（\cref{sec:repro:directions}）。
+
+  \item[\code{SetJacobiMatrix(crsJ, field)}] \key{JacobianUpdateInterval}回の反復ごとに一度呼ばれる
+    （\cref{sec:time:jacobian}）。呼ばれる時点で$A$は既にヤコビアンにコピーされており、項はそこに
+    自身の導関数$\partial(A\varphi)/\partial\varphi$を加える。無効なら戻る、境界の行を飛ばす、
+    代入せず加える、という規則は同じである。ただし重要な違いが一つある。\textbf{対角}に入る和は、軸の順序ではなく
+    \textbf{ステンシルの順序}\code{T::StencilDir(k)}でとる。\textbf{近似が許されるのはこの
+    メンバーである}。\cref{sec:extending:jacobian}を参照されたい。
+
+  \item[\code{NonlinearTerm(site, tedge, field)}] protectedである。セル界面での場に依存する因子を返す。
+    ほとんどの項では、移動度$H^{3}/\hat\mu(C)$をセル界面で平均したものであり、粘度は二つの
+    セルの平均濃度で評価する。\code{tedge}でセル界面を選ぶ。値\code{T::DirCenter()}（\code{OO}）は
+    セル界面ではなくセル自身を表す。呼ばれるたびに計算し直し、場だけで決まる純粋関数でなければならない。
+    キャッシュも内部状態ももたない。
+
+  \item[\code{NonlinearJacobi(site, tedge, adj, field)}] protectedである。\code{NonlinearTerm}を
+    一つのステンシル点の膜厚で微分した値を返す。どの点かは\code{adj}で指定する。近似が許される
+    もう一つのメンバーであり、一部を省いても失うのは反復回数であって精度ではない。
+
+  \item[\code{CalVelocity(field)}] \code{WellMixed\_HeightEquationBase::CalVelocity()}から、
+    計算開始時に一度、その後は各ステップに一度、そのステップの終了時の状態について呼ばれる。
+    \emph{この項だけ}が生む速度、すなわちセル界面を通る流束を\code{T::FaceHeight}で割った値を、
+    \emph{自身の}場に書き込む。\code{T::InsideForVelocity}が偽のサイトには手を触れない。
+    \textbf{合成速度に触れてはならず、ほかの項の場に加算してもならない。}このため、
+    \code{SetMatrixA}と違って、ここでは項の順序が問題にならない（\cref{sec:repro:order}）。
+    合成速度はその後で、個々の場の単純な和として作る。出力に報告するのも、
+    クーラン数のチェックに用いるのもこの合成速度である。（開いた辺を横切る量は、後述の\code{FaceFlux}による
+    セル界面流束から数える。）
+
+\end{description}
+
+項の流束を鉛直一様モデルの濃度に伝えるメンバーが、さらに二つある。これらは純粋仮想関数ではなく、
+\code{PhysicsTermBase}はどちらにも0を返す。そのため\textbf{書き忘れてもコンパイラーは教えてくれない}。
+これらを省いた項は、液膜を動かしても溶質を一緒に動かさない。
+
+\begin{description}
+  \item[\code{FaceFlux(site, d, field)}] 状態\code{field}において、セルのセル界面\code{d}を通る
+    この項の体積流束を返す。値は$A$の要素が表すとおりのものとする。すなわちセル界面の軸に沿った向きで、
+    単位セル測度あたり（セル界面を横切る方向の格子間隔で割った値）とする。これにより、セルの行で
+    $\sum_d (\pm)$\code{FaceFlux}（低い側のセル界面は負、高い側は正）をとると、丸め誤差の
+    範囲でその行の$A h$になる。項が無効なら0を返す。$A$に流束がない壁のセル界面でも
+    0を返す。膜厚方程式はこれらから各セル界面の流束を一度だけ作る
+    （\code{FaceVolumeFluxes}）。濃度方程式はその流束で溶質を運び
+    （\cref{sec:disc:wm-conservative}）、\file{History.dat}は開いた辺を横切る量をそこから数える
+    （\code{EdgeFluxRate}、\cref{sec:output:history}）。
+  \item[\code{SideRate(site, field)}] セル界面を通る流束ではない、セルの体積消滅項を返す。
+    1次元の遠心力の項による側方流出のような、対角項の$A h$である。溶質はセルの濃度でこれとともに出ていく。
+    ほとんどの項にはこの消滅項がない。
+\end{description}
+
+セル界面流束は\file{test\_jacobian.cpp}で$A h$と照合している。1次元と2次元のいずれでも、
+すべての項とすべてのセル界面補間について、流束は要素の積と丸め誤差の範囲で一致しなければならない。
+また、セル界面を共有する二つのセルは同じ流束を見なければならない。ヤコビアンのテストのリストに項を加えるときは、このリストにも加える必要がある。
+
+\section{項に必要なヤコビアンの程度}
+\label{sec:extending:jacobian}
+
+基本となる考え方は、\cref{sec:time:jacobian}の内容を一文にまとめたものである。近似ヤコビアンは収束の\emph{速さ}を変えるが、
+不動点は変えない。収束した解を決めるのは\cref{eq:nk-update}の残差であり、修正量に掛かる行列では
+ないからである。
+
+それでも実際には、ヤコビアンを厳密に正しくすることを勧める。正しさを厳密に確認できるからである。
+\file{yuzen/tests/test\_jacobian.cpp}（\cref{sec:verification:jacobian}）では、膜厚、基板、濃度が
+すべて変化する状態で各項を組み立て、不規則な方向$v$について$J v$を$A(h)h$の中心差分と比較する。
+モデルのすべての項で、両者は$10^{-10}$まで一致する。このリストに自分の項を加える必要がある。何かが
+抜けたヤコビアンでは、抜けた分の大きさの差が現れる。このテストで見つかった三つの誤りは、鉛直重力、
+分離圧、1次元の遠心力による流出にあった。これらの誤りのため、分離圧のケースではニュートン反復の30--55 \%が
+無駄になっていた。
+
+誤りやすい点が二つある。一つ目に、ヤコビアンは$A$のコピーから始まる。そのため、$A$が$h$について線形でない項では、
+$A$が既に保持している分を導関数から\emph{差し引いて}加えなければならない。
+たとえば分離圧は、$\hat\Pi(h)$を$(\hat\Pi/h)\,h$として行列に書いている。二つ目に、セル界面移動度をセル自身で微分するときは、
+隣のセルではなくそのセルで評価する。
+
+近似ヤコビアンを使っても、変わるのは収束の速さであって解ではない。\file{CalcInfo.dat}の
+\code{NK\_iter}列を監視すること（\cref{sec:output:calcinfo}）。既存のケースでは3から6の間に収まる
+（\cref{sec:verification:coupling}）。
+
+
+
+\section{守るべき規則}
+\label{sec:extending:rules}
+
+\begin{warn}[四つの規則と一つの受け入れ基準]
+  いずれの規則も根拠は\cref{ch:reproducibility}で述べている。どれもこれから行う変更に
+  対する制約なので、ここにまとめておく。
+
+  \begin{itemize}
+    \item \textbf{\code{RegisterPhysics()}には末尾に追加し、途中に挿入しない。}リストの順序は
+      行列の列挿入順序であり、浮動小数点の加算の順序でもある（\cref{sec:repro:order}）。
+    \item \textbf{\code{Vector}の縮約の方式を変えない。}内積がスレッド数に依存しないのは、
+      固定ブロックの部分和を用いているからである（\cref{sec:repro:reduction}）。
+    \item \textbf{CRSの行を列の昇順に並べ替えない。}要素は対角を先頭とし、挿入順に格納している。
+      整列したインデックスを必要とするライブラリには、整列済みの複製を渡す（\cref{sec:repro:crs}）。
+    \item \textbf{二つの方向順序を統一しない。}\code{T::Dir(d)}は軸の順序、\code{T::StencilDir(k)}は
+      ステンシルの順序であり、意図して使い分けている。1次元では両者が一致するので、
+      不具合は誰かが2次元のケースを実行して初めて現れる（\cref{sec:repro:directions}）。
+  \end{itemize}
+
+  \textbf{既存の結果を変えずに項を追加する変更では、ビット単位の一致を受け入れ基準とする。}
+  項を無効にした状態で、変更の前後に同梱のケースを実行し、\file{tools/compare.py}で比較する。
+  すべての列が\code{0.000e+00}でなければならない。「小さな差」でも「線形ソルバーの許容値程度の差」
+  でもなく、ゼロである。ゼロでなければ、末尾に追加せずに挿入したか、既に和をとっていた何かを変えている。
+\end{warn}
+
+\section{新しい項のテスト}
+\label{sec:extending:testing}
+
+自分のテストを書く前に、リポジトリにある二つのテストを参照されたい。二つは異なる種類の
+主張を確かめている。\file{yuzen/tests/test\_disjoining.cpp}は、物理項を、コードとは独立に成り立つ数学と
+照合する。\file{yuzen/tests/test\_mixed\_velocity.cpp}は、どの誤りもそれ自体で特定できるように
+選んだ値を用いて、合成規則を確認する。この二つから、目指すべきテストが三つ得られる。強い順に次のとおりである
+（\cref{sec:verification:policy}）。
+
+\begin{description}
+
+  \item[項が何も変えてはならない状態] 最も手軽で、しかも強いテストである。
+    分離圧では一様な前駆膜$H = \Hstar$がこれにあたる。そこでは恒等的に$\Pihat(\Hstar) = 0$なので、
+    項は速度を一切生んではならない。自分の項についても同様の状態を見つけ、寄与が$10^{-12}$未満であることを確かめる。
+    勾配で駆動される項なら一様な膜、回転で駆動される項なら回転速度ゼロの状態がこれにあたる。
+    このテストからは細部を一つ写す必要がある。\code{CalVelocity}を呼ぶ前に速度場を1.0で埋めて
+    \textbf{わざと汚しておく}。こうするとゼロを書き込んだ場合と何も書き込まなかった場合を区別できる。
+    黙って何もしない項は、素朴な版のテストなら難なく通ってしまう。
+
+  \item[解が閉じた形で得られる状態] 一つ目より強い。一般には得られなくても、新しい項について何らかの極限でなら
+    通常は得られる。分離圧の較正はこの方法で、数値計算をまったく使わずに確認している。平衡の第一積分から
+    遠方での傾きが閉じた形で得られ、コードは36通りのパラメーターの組み合わせで相対誤差$10^{-14}$まで
+    これと一致しなければならない（\cref{sec:verification:disjoining}）。一組だけを試すのではなく、
+    パラメーターを掃引する必要がある。一つの因子の代数的な誤りは、一つの組み合わせでは見逃されても、
+    格子状に並べた多数の組み合わせでは見逃されない。
+
+  \item[格子細分化による検討] 解析的な状態を格子上に置いて離散化が残す誤差を測り、格子を細かくしたときに
+    それが意図した次数で減少することを確認する。係数、符号、ステンシルの誤りは
+    単一の格子での比較では見逃されることがあるが、このテストなら捕らえられる。手本は\Cref{tab:eqresidual}である。
+    三つの格子で、残留速度が細分化のたびに約四分の一になっている。そのテストと同じく、次数を二桁まで
+    主張するのではなく、比が一定の幅に収まることを確かめる必要がある。項が誤っていれば、比は3.5付近ではなく1付近になる。
+
+\end{description}
+
+\begin{tip}[製造解に項を加える]
+  \file{tools/mms\_generate.py}は、SymPyを用いて支配方程式から製造解の生成項を導出する
+  （\cref{sec:verification:mms}）。ここで新しい流束を$\mathbf{Q}$に加え、
+  \file{ManufacturedSourceTerms.inc}を再生成する。パラメーターを\code{MmsParams}と
+  \code{C\_ManufacturedSource::Build}に加え、\file{tools/mms.py}の\code{wm\_all}ケースで項を有効にする。
+  その際、項が$h_t$をほかの項と同程度に動かすように調整する。ほかの項をすべて有効にした状態で二次収束すれば、
+  その項は、離散化の対象とする方程式と空間・時間の両方で整合している。
+\end{tip}
+
+\begin{warn}[回帰テストだけで済ませない]
+  新しい項を一度実行して結果を記録するだけのテストは、\textbf{\cref{sec:verification:policy}の
+  四つの選択肢の中で最も弱い}。振る舞いが正しいかどうかは何も示さず、記録した日から
+  変わっていないことを示すにすぎない。記録した日の結果が誤っていれば、誤ったまま変わっていないことを示すだけである。
+  回帰テストにも価値はあり、このリポジトリの入力解析と出力形式のテストはまさに回帰テストである。しかし、
+  回帰テストしかない新しい物理項は、意味のある形では何も検証されていない。
+\end{warn}
+
+最後に、テストがスレッド数に依存しないことを確認する。\file{yuzen/tests/}のテストはすべて、\code{ctest}が
+三回実行する。環境のスレッド数、\env{OMP\_NUM\_THREADS=1}、\env{OMP\_NUM\_THREADS=4}の三通りである。
+縮約で計算した値と比較するテストは、不変性が本当に成り立っていなければ、三回のどれかで失敗する。
+三回実行するのはそのためである。
+
+\section{より小規模な拡張}
+\label{sec:extending:other}
+
+\subsection{新しい形状関数}
+
+形状関数は、初期の自由表面と基板形状の両方に用いる。\code{C\_RectBump}や\code{C\_EllipseBump}に
+ならって、\file{yuzen/src/\bk commonFunctions/\bk ShapeFunctions.cpp}とそのヘッダーにクラスを追加する。
+必要なのは、パラメーターを\key{Order}と作成タイプとともに保存する\code{Build}と、点での高さを返す
+\code{operator()(px, py)}である。次に\file{IO/Input.cpp}と\file{Input.h}に、繰り返し可能な入力ブロックを
+追加する。形状ブロックは何度でも書けるので、\code{getBlockSize}でベクトルに読み込む。
+さらに\file{commonFunctions/GenerateShape.cpp}の\code{C\_GenerateShape::Build}に、自分のクラスを構築するループを
+追加する。このループで\code{\_shapeOrder}に要素を積み、形状が\key{Order}による並べ替えの対象になるようにする。
+ほかに変更は要らない。形状を作る処理は行列に触れないからである。
+
+\subsection{新しい境界条件}
+
+境界条件は\file{yuzen/src/model/\bk BoundaryCondition.h}と\file{.cpp}にある。膜厚方程式は四階なので、
+各境界に二つの条件が必要である。条件は内部の方程式を変更して課すのではなく、条件そのものを行列の
+二つのゴースト行に書き込んで課す（\cref{sec:disc:ghost}）。\code{tBoundaryCondition}列挙型に
+新しい型を追加し、三つの場\code{Height}、\code{HeightJacobi}、\code{Conc}のそれぞれについて行を書き、
+\file{IO/Input.cpp}の候補リストに文字列を追加する。
+
+\begin{warn}[既存の条件のうち二つは構造しか検証していない]
+  \val{"FreshInlet"}と\val{"Outlet"}について確認したのは、生成する行列の構造、
+  すなわちインデックスが範囲内にあることと、ゴースト行一つにつき方程式が一つであることだけである。流入や流出が解析的に
+  求まっている問題とは照合して\textbf{いない}（\cref{sec:notverified:numerics}）。正しい流入条件の
+  手本として扱ってはならない。正しい条件が必要なら自分で検証する必要があり、その結果は
+  \cref{ch:notverified}に記すべきものである。
+\end{warn}
+
+\subsection{物性値の新しい濃度依存性}
+
+\file{yuzen/src/model/FluidProperty.h}と\file{.cpp}には、既存の三つの形が実装されている。
+\code{ConstantProperty}、\code{ConcLinearProperty}（表面張力に使用）、\code{ConcExponentProperty}
+（粘度と拡散係数に使用）である。いずれも基準濃度、基準値、パラメーター一つから構成し、
+基準濃度では1を返す。つまり値は比であり、\si{\pascal\second}単位の値ではない。同じ形のクラスを追加し、
+\code{NonDimensionalNumbers}のメンバーとして保持して、そのクラスの\code{Build()}で構築する。
+さらに、どの形を使うかを選ぶ入力キーを追加する。下流の変更は要らない。物理項は
+\code{\_NonDim->Viscosity(c)}を呼ぶだけで、どの形が値を返したかを知らないからである。
+
+\subsection{新しい線形ソルバーのバックエンド}
+
+\file{yuzen/src/\bk numerics/\bk LinearSolverBackend.cpp}の中で、\code{EigenBackend}と
+\code{AmgclBackend}が置かれている無名名前空間の内部に、\code{ILinearSolverBackend}を実装する。
+実装するのは\code{Name}、\code{Build}、\code{Solve}である。次に\code{MakeLinearSolverBackend()}に分岐を追加する。
+\textbf{新しいライブラリのヘッダーとその\code{\#ifdef}は、AMGCLバックエンドと同じく
+この\file{.cpp}の中にとどめる必要がある}。そうしているので、\file{LinearSolverBackend.h}にはAMGCLが
+組み込まれているかどうかが一切現れず、AMGCLなしでビルドする場合もほかの箇所に条件付きコンパイルが
+要らない。\cref{sec:linsolve:contract}の契約を守る必要がある。特に、解ベクトルは初期推定値を兼ねること、
+行列と右辺は戻る前に元に戻すことに注意する。
+
+最後に、利用者から必ず尋ねられる問いに、ドキュメントで答えておく。
+\textbf{そのバックエンドは、スレッド数を変えても結果が決定的か}という問いである。同じ問題を一、二、四スレッドで実行し、
+\file{yuzen/tests/test\_linear\_solver.cpp}と同様に、解、反復回数、残差を\code{==}で比較する。
+\val{"eigen"}はビット単位で一致する。\val{"amgcl"}は内部の縮約が非決定的なので一致しない
+（\cref{sec:linsolve:choosing}）。バックエンドとしてはどちらの答えでも構わないが、答えがわからない
+ままにしてはならない。
+
+\section{変更の還元}
+\label{sec:extending:submitting}
+
+この作業は手短に、決まった手順どおりに行う。変更を提供する前に次を行う。
+
+\begin{enumerate}
+  \item ビルドし、テストスイート\code{ctest --test-dir build}を実行する。スレッド数ごとの三つの
+    項目がすべて通らなければならない。
+  \item 変更の前と後で、同梱のケース（\cref{ch:cases}）を実行する。
+  \item 両者を\file{tools/compare.py}で比較する。このときバックエンドとスレッド数を前後で揃え、
+    線形ソルバーの違いによる丸めではなく、自分の変更の影響を測るようにする。
+  \item \textbf{数値が変わったかどうかと、その理由を変更の説明に書く。}新しい項やリファクタリングでは、
+    「どのケースも変わらなかった。\file{compare.py}はすべて\code{0.000e+00}を示す」と書けるはずである。
+    何かが変わった場合は、どのケースがどれだけ変わったか、それが\cref{sec:policy:results}の
+    三つの状況のどれにあたるかを書く。
+  \item 同じ変更の中で本マニュアルを更新する。より短い付属文書\file{docs/theory.md}、
+    \file{docs/numerics.md}、\file{docs/validation.md}も、同じ点に触れている箇所は更新する。
+    \textbf{正式な記述は本マニュアルである}。コードだけを変えてマニュアルを変えないと、両者が
+    食い違う。キーや既定値を変える場合は\cref{ch:ref-physics}か\cref{ch:ref-numerics}も更新する。
+    数値が変わる場合は\cref{ch:verification}を更新する。検証して\emph{いない}ものを追加する場合は、
+    読者の推測に任せず、そのことを\cref{ch:notverified}に明記する。
+  \item \cref{ch:revisions}に、\cref{sec:rev:keeping}に定める形式で項目を追加する。
+\end{enumerate}

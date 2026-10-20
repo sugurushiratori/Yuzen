@@ -1,0 +1,232 @@
+% ch-installation.tex -- requirements, build, options, test suite
+\chapter{Building Yuzen}
+\label{ch:installation}
+
+Yuzen builds with CMake and has no dependency you have to install by hand. If
+Eigen is not already present, CMake fetches it; if AMGCL is not present and you
+asked for it, CMake fetches that too, and falls back to an Eigen-only build if
+it cannot.
+
+\section{Requirements}
+\label{sec:install:requirements}
+
+\begin{itemize}
+  \item A C++17 compiler. The CI matrix covers GCC, Clang and MSVC on Linux,
+        macOS and Windows.
+  \item CMake $\ge$ 3.16.
+  \item OpenMP, if you want the parallel build (on by default; the serial build
+        is fully supported and gives the same numbers). With GCC, install
+        LLVM's \code{libomp} as well (\code{apt install libomp-dev}, or the
+        \code{libomp} package of a Red Hat system): the build then links it
+        instead of GCC's own runtime, and runs on many cores are faster
+        (\cref{sec:parallel:runtime}). \textbf{There is no MPI
+        dependency and no MPI build}: Yuzen is shared-memory parallel only
+        (\cref{ch:parallel}).
+  \item Optionally Eigen $\ge$ 3.3 and AMGCL, if you would rather supply them
+        yourself than have CMake fetch them. On Debian and Ubuntu that is
+        \code{apt install libeigen3-dev}; on macOS, \code{brew install eigen};
+        with vcpkg, \code{vcpkg install eigen3}.
+\end{itemize}
+
+Fetching happens only when the dependency is missing, so a machine without
+network access needs Eigen installed beforehand --- and, if you want it, AMGCL.
+
+\begin{note}[Non-ASCII file names on Windows]
+  The solver handles file names as UTF-8, which is what the input file is
+  and what Linux and macOS use. An MSVC build embeds a manifest
+  (\file{yuzen/src/yuzen.manifest}) that makes UTF-8 the code page of the
+  process, so that an input file, a \key{JobName} or a
+  \key{Restart.FileName} with Japanese characters names the same file on
+  Windows. That needs Windows 10 version 1903 or later; on an older Windows,
+  keep those names ASCII. Paths longer than 260 characters need the Windows
+  long-path setting as well.
+\end{note}
+
+\section{The build}
+\label{sec:install:build}
+
+From the top of the repository:
+
+\begin{shell}
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j
+ctest --test-dir build
+\end{shell}
+
+\code{ctest --test-dir} needs CMake 3.20 or later. An older \code{ctest}
+ignores the option, finds no tests and still exits with 0, so with CMake 3.16
+to 3.19 run \code{cd build \&\& ctest} instead. The whole suite takes about 25 minutes on two
+cores; \code{ctest -R yuzen\_tests} runs the unit tests alone in a few seconds.
+
+This produces two executables in \file{build/bin/}: the solver \file{yuzen} and
+the test binary \file{yuzen\_tests}. Run \file{yuzen --version} and it
+prints its full version --- \code{Yuzen-1.0.0}, as
+\code{MAJOR.MINOR.PATCH}; with no argument it prints its usage. Input
+files name only the \code{MAJOR.MINOR} series; \cref{ch:policy} says what that
+distinction promises and \cref{ch:revisions} what each release changed. The
+build type defaults to \val{Release}
+if you do not set it; do not benchmark a \val{Debug} build, and do not draw
+conclusions about convergence from one either, since the difference in rounding
+is not the interesting kind.
+
+\section{Build options}
+\label{sec:install:options}
+
+\begin{yzntable}{CMake options\label{tab:cmake-options}}{@{}L{0.30\textwidth} L{0.10\textwidth} L{0.52\textwidth}@{}}
+\textsf{\bfseries Option} & \textsf{\bfseries Default} & \textsf{\bfseries Effect}\\ \midrule
+\code{YUZEN\_ENABLE\_OPENMP}   & \val{ON} & OpenMP parallelization. Turning it off also removes the two extra \code{ctest} entries that check thread invariance. \\
+\code{YUZEN\_WITH\_AMGCL}      & \val{ON} & Build the AMGCL backend. If the headers cannot be found or fetched, the build warns and continues without it. \\
+\code{YUZEN\_STRICT\_WARNINGS} & \val{ON} & \code{-Wall -Wextra} and the implicit-fallthrough warning. \\
+\code{YUZEN\_BUILD\_TESTS}     & \val{ON} & Build \file{yuzen\_tests} and register the \code{ctest} entries. \\
+\code{YUZEN\_PREFER\_LIBOMP}   & \val{ON} & GCC on Linux: link LLVM's OpenMP runtime \code{libomp} instead of GCC's \code{libgomp} when it is installed; its parallel regions cost a quarter as much on 56 threads (\cref{sec:parallel:runtime}). \\
+\code{YUZEN\_OPENMP\_RUNTIME}  & (empty) & The path of an OpenMP runtime to link instead of the compiler's own (\file{libomp.so}, \file{libiomp5.so}); it takes precedence over \code{YUZEN\_PREFER\_LIBOMP}. \\
+\end{yzntable}
+
+So, for example, a minimal build without AMGCL and without tests is
+
+\begin{shell}
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+      -DYUZEN_WITH_AMGCL=OFF -DYUZEN_BUILD_TESTS=OFF
+cmake --build build -j
+\end{shell}
+
+Both settings of \code{YUZEN\_WITH\_AMGCL} are supported configurations and
+both compile; the \code{\#ifdef} that distinguishes them never appears in a
+header, only in \file{yuzen/src/\bk numerics/\bk LinearSolverBackend.cpp}. If you ask
+for the \val{"amgcl"} backend in an input file but built without it, the run
+warns and falls back to \val{"eigen"} (\cref{sec:linsolve:backends}).
+
+\section{Installing}
+\label{sec:install:install}
+
+The solver can be run from \file{build/bin/} as it is. To put it somewhere
+else,
+
+\begin{shell}
+cmake --install build --prefix $HOME/.local
+\end{shell}
+
+copies \file{yuzen} into \file{bin/} under the prefix, and \file{LICENSE},
+\file{NOTICE}, \file{THIRD\_PARTY\_NOTICES.md} and \file{README.md} into
+\file{share/doc/yuzen/}. Nothing else is installed: Eigen and AMGCL are
+header-only and compiled in, and the scripts of \file{tools/}, the cases and
+this manual are used from the source tree.
+
+\section{The test suite}
+\label{sec:install:tests}
+
+\begin{shell}
+ctest --test-dir build
+\end{shell}
+
+\code{ctest} registers seventeen entries (sixteen where SymPy is not
+installed). Three run the test binary in separate
+processes: once with whatever thread count the environment gives, once with
+\env{OMP\_NUM\_THREADS=1} and once with \env{OMP\_NUM\_THREADS=4}. That is not
+redundancy. Thread invariance is one of the claims the suite makes, and it can
+only be asserted across processes (\cref{ch:reproducibility}). Twelve run the
+solver itself: \code{concz\_vs\_wm} and \code{concz\_vs\_wm\_2d} check
+that the two concentration models agree where they must;
+\code{restart\_roundtrip} that a restart of either model, in 1-D and 2-D, from
+the \file{.vts} (in \val{"CZ"} also one without the thickness and substrate) and from the \file{field*.dat}, starts from the state and the
+time it was given (\cref{sec:ref-numerics:restart}), and that each \file{.vts}, read through the offsets in its header, holds what the field file of the same instant holds; \code{restart\_chain}
+that a run stopped and restarted several times, from either format, gives the
+same files, bit for bit, as one that ran straight through; \code{input\_guards}
+that inputs which would otherwise run with a silently wrong answer --- a misspelled key, a
+one-sided \val{"Periodic"}, a \val{"Periodic"} edge on a rotating film, a
+pinned edge facing a film of full thickness ---
+are refused with the reason; \code{error\_paths} that what a new user, a full
+disk or a job scheduler does to a run --- a wrong command line, input file or
+result directory, a missing or truncated restart file, a file size limit or a
+full device, \code{SIGINT}, \code{SIGTERM} or \code{SIGKILL} in the middle
+of a run, paths with spaces and Japanese characters --- stops it with the path
+and the reason and leaves no file cut short, and that a run interrupted and
+continued is, bit for bit, the run made straight through
+(\cref{sec:output:failures}); \code{equivalence} that the same problem
+posed in two ways gives the same answer (\cref{sec:verification:equivalence});
+\code{analytic} that the problems with a closed-form answer get it, at
+the order the scheme promises (\cref{sec:verification:analytic}); \code{mms}
+that a manufactured solution with a large amplitude, with every term of each
+model on, converges at second order in space and time
+(\cref{sec:verification:mms}); \code{advection} that the convection schemes
+keep a concentration step within its bounds where they promise to, and
+converge on a smooth one at their order, and that the well-mixed
+concentration converges in 2-D at second order with convection and
+diffusion together (\cref{sec:verification:schemes});
+\code{features} that the probes, the
+steady-state, dry-out and \key{MaxSteps} stops and the growth of an adaptive
+time step do what they say (\cref{sec:verification:features}); and
+\code{proptest} that random valid inputs end cleanly, keep the film positive
+and the volume and the solute, and are invariant where they must be
+(\cref{sec:verification:fuzzing}). One runs no
+solver: \code{doc\_keys} reads every key the parser reads, with its type,
+default, range and accepted values, holds the key tables of
+\cref{ch:ref-domain,ch:ref-physics,ch:ref-bcout,ch:ref-numerics}, the TOML
+listings of this manual and every file in \file{cases/} to it, and has the
+binary read each case with \code{--check-input}
+(\cref{sec:inputformat:unknown}). The last,
+\code{mms\_source\_current}, is registered only where SymPy is installed: it
+checks that the generated source of the manufactured solution is up to date.
+All but the three test-binary entries need a Python interpreter and are left
+out without one.
+
+Running the test binary directly prints the counts:
+
+\begin{plain}
+$ ./build/bin/yuzen_tests
+[doctest] test cases:    128 |    128 passed | 0 failed | 0 skipped
+[doctest] assertions: 183297 | 183297 passed | 0 failed |
+\end{plain}
+
+These are not smoke tests. They assert against analytic solutions, conservation
+laws and convergence orders; \cref{sec:verification:suite} lists what each of
+the seventeen test files fixes.
+
+\section{Repository layout}
+\label{sec:install:layout}
+
+\begin{plain}
+yuzen/src/grid/        structured grid and fields (staggered, type-tagged)
+yuzen/src/numerics/    vectors, CRS matrices, linear solvers, time integrators
+yuzen/src/model/       the physics: pressure terms, equations, model drivers
+yuzen/src/IO/          input parsing, output, restart, probes
+yuzen/src/util/        logging, paths, job information
+yuzen/src/commonFunctions/   shape functions and shape generation
+yuzen/tests/           the test suite
+cases/                 example and regression input files
+tools/                 helper scripts
+docs/                  theory, numerics, validation, and this manual
+third_party/           doctest, toml++
+\end{plain}
+
+\Cref{ch:layout} goes through this in more detail, for readers who intend to
+modify the solver.
+
+\section{Continuous integration}
+\label{sec:install:ci}
+
+\file{.github/workflows/ci.yml} builds and tests on Ubuntu with GCC and Clang
+(and with GCC 11, the system compiler of RHEL 9 and of many clusters),
+on Windows with MSVC, and on macOS with Clang, all \emph{without} AMGCL so
+that the plain configuration is the one kept honest, and once more on Ubuntu
+with GCC and AMGCL, so that the code path taken only with AMGCL is built and
+tested too.
+
+\section{If the build fails}
+\label{sec:install:trouble}
+
+\begin{description}
+  \item[Eigen is fetched every time.] CMake only fetches when
+    \code{find\_package(Eigen3 3.3 QUIET NO\_MODULE)} fails. Install Eigen
+    system-wide, or point \code{Eigen3\_DIR} at it, and the fetch stops.
+  \item[AMGCL cannot be fetched.] The build warns, sets
+    \code{YUZEN\_WITH\_AMGCL} to \val{OFF} and continues. Nothing else is lost;
+    you simply have one backend, \val{"eigen"}, instead of two.
+  \item[OpenMP not found on macOS.] Apple Clang needs \code{libomp}
+    (\code{brew install libomp}). If you would rather not, configure with
+    \code{-DYUZEN\_ENABLE\_OPENMP=OFF}: the serial build produces exactly the
+    same numbers.
+  \item[Warnings you do not want.] Configure with
+    \code{-DYUZEN\_STRICT\_WARNINGS=OFF}. Please do not make this the default
+    for development work; the warning set was turned on deliberately.
+\end{description}

@@ -1,0 +1,337 @@
+% ch-inputformat.tex -- the input file: TOML, type conversion, map of the blocks
+\chapter{The input file}
+\label{ch:inputformat}
+
+A Yuzen run is described by exactly one text file, which you pass to the
+executable on the command line. That file is a \textbf{TOML} document. This
+chapter explains how Yuzen uses TOML: how the block structure of a case maps
+onto TOML tables, how a written value becomes a number inside the solver, how
+defaults and required keys are expressed, and which mistakes the reader will
+\emph{not} tell you about. The keys themselves are documented block by block in
+\cref{ch:ref-domain,ch:ref-physics,ch:ref-bcout,ch:ref-numerics}; the map in
+\cref{sec:inputformat:map} tells you which of those chapters to open.
+
+Read this chapter once before you write your first input file by hand. Most of
+the ways a Yuzen run goes wrong quietly --- rather than aborting with a message
+--- are properties of the reader described here, not of the physics.
+
+\section{TOML, chosen by the file name}
+\label{sec:inputformat:formats}
+
+The reader layer is \code{yuzen::config::Block}, and it picks the parser from
+the file-name extension alone. A name ending in \file{.toml} is parsed with
+toml\texttt{++}; that is the format this manual specifies, and the one to write
+new work in. Nothing inside the file influences the choice, so renaming a TOML
+file to something else does not convert it --- it hands the file to the \file{.inp}
+parser of \cref{sec:inputformat:legacy}, which then fails on TOML syntax.
+
+TOML itself is a published standard and is not re-specified here. Its grammar
+--- comments, strings, numbers, booleans, arrays, tables --- is at
+\url{https://toml.io}, and any TOML parser, editor mode or scripting library
+will read a Yuzen input file correctly. What is specific to Yuzen, and what the
+rest of this chapter documents, is which TOML constructs the solver's block
+tree is built from, and what happens to a value on its way from the file into a
+variable.
+
+\section{Blocks are tables}
+\label{sec:inputformat:tables}
+
+A Yuzen case is a tree: named blocks, nested inside one another, each holding
+keys and further blocks. That tree maps onto TOML in four steps.
+
+\begin{description}
+  \item[A block is a table.] \key{Grid} is written \code{[Grid]}, and every
+    key after that header up to the next header belongs to it.
+  \item[A nested block is a dotted table path.] \key{Evaporation} inside
+    \key{Physics} is \code{[Physics.Evaporation]}; \key{SurfaceShape} inside
+    \key{Initial} is \code{[Initial.SurfaceShape]}. The depth is not limited,
+    and a container that carries no keys of its own ---
+    \code{[Initial]}, \code{[Physics]} --- may be written as an empty table
+    or left out entirely, since the dotted header of a child creates it.
+  \item[A repeated block is an array of tables.] Write the header in double
+    brackets, \code{[[Substrate.EllipseBump]]}, once per occurrence;
+    \cref{sec:inputformat:repeat} says which blocks may repeat.
+  \item[A vector-valued key is an array.] \code{Center = [0.5, 0.0]}. The two
+    components are the $x$ and $y$ values, in that order, in 1-D runs as well.
+\end{description}
+
+Keys written before the first table header are the \textbf{root-level} keys:
+\key{SolverName} and \key{JobName}, and the optional length-scale pair. TOML
+requires them to come first, before any \code{[...]} line, because everything
+after a header belongs to that table. A \key{JobName} placed after
+\code{[Grid]} is a key of \key{Grid}, and the run stops for want of a
+root-level \key{JobName}.
+
+Block names, key names and string values are \textbf{case-sensitive}:
+\key{Nx} is the grid size, and \code{nx} is an unknown key that stops the run
+(\cref{sec:inputformat:unknown}). A string value that differs from an accepted
+one only in case, such as \val{"ilu"} for \val{"ILU"}, is refused too, and the
+message names the spelling that would have been accepted.
+
+Key names are written in \code{PascalCase} (\key{NewtonMaxIterations},
+\key{EndConcValue}), with American spelling (\key{Center}).
+
+\section{How a written value becomes a number}
+\label{sec:inputformat:types}
+
+Conversion happens at read time and is decided by the type of the destination
+variable in the solver, not by the TOML type you wrote. toml\texttt{++} hands
+every scalar to \code{yuzen::config::Block} as text, and the text is converted
+when the solver asks for the key. Writing \val{Nx = 300.0} is therefore legal,
+and so is \val{Enable = 1}. The four conversions are strict: a value is converted whole or refused, and
+the refusal names the key path and the value.
+
+\begin{description}
+  \item[bool] True for \val{true}, \val{yes}, \val{on}, \val{1} and
+    \val{.true.}; false for \val{false}, \val{no}, \val{off}, \val{0} and
+    \val{.false.}, compared case-insensitively. Anything else is refused.
+  \item[int] Parsed as a double, which must be a whole number: \val{1e3} is
+    1000, \val{1000.4} is refused. A whole number beyond the range of the
+    key's integer type --- 32 bits, and 64 for \key{Numerics.MaxSteps} --- is
+    clamped to its end.
+  \item[double] Parsed with \code{strtod}; the whole text must be the number,
+    and \val{nan} and \val{inf} are refused.
+  \item[array] Converted element by element with the rules above. A list
+    where one value is expected, a nested list or a TOML date or time is
+    refused; so is nesting deeper than 64 levels.
+\end{description}
+
+The reader imposes no size on an array. Where a key is documented as an array
+of two doubles, it is \file{Input.cpp} that checks the length afterwards and
+aborts the run if it is not exactly~2. Beyond the conversion, values with
+which the equations mean nothing --- a density, viscosity or surface tension
+that is not positive, a time step, tolerance or output interval that is not
+positive, a negative \key{EndTime}, an initial film with no liquid in it ---
+are refused with \code{Input mismatch: key = value: why}; the reference
+chapters give the ranges.
+
+\begin{note}[What TOML catches for you]
+  A number TOML cannot parse --- \val{1,0e-6} with a comma, \val{1e--6},
+  \val{.5} without its leading zero --- is a \emph{syntax error}, and the run
+  stops with the file name, the line and toml\texttt{++}'s description of the
+  problem. The same goes for an unquoted string: \key{Dimension = xh} is not a
+  value at all, where \key{Dimension = "xh"} is. A quoted value in a numeric
+  key, such as \key{InitialDt = "fast"}, is valid TOML and is refused by the
+  conversion above. Without strict conversions, \key{Enable =
+  "ture"} would mean false, an unreadable double would become 0 and a date
+  would be dropped as though the key had not been written;
+  \file{tools/proptest.py} and the fuzzing of
+  \cref{sec:verification:fuzzing} found these during development.
+\end{note}
+
+\section{Defaults, required keys and what is missing}
+\label{sec:inputformat:defaults}
+
+Whether a key is required is not declared anywhere in the file; it follows
+from which overload of \code{getin} the solver calls for it.
+\code{getin(name, v)}, with no default, throws \code{VariableNotFound}, which
+\code{Input::Read} catches and turns into immediate termination of the
+process. \code{getin(name, v, def)} stores \code{def} without a word. Blocks
+work the same way: a block fetched with a bare \code{getBlockSize} or
+\code{getBlock} is required, one fetched inside a
+\code{try \dots{} catch(BlockNotFound)} is optional.
+
+Thirteen keys are required outright across the whole file. They are \key{SolverName}
+and \key{JobName} at root level, \key{Dimension}, \key{Nx}, \key{Xmin} and
+\key{Xmax} in \key{Grid}, \key{Value} in \key{Initial.Concentration},
+\key{Model} in \key{Physics.ConcField} (only when that block is present),
+\key{InitialDt} in \key{Numerics}, \key{X} in every
+\key{Output.ProbeList.Probe}, and \key{Start}, \key{End} and \key{PerDecade}
+in \key{Output.FieldData.LogSchedule} (only when that block is present). Everything else has a built-in default. In the
+reference chapters a required key is marked \reqd{} in the default column.
+
+An optional block that is left out reads as an empty one: each of its keys
+takes its default. The exceptions are in \key{Physics}: a missing sub-block
+there is a term switched off, even where \key{Enable} defaults to
+\val{true} inside a block that is written, and a missing
+\key{Physics.ConcField} means \key{Model}~$=$~\val{"None"}
+(\cref{ch:ref-physics}).
+
+A required \emph{block} that appears twice is just as fatal as one that is
+missing: the reader aborts with \code{Block [...] is required and must appear
+exactly once}. In TOML
+you cannot write a plain table header twice --- \code{[Grid]} twice is a
+duplicate-key syntax error that toml\texttt{++} rejects --- so the way to trip
+this is to write \code{[[Grid]]}, an array of tables, where a single table
+belongs. The chapters that follow say for every block whether it is required
+and whether it may repeat, and \cref{tab:file-map} summarizes it for the top
+level.
+
+\section{Entries the solver does not know stop the run}
+\label{sec:inputformat:unknown}
+
+Every key and every block the reader asks for is recorded, found or not. Once
+the whole input has been read, anything in the file that nobody asked for is
+something this version does not know --- a misspelled key, a key in the wrong
+table, a table with a misspelled name --- and the run stops before anything is
+computed, listing each one with its full path:
+
+\begin{plain}
+Error in the input: case.toml contains 3 entries that this version of Yuzen
+does not read, so whatever they were meant to set would keep its default:
+  key   Initial.PrecursorRatio   (this key is read in [Initial.SurfaceShape])
+  key   Initial.SurfaceShape.EdgeBump.alpha   (did you mean Initial.SurfaceShape.EdgeBump.Alpha?)
+  block [Physics.Evaporaton]   (did you mean [Physics.Evaporation]?)
+Correct the spelling or remove the entry. The manual's input reference lists
+every key each block accepts.
+\end{plain}
+
+A near miss of a name the block does read is offered as the likely intent; a
+correctly spelled key in the wrong table is pointed at the table that reads it.
+Like the other input errors, this one goes to standard error, before the result
+directory exists (\cref{sec:output:running}).
+
+To make these checks without running anything, give \code{--check-input}
+before the file name:
+
+\begin{shell}
+yuzen --check-input case.toml
+\end{shell}
+
+The file is read and checked exactly as for a run --- unknown entries,
+required keys, ranges, accepted values and the consistency checks between
+keys --- and the program then prints \code{Input check passed} and exits
+with status 0, or stops with the reason and status 1. Nothing is created.
+A \key{Restart.FileName} that is not there, relative to the directory the
+check is made in, is noted in a line starting \code{Note:} but does not fail
+the check: the run that reads it may start elsewhere. A run started where it
+is missing stops before making its result directory.
+
+Without this, each of those entries would have been read by nobody and the
+setting it was meant to change would have kept its default without a word:
+the precursor at \val{0}, $\alpha$ at \val{1}, evaporation off. That is why
+the check refuses rather than warns.
+
+TOML's own checks are about syntax. A well-formed document with a key in the
+wrong place is still well formed, which is why the check above is the solver's
+and not toml\texttt{++}'s. What it cannot catch is a correctly spelled key, in
+the right table, with the wrong value; for that, read back what the solver
+understood --- the grid, the scales and the dimensionless groups it prints to
+\textbf{standard output} (\cref{sec:output:running}).
+
+\section{Repeated blocks}
+\label{sec:inputformat:repeat}
+
+Some blocks may appear more than once. These are the thirteen shape blocks,
+seven under \key{Initial.SurfaceShape} and six under \key{Substrate}, together
+with \key{Output.ProbeList.Probe}. The parser sizes the vector from
+\code{getBlockSize} and fills it in file order, so four \key{EllipseBump}
+blocks build four bumps. Zero copies are allowed as well --- a
+\key{Substrate} table with no shape block in it is a flat substrate.
+
+Write each occurrence as an array-of-tables header:
+
+\begin{toml}
+[[Substrate.RectBump]]
+Order  = 1
+Center = [0.0, 0.0]
+
+[[Substrate.RectBump]]
+Order  = 2
+Center = [1.0e-3, 0.0]
+\end{toml}
+
+A block that may appear only once is a plain table, \code{[Substrate]}. The
+shipped cases write a \emph{single} occurrence of a repeatable block as a plain
+table too --- \code{[Substrate.EllipseBump]} --- and the solver reads it as a
+list of one. Both spellings are accepted; use the double-bracket form as soon
+as there is more than one, because a second plain \code{[Substrate.RectBump]}
+header is a duplicate-key error rather than a second bump.
+
+\section{Units}
+\label{sec:inputformat:units}
+
+\textbf{All dimensional input is SI}: meters, seconds, kilograms, \si{\pascal\second},
+\si{\newton\per\metre}, \si{\metre\squared\per\second} and radians, except
+where a table in the reference chapters says otherwise. Two exceptions are
+worth memorizing now. The first is the contact angle,
+\key{Physics.DisjoiningPressure.ContactAngle},
+which is in \emph{degrees} --- and it is the only angle in the file that is;
+the tilt of a \key{FlatPlane} shape, like everything else, is in radians. The
+second is \key{Fluid.MolarMass}, which takes any consistent unit, because only
+the ratio of its two values is ever used.
+
+You never write a non-dimensional quantity, except for the handful of keys
+that are genuinely dimensionless (exponents, ratios, switches and the
+tolerances in \key{Numerics}). \code{NonDimensionalNumbers::Build} converts
+your SI values into the solver's internal scales and prints the result to
+standard output (\cref{sec:output:running}).
+
+\section{A complete fragment}
+\label{sec:inputformat:example}
+
+\begin{toml}
+# a 1-D film, 1 mm wide
+SolverName = "Yuzen-1.0"
+JobName    = "demo"
+
+[Grid]
+Dimension = "xh"
+Nx        = 300
+Xmin      = -0.5e-3
+Xmax      = 0.5e-3
+
+[Initial.Concentration]
+Value = 0.5
+
+[Initial.SurfaceShape]
+TotalHeight    = 10e-6
+PrecursorRatio = 0.02
+
+[[Initial.SurfaceShape.EllipseBump]]
+CreateType = "add"
+Height     = 0.5
+Center     = [0.0, 0.0]
+Width      = [0.4e-3, 1.0]
+SlopeWidth = 0.05
+
+[Boundary.XminBC]
+Type = "Symmetry"
+
+[Boundary.XmaxBC]
+Type = "Outlet"
+\end{toml}
+
+This fragment is not a complete input file: \key{Fluid}, \key{Physics},
+\key{Output} and \key{Numerics} are required as well, and the run would abort
+without them. Note that \code{[Initial]} and \code{[Boundary]} never appear as
+headers of their own --- the dotted paths below them create both --- and that
+the two root-level keys stand at the top, before any header.
+
+\section{A map of the file}
+\label{sec:inputformat:map}
+
+\Cref{tab:file-map} lists everything that may appear at the top level of an
+input file, and where in this part of the manual to find its keys. The
+version covered throughout is Yuzen 1.0: 58 block paths, 54 of which carry
+keys, and 229 key entries in total.
+
+\begin{yzntable}{Every top-level block, and where it is documented\label{tab:file-map}}{@{}L{0.20\textwidth} L{0.13\textwidth} L{0.11\textwidth} L{0.44\textwidth}@{}}
+\textsf{\bfseries Block} & \textsf{\bfseries Required} & \textsf{\bfseries Repeats} &
+\textsf{\bfseries Contents, and where to read about it} \\ \midrule
+Root level & partly & \dash & Keys before the first table header: \key{SolverName} and \key{JobName} are required, the length scale is optional. \Cref{sec:ref-domain:root}. \\
+\key{Grid} & yes & no & Dimension, cell counts and domain bounds. \Cref{sec:ref-domain:grid}. \\
+\key{Initial} & yes & no & Initial concentration and film shape, with repeatable shape sub-blocks. \Cref{sec:ref-domain:initial}. \\
+\key{Substrate} & no & no & Substrate topography, with the same shape sub-blocks. \Cref{sec:ref-domain:substrate}. \\
+\key{Fluid} & yes & no & Density, surface tension, viscosity, diffusivity, molar mass. \Cref{sec:ref-domain:fluid}. \\
+\key{Physics} & yes & no & Which terms are active and their parameters. \Cref{ch:ref-physics}. \\
+\key{Boundary} & yes & no & One condition per domain edge. \Cref{sec:ref-bcout:boundary}. \\
+\key{Output} & yes & no & What is written and how often. \Cref{sec:ref-bcout:output}. \\
+\key{Numerics} & yes & no & Time stepping, Newton and linear-solver settings. \Cref{sec:ref-numerics:numerics}. \\
+\key{Restart} & no & no & Continue from a previous result. \Cref{sec:ref-numerics:restart}. \\
+\end{yzntable}
+
+No top-level block may be repeated; a second copy of a required one aborts the
+run. The blocks that may repeat are all nested: the seven shape blocks of
+\key{Initial.SurfaceShape}, the six of \key{Substrate}, and
+\key{Output.ProbeList.Probe}.
+
+\section{The \file{.inp} format}
+\label{sec:inputformat:legacy}
+
+Yuzen also reads a block-structured \file{.inp} format: any file name that
+does not end in \file{.toml} goes to that parser. \textbf{The format is not
+specified in this manual.} It is an alternative input format, and it is not
+where new work belongs.
+
+The shipped cases and every example in this manual are TOML.

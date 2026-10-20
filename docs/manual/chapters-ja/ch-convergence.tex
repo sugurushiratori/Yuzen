@@ -1,0 +1,155 @@
+% ch-convergence.tex -- numerical method: the correction floor, the convergence tests, termination
+\chapter{収束と修正量の下限}
+\label{ch:convergence}
+
+本章は、実用上は本マニュアルで最も重要な章である。「Yuzenが耐えられないほど遅い」「計算が進まなくなった」という報告は、ほとんどが次の二つのどちらかに行き着く。一つは、満たせない収束判定のために時間刻みが極端に小さくなる場合である。もう一つは、定常状態の判定が早すぎる段階で満たされ、まだ変化している途中で計算が止まる場合である。どちらも、反復や計算を変化の絶対量で判定するという同じ誤解から生じる。ニュートン修正量にはそれ以上下がらない下限があり、その理由を理解すれば、どちらも避けられる。
+
+各ステップのニュートン反復をいつ止めるかは、\key{Numerics.HeightEquation}ブロック（\cref{sec:ref-numerics:height}）の四つのキー、\key{NewtonEpsilon}、\key{NewtonEpsilonRel}、\key{NewtonMaxIterations}、\key{NewtonMinIterations}で決まる。計算全体をいつ止めるかは、\key{Numerics}ブロック（\cref{sec:ref-numerics:numerics}）の二つのキー、\key{SteadyStateCriterion}と\key{SteadyStateSteps}で決まる。
+
+\section{修正量の下限}
+\label{sec:convergence:floor}
+
+ニュートン法は二次収束するので、最初の数回の反復では修正量は理論どおりに減っていく。しかしその後は減少が止まり、ある値の周りでばらつくだけになる。\cref{tab:floor}の濡れ広がる膜を\key{Nx = 2000}で計算した例を示す。
+
+\begin{plain}
+iteration 0 : 6.231e-02      <- quadratic convergence, falling cleanly
+iteration 1 : 1.899e-03
+iteration 2 : 1.494e-05
+iteration 3 : 1.037e-09
+iteration 4 : 1.931e-16      <- this is the "floor"
+iteration 5 : 2.220e-16
+iteration 6 : 2.189e-16      <- from here it wanders between 1.5e-16 and 2.2e-16
+\end{plain}
+
+この下限は\textbf{右辺を組み立てるときの桁落ち}によるもので、線形ソルバーの精度とは関係がない。右辺は\cref{eq:nk-update}の残差
+
+\begin{equation}\label{eq:residual}
+  \mathrm{Rhs} = (\varphi_{\mathrm{old}} - \varphi_{\mathrm{guess}})
+    - \Delta t\left[\theta\,A\cdot\varphi_{\mathrm{guess}}
+      + (1-\theta)\,A\cdot\varphi_{\mathrm{old}} + B\right],
+\end{equation}
+
+である。$A$は空間の四階差分なので、係数は$1/\Delta x^{4}$のオーダーになる。\key{Nx = 2000}（無次元で$\Delta x = 1.72\times10^{-4}$）では、行和は$\sim 6\times10^{15}$に達する。$A\cdot\varphi$をこれらの要素と$\varphi$の積として作ると、この大きさの項どうしが打ち消し合って約$10^{5}$の値が残る。その絶対誤差は$\epsmach \times \lVert A\rVert \times \lvert\varphi\rvert \sim 1$で、\cref{eq:residual}ではこれに$\Delta t$が掛かる。$I + \theta\,\Delta t\,J$の逆行列は縮小写像なので、このような積で作った場合の下限はおおよそ
+
+\begin{equation}\label{eq:floor}
+  \epsmach \times \frac{\Delta t}{\dtexp},
+  \qquad
+  \dtexp \sim \frac{3\mu\,\Delta x^{4}}{H^{3}},
+\end{equation}
+
+となり、時間刻みが陽解法の安定限界をどれだけ超えているかに比例する。ただし鉛直一様モデルの膜厚の式では、硬い項をこのようには作らない。毛管圧と鉛直重力は、$A\cdot\varphi$をセル界面ごとに求める（\cref{sec:time:apply}）。セル界面の流束は移動度と膜の差分の積であり、差分は隣り合う値の間で先にとる。そのため打ち消し合うのは膜そのものではなく、ステンシル上での膜の変化分である。\cref{tab:floor}の膜では、格子や時間刻みによらず、下限は$\varphi$自体の下限、すなわち$\epsmach$の数倍となる。積として作る項（要素が$1/\Delta x$または$1/\Delta x^{2}$のオーダーの面内体積力、マランゴニ応力、分離圧）と、ステンシル上の変化が膜そのものと同程度の膜については、\cref{eq:floor}が引き続き上限を与える。\env{YUZEN\_DEBUG\_FLOOR}を\val{1}に設定すると、下限が出力される。
+
+\begin{yzntable}{修正量の下限の測定値と、$A\cdot\varphi$を積として作る場合の\cref{eq:floor}による上限$\epsmach\,\Delta t/\dtexp$\label{tab:floor}}{@{}L{0.24\textwidth} d d d d d@{}}
+\textsf{\bfseries ケース} & \textsf{\bfseries $\Delta x$ [\si{\micro\metre}]} &
+\textsf{\bfseries $\Delta t$} & \textsf{\bfseries $\Delta t/\dtexp$} &
+\textsf{\bfseries 上限} & \textsf{\bfseries 測定値} \\ \midrule
+濡れ広がり、Nx = 500  & 1.2  & 3.21e-9  & 4.8e3 & 1.1e-12 & 1.1e-16 \\
+濡れ広がり、Nx = 2000 & 0.3  & 3.21e-9  & 1.2e6 & 2.7e-10 & 1.8e-16 \\
+濡れ広がり、Nx = 2000 & 0.3  & 3.21e-11 & 1.2e4 & 2.7e-12 & 1.1e-16 \\
+平坦な膜、\file{leveling\_1d\_reg} & 3.33 & 3.21e-8 & 8.1e2 & 1.8e-13 & 5.5e-17 \\
+\end{yzntable}
+
+$\Delta t$の列は無次元である。濡れ広がる膜は\file{stress\_wetting}を表中の\key{Nx}で計算したもので、適応時間刻みで\SI{1}{\milli\second}（\key{Nx = 2000}では\SI{0.1}{\milli\second}）進めた後、\key{NewtonEpsilon}と\key{NewtonEpsilonRel}が効かないようにして、表の$\Delta t$で時間を進めた。下限は、五回目以降の反復の修正量の中央値である。ここから二つの結論が得られる。
+
+\begin{description}
+  \item[普遍的な値はない。] これらの膜では、下限は$\Delta x^{-4}\Delta t$に比例しては増えない。しかし積として作る項、数セルの間で急峻に変化する膜、別のケースでは、下限が\cref{eq:floor}の値まで高くなることがある。下限は仮定せず、測定する必要がある。
+  \item[限界は機械精度で決まる。] 更新後の膜をそれより細かく表現できないので、修正量は$\epsmach\,\lvert\varphi\rvert$より下がらない。下限を決めているのは線形ソルバーではない（\code{bcg\_resid}の測定値は$\sim 10^{-25}$である）。線形ソルバーの許容誤差を厳しくしても、下限はまったく変わらない。
+\end{description}
+
+\section{絶対判定だけを使った場合}
+\label{sec:convergence:absolute}
+
+\begin{warn}[絶対判定だけの収束判定を使わない]
+  下限が$\Delta t$に比例する場合（\cref{eq:floor}）、下限より低い絶対しきい値を使うと、「$\Delta t$を小さくすれば下限が下がり、いずれ判定が満たされる」という関係ができる。この関係が時間刻みの制御とフィードバックループを作り、計算は両者がちょうど釣り合う時間刻みに張り付く。$\epsmach\,\lvert\varphi\rvert$より低いしきい値は、決して満たされない。
+\end{warn}
+
+ループは次のように進む。
+
+\begin{enumerate}
+  \item 下限より低い\key{NewtonEpsilon}は満たされない。
+  \item 反復は五回ほどで実質的に収束しているが、\key{NewtonMaxIterations}まで空回りを続ける。
+  \item 反復回数の上限に達したため、収束失敗と報告する。
+  \item 呼び出し元の\code{TimeAdvance}は失敗を受けて\textbf{時間刻みを半分にする}。
+  \item 時間刻みが小さくなると下限が下がる。そのため計算は、ちょうど\key{NewtonEpsilon}に届く時間刻みに落ち着き、その付近で振動する。ログには\code{dt-}と\code{dt+}が交互に現れる。
+\end{enumerate}
+
+格子が細かいほど、\cref{eq:floor}の型の下限は高くなり、計算が張り付く時間刻みは小さくなる。接触線を解像する格子では、このループのために、到達できる物理時間が何桁も短くなることがある。
+
+\section{下限の影響を受けない二つの判定}
+\label{sec:convergence:tests}
+
+\subsection{相対判定、\key{NewtonEpsilonRel}}
+
+修正量が\textbf{その時間ステップの最初の修正量}の\key{NewtonEpsilonRel}倍まで下がると、反復は収束したとみなす。既定値は\val{1e-6}である。この判定は「この時間ステップの非線形性を六桁まで解いた」ことを意味し、そのステップだけについての判断である。解のスケール、時間刻みの大きさ、格子にはよらない。下限と$\Delta t$は分子と分母の両方に現れて打ち消し合うので、\cref{sec:convergence:absolute}のフィードバックループは生じない。反復は直前の二ステップから外挿した膜から始める（\cref{sec:time:newton}）。したがって最初の修正量は外挿で捉えきれなかった分であり、判定はこれに対する相対値で行う。外挿で膜が動いた量に対する相対値で判定した場合は、反復が一回早く止まり、百倍に厚くしたノズル膜の体積が$|\mathrm{VolErr}| = 5\times10^{-11}$までずれた（\file{tools/\bk analytic.py}の\code{nozzle\_balance}）。最初の修正量に対する相対値なら$7\times10^{-14}$にとどまる。
+
+本章冒頭の履歴では、しきい値は$6.231\times10^{-2} \times 10^{-6} = 6.23\times10^{-8}$となる。そのため反復は下限に達する前、反復3で終了する。\key{NewtonEpsilonRel}を\val{0}以下にすると相対判定は無効になり、絶対判定だけが残る。
+
+\subsection{停滞判定}
+\label{sec:convergence:stagnation}
+
+二つ目の判定では、\textbf{それまでの最良値を更新できない反復が何回続いたか}を数える。それまでの最小の修正量の$0.9$倍を下回らない反復を一回の失敗とし、失敗が五回を超えるとループを止める。
+
+要点は、反復ごとの変化ではなく最良値と比べることにある。代わりに変化率$\lvert\mathrm{resid} - \mathrm{resid_{old}}\rvert/\mathrm{resid_{old}}$で判定すると、捉えたい状況でまったく作動しない。下限に達した修正量は反復ごとに数十パーセント、\cref{eq:floor}の型の下限では数倍もばらつくので、変化率による判定はどれも、これを順調に進んでいると誤認する。
+
+判定が作動したときの扱いは、修正量がどこまで下がったかで決まる。次のいずれかが成り立てば、反復は可能な限り収束したとみなし、ステップは何も報告せずに受理する。
+
+\begin{itemize}
+  \item 絶対判定を満たしている。
+  \item 修正量がそのステップの最初の修正量より四桁以上下がっている。つまりステップの非線形性を四桁まで解いている。
+  \item 修正量が$1000\,\epsmach\,\lvert\varphi\rvert$以内にある。ここで$\lvert\varphi\rvert$は膜の最大値である。膜は$\epsmach\,\lvert\varphi\rvert$より細かく更新できず、\cref{tab:floor}の下限もほぼこの程度である。この条件により、定常状態の近くで最初の修正量がすでに下限に近いステップを、\key{NewtonEpsilon}を下げずに受理できる。
+\end{itemize}
+
+それ以外の場合、反復は\textbf{収束から遠いところで}止まっており、そのステップは失敗とする。線形ソルバーが収束しない場合や、\key{NewtonMaxIterations}を使い切った場合と同じ扱いである。\key{Numerics.TimeStepControl.Enable =
+true}なら、時間刻みを\key{ChangeFactor}倍に縮めて解き直す。このように失敗した最初のステップは\file{Warnings.txt}に報告し、該当するステップはすべて\file{JobInfo.txt}に計上する（\code{Steps failed: the Newton correction stagnated}、\cref{sec:output:jobinfo}）。ほかの場合と同じく、\key{MinDt}を下回る縮小が必要になると計算は中断する（\cref{sec:time:dt}）。固定時間刻みでは解き直すための短い時間刻みがないので、停滞したことを示して計算を停止する（\cref{sec:ref-numerics:tsc}）。
+
+既定の許容値では、同梱のケースと付属のチェックで起こる停滞はすべて後者、つまり収束から遠い停滞であり、しかも収束から大きく離れている。接触線のストレスケース（\file{stress\_wetting}の最初のステップ）では、修正量は最初の修正量の0.068倍から25倍で止まった。供給する液に独自の濃度を与えた厚いノズル膜（\code{nozzle\_supplied}、\cref{sec:verification:analytic}）では、$8\times10^{-4}$倍から1.9倍で止まった。相対判定のしきい値（$10^{-6}$）と$8\times10^{-4}$の間で停滞した例は一つもない。このようなステップを受理しても、そのステップの解にはなっていない。受理した場合、ノズル膜では残差が$2.2\times10^{-8}$の体積誤差として残り、固定時間刻みで計算した接触線の膜は負になって発散した。時間刻みを縮めれば、ノズル膜の体積誤差は丸め誤差の水準（$2\times10^{-13}$）にとどまる。
+
+四桁という値は、あえて\key{NewtonEpsilonRel}と連動させていない。\key{NewtonEpsilonRel}を$10^{-11}$（\key{NewtonEpsilon}を$10^{-16}$）とすると、同じノズル膜では三ステップのうち二ステップで、修正量が最初の修正量の$10^{-11}$から$10^{-4}$で頭打ちになる（クーラン数が最大150に達する制限付き風上化は滑らかでない）。これらのステップは受理される。もし失敗とすれば、\cref{sec:convergence:absolute}のループが絶対判定を追いかけるのと同じように、相対判定を追いかけることになる。この計算では$10^{-4}$より上で停滞した33ステップで時間刻みを縮め、全体で3358ステップを要し、\code{VolErr}は最終的に$1.5\times10^{-9}$となった。既定値では$2\times10^{-13}$なので、この差は受理したステップが残したものである。反復が到達できない膜に対して\key{NewtonEpsilonRel}を厳しくしても、得るものはない。
+
+\section{収束しないときに確認すること}
+\label{sec:convergence:diagnosis}
+
+\begin{enumerate}
+  \item \env{YUZEN\_DEBUG\_RESIDUAL}を設定し、反復の収束を妨げているのが膜厚か濃度かを調べる（\cref{sec:time:coupling}）。
+  \item \env{YUZEN\_DEBUG\_FLOOR}を設定し、修正量がどこで下がらなくなるかを調べる。
+  \item 下限が\key{NewtonEpsilon}より上にあるなら、\textbf{\key{NewtonEpsilon}を下げずに相対判定に任せる}。絶対しきい値を下げると、\cref{sec:convergence:absolute}の過程を逆にたどることになる。判定が厳しくなり、時間刻みが縮み、下限が下がる。結果として計算は正確にはならず、遅くなるだけである。
+  \item 修正量の停滞に関する警告が実際に出ている場合は、反復は本当に収束しておらず、下限では説明できない。警告は\file{Warnings.txt}で\code{correction stagnated}を探し（\cref{sec:output:warnings}）、そのために縮めたステップの数は\file{JobInfo.txt}で確認する。この場合は、判定が前提とする二次収束を妨げる滑らかでない要素（風上の切り替え、蒸発や濃度に対するクランプ）や、\file{stress\_wetting}の開始時のように状態に対して長すぎる時間刻みがないかを調べる。\env{YUZEN\_DEBUG\_RESIDUAL}を設定すると、停滞のたびに、判定に用いた下限とともに一行が出力される。
+\end{enumerate}
+
+\section{終了}
+\label{sec:convergence:termination}
+
+各ステップの終わりに、\code{CheckTermination()}が三つの判定を順に行う。
+
+\begin{enumerate}
+  \item \textbf{指定の時刻またはステップ数に達した}：計算が\key{Numerics.EndTime}を過ぎたか、\key{Numerics.MaxSteps}ステップを実行した。二つは\code{Time reached to the EndTime.}と\code{Step count reached Numerics.MaxSteps.}として別々に報告されるので、計算が早く止まったときにドットを数えて原因を調べる必要はない。\key{MaxSteps}の既定値は\val{0}（制限なし）なので、設定しなければ計算は終了時刻で止まる。\cref{sec:ref-numerics:numerics}を参照されたい。
+  \item \textbf{膜が乾ききった}：\key{Physics.Evaporation.EndConcType}で選んだ濃度（\val{"mean"}、\val{"max"}、\val{"min"}のいずれか）が\key{EndConcValue}を超えた。計算は\code{Dry out.}と出力する。
+  \item \textbf{解が変化しなくなった}：本節の残りでこれを扱う。
+\end{enumerate}
+
+\begin{warn}[定常かどうかをステップあたりの変化で判定しない]
+  $\max\lvert h_{\mathrm{new}} - h_{\mathrm{old}}\rvert /
+   \max\lvert h_{\mathrm{new}}\rvert$は、時間刻みが小さいだけで小さくなる。接触線を$\Delta t \sim 10^{-11}$で解像する計算は、開始から十数ステップで「定常」と判定され、何の警告もなく停止してしまう。ケースを細かく解像するほど早く起こるため、気づきにくい。
+\end{warn}
+
+実際の判定では、\textbf{単位時間あたりの}相対変化
+
+\begin{equation}\label{eq:changerate}
+  \mathrm{ChangeRate} =
+    \frac{\max\lvert h_{\mathrm{new}} - h_{\mathrm{old}}\rvert}
+         {\max\lvert h_{\mathrm{new}}\rvert \times \Delta t}
+  \quad [\si{\per\second}],
+\end{equation}
+
+を用い、\cref{eq:changerate}に次の基準を適用する。
+
+\begin{equation}\label{eq:steady}
+  \mathrm{ChangeRate} \times (\mathrm{EndTime} - \mathrm{StartTime})
+    < \mathrm{SteadyStateCriterion}.
+\end{equation}
+
+\cref{eq:steady}の左辺は、「現在の速さのまま、計算の全期間、すなわち開始時刻（$0$または\key{Restart.RestartTime}）から\key{EndTime}まで変化し続けた場合に、形状がどれだけ変わるか」を表す。この量は無次元で、時間刻みにも時間スケール$T_0$にもよらない。したがって\key{SteadyStateCriterion}の既定値\val{1e-3}は、「現在の速さでは、計算の全期間をかけても\SI{0.1}{\percent}しか変化しない」ことを意味する。
+
+\cref{eq:steady}が\key{SteadyStateSteps}を超えるステップ数だけ続けて成り立つと、計算は\code{Steady state.}と出力して停止する。最初の五ステップは判定しない（その間\code{ChangeRate}は1と報告される）。\key{SteadyStateCriterion}を\val{0}以下にすると、判定そのものが無効になる。
+
+\code{ChangeRate}は\file{CalcInfo.dat}に一列として書き出される。しきい値を当て推量で決めず、\textbf{選ぶ前にこの列を確認されたい}。対象のケースでこの量がとる値の範囲と、既定値がそれに対して緩いか厳しいかが、直接読み取れる。

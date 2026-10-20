@@ -1,0 +1,154 @@
+% bibliography.tex -- background reading
+\chapter*{参考文献}
+\addcontentsline{toc}{chapter}{参考文献}
+\markboth{参考文献}{参考文献}
+
+これは出典の一覧というより、主として背景を知るための文献である。Yuzen の方程式とその較正は
+本マニュアルの第III部で第一原理から導出しており、本マニュアルが比較の対象とする外部の結果は
+\cref{ch:verification}で明示的に挙げたものだけである。以下の文献は、標準的な内容がきちんと
+述べられている場所である。
+
+いくつかの項目は背景ではなく出典である。鉛直一様モデルは、下の\emph{数値解法}に挙げた Diez と
+Kondic (2002) の方法を実装し、遠心力、マランゴニ、分離圧の項を加えて拡張したものである。その
+正値性を保つ移動度はこの論文の式 (23) である。\cref{sec:disc:positivity}を参照されたい。
+\cref{sec:disc:convection}の対流スキームは、\emph{対流スキーム}に挙げた文献のものである。
+
+\section*{液膜と潤滑近似}
+
+\begin{description}[leftmargin=0pt, labelsep=0.5em, style=unboxed]
+  \item[O.~Reynolds (1886).] \emph{On the theory of lubrication and its
+    application to Mr.~Beauchamp Tower's experiments.} Philosophical
+    Transactions of the Royal Society of London \textbf{177}, 157--234.
+    ソルバー全体が依拠する近似の起源である。
+
+  \item[A.~Oron, S.~H.~Davis and S.~G.~Bankoff (1997).] \emph{Long-scale
+    evolution of thin liquid films.} Reviews of Modern Physics \textbf{69},
+    931--980. 標準的なレビューである。\cref{ch:governing}と併せて一つだけ挙げるなら、
+    本論文である。同じ方程式を導出し、各項を整理し、それぞれの項を許容するオーダーの仮定について注意深く
+    論じている。
+
+  \item[R.~V.~Craster and O.~K.~Matar (2009).] \emph{Dynamics and stability of
+    thin liquid films.} Reviews of Modern Physics \textbf{81}, 1131--1198.
+    より新しいレビューであり、蒸発、界面活性剤、不安定性についての記述が多い。
+\end{description}
+
+\section*{濡れ、接触線、分離圧}
+
+\begin{description}[leftmargin=0pt, labelsep=0.5em, style=unboxed]
+  \item[P.~G.~de Gennes (1985).] \emph{Wetting: statics and dynamics.} Reviews
+    of Modern Physics \textbf{57}, 827--863.
+
+  \item[D.~Bonn, J.~Eggers, J.~Indekeu, J.~Meunier and E.~Rolley (2009).]
+    \emph{Wetting and spreading.} Reviews of Modern Physics \textbf{81},
+    739--805. 移動接触線の問題とその様々な正則化の方法を含む。ここで用いる分離圧モデルは
+    その一つである。
+
+  \item[L.~W.~Schwartz and R.~R.~Eley (1998).] \emph{Simulation of droplet
+    motion on low-energy and heterogeneous surfaces.} Journal of Colloid and
+    Interface Science \textbf{202}, 173--188. Yuzen が用いる形の二指数の分離圧
+    $\Pi \propto (\hstar/h)^n - (\hstar/h)^m$と、その係数を平衡接触角から定めるエネルギーの議論
+    ---\cref{sec:wetting:dp}で再現した議論――を示している。
+
+  \item[O.~V.~Voinov (1976).] \emph{Hydrodynamics of wetting.} Fluid Dynamics
+    \textbf{11}, 714--721.
+
+  \item[R.~G.~Cox (1986).] \emph{The dynamics of the spreading of liquids on a
+    solid surface. Part~1. Viscous flow.} Journal of Fluid Mechanics
+    \textbf{168}, 169--194. \cref{sec:verification:spreading}で検査する関係式であり、
+    その検査が独立には検証して\emph{いない}と明言している対数因子を含む。
+
+  \item[L.~H.~Tanner (1979).] \emph{The spreading of silicone oil drops on
+    horizontal surfaces.} Journal of Physics D \textbf{12}, 1473--1484.
+    完全濡れの濡れ広がりの法則と、それが部分濡れの分離圧モデルにとって適切な目標でない理由。
+\end{description}
+
+\section*{スピンコーティングと乾燥}
+
+\begin{description}[leftmargin=0pt, labelsep=0.5em, style=unboxed]
+  \item[A.~G.~Emslie, F.~T.~Bonner and L.~G.~Peck (1958).] \emph{Flow of a
+    viscous liquid on a rotating disk.} Journal of Applied Physics
+    \textbf{29}, 858--862. 蒸発のない場合の遠心力による薄膜化の法則。
+
+  \item[D.~Meyerhofer (1978).] \emph{Characteristics of resist films produced
+    by spinning.} Journal of Applied Physics \textbf{49}, 3993--3997.
+    溶媒の損失を伴う回転であり、Yuzen の遠心力と蒸発の項を合わせると生じる組合せである。
+\end{description}
+
+\section*{数値解法}
+
+\begin{description}[leftmargin=0pt, labelsep=0.5em, style=unboxed]
+  \item[H.~A.~van der Vorst (1992).] \emph{Bi-CGSTAB: a fast and smoothly
+    converging variant of Bi-CG for the solution of nonsymmetric linear
+    systems.} SIAM Journal on Scientific and Statistical Computing \textbf{13},
+    631--644. 両方のバックエンドの背後にあるアルゴリズム。
+
+  \item[Y.~Saad (2003).] \emph{Iterative Methods for Sparse Linear Systems},
+    2nd edition. SIAM. 不完全分解、代数的マルチグリッド、および\cref{ch:linearsolver}で
+    挙げる前処理。
+
+  \item[L.~V.~Kantorovich (1948).] \emph{Functional analysis and applied
+    mathematics.} Uspekhi Matematicheskikh Nauk \textbf{3}, 89--185.
+    \cref{sec:time:newton}のニュートン・カントロビッチ法。
+
+  \item[J.~A.~Diez and L.~Kondic (2002).] \emph{Computing three-dimensional
+    thin film flows including contact lines.} Journal of Computational Physics
+    \textbf{183}, 274--306. 鉛直一様モデルが実装している方法である。\cref{sec:disc:positivity}の
+    正値性を保つ移動度はこの論文の式 (23) であり、そこでの擬似三次元の定式化が、二次元の膜厚の
+    方程式が$x$--$y$の混合項と十三点ステンシルをもつ理由である。
+
+  \item[L.~Zhornitskaya and A.~L.~Bertozzi (2000).] \emph{Positivity-preserving
+    numerical schemes for lubrication-type equations.} SIAM Journal on
+    Numerical Analysis \textbf{37}, 523--555. 移動度の正値性を保つ離散化の出所であり、
+    四階の縮退拡散がなぜそれを必要とするかを示す。
+\end{description}
+
+\section*{対流スキーム}
+
+\begin{description}[leftmargin=0pt, labelsep=0.5em, style=unboxed]
+  \item[B.~van Leer (1974).] \emph{Toward the ultimate conservative
+    difference scheme. II. Monotonicity and conservation combined in a
+    second-order scheme.} Journal of Computational Physics \textbf{14},
+    361--370. \cref{eq:disc:limited}のリミッター$\Phi_{\text{vL}}$
+    （\val{"VanLeer"}）。
+
+  \item[B.~P.~Leonard (1979).] \emph{A stable and accurate convective
+    modelling procedure based on quadratic upstream interpolation.} Computer
+    Methods in Applied Mechanics and Engineering \textbf{19}, 59--98.
+    二次の風上補間\val{"QUICK"}。
+
+  \item[T.~Kawamura, H.~Takami and K.~Kuwahara (1986).] \emph{Computation of
+    high Reynolds number flow around a circular cylinder with surface
+    roughness.} Fluid Dynamics Research \textbf{1}, 145--162. 四階差分の散逸を大きくとった
+    三次精度風上差分\val{"KK"}。Yuzen はこれをセル界面の値として書く（\cref{eq:disc:face}）。
+
+  \item[B.~Koren (1993).] \emph{A robust upwind discretization method for
+    advection, diffusion and source terms.} In C.~B.~Vreugdenhil and
+    B.~Koren (eds), \emph{Numerical Methods for Advection--Diffusion
+    Problems}, Notes on Numerical Fluid Mechanics \textbf{45}, Vieweg,
+    117--138. \cref{eq:disc:limited}のリミッター$\Phi_{\text{Koren}}$
+    （\val{"Koren"}）。解が滑らかなところでは三次精度である。
+
+  \item[B.~P.~Leonard, M.~K.~MacVean and A.~P.~Lock (1993).]
+    \emph{Positivity-preserving numerical schemes for multidimensional
+    advection.} NASA Technical Memorandum 106055 (ICOMP-93-05), NASA Lewis
+    Research Center. 一様に三次精度の多項式補間\val{"UTOPIA"}。濃度に対する既定値である。
+\end{description}
+
+\section*{Yuzen が用いるソフトウェア}
+
+\begin{description}[leftmargin=0pt, labelsep=0.5em, style=unboxed]
+  \item[Eigen.] G.~Guennebaud, B.~Jacob and others,
+    \url{https://eigen.tuxfamily.org}. MPL-2.0. 常にリンクされる。インストールされていなければ
+    CMake が取得する。
+
+  \item[AMGCL.] D.~Demidov, \emph{AMGCL: an efficient, flexible, and extensible
+    algebraic multigrid implementation}, Lobachevskii Journal of Mathematics
+    \textbf{40} (2019), 535--546. \url{https://github.com/ddemidov/amgcl}.
+    MIT. 任意のバックエンド。
+
+  \item[doctest.] V.~Kirilov, \url{https://github.com/doctest/doctest}. MIT.
+    同梱。テストスイートはこれを用いて書かれている。
+
+  \item[toml++.] M.~Gillard, \url{https://marzer.github.io/tomlplusplus}. MIT.
+    同梱（手元での修正を一つ含む）。\file{.toml}形式の入力を解析する。
+\end{description}

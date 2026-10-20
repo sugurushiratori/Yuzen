@@ -1,0 +1,172 @@
+% ch-reproducibility.tex -- numerical method: what bit-level reproducibility depends on
+\chapter{Bit-level reproducibility}
+\label{ch:reproducibility}
+
+\textbf{This chapter is for developers who intend to modify the solver.} If you
+only run Yuzen, read \cref{sec:linsolve:choosing} and stop there.
+
+Yuzen is written so that \textbf{changing the number of OpenMP threads does not
+change the result by a single bit}. The one exception is the \val{"amgcl"}
+backend, whose internal reductions are non-deterministic
+(\cref{sec:linsolve:choosing}). The property is itself one of the claims the
+test suite makes: \code{ctest} registers three entries that run the same binary
+in three separate processes --- once with the environment's own thread count,
+once with \env{OMP\_NUM\_THREADS=1} and once with \env{OMP\_NUM\_THREADS=4}.
+
+Four things in the code carry that guarantee. Every one of them looks like
+something a tidy-minded reader would want to rewrite, and every one of them
+breaks bit-identity if rewritten. They are set out one per section below, with
+the remaining rules collected at the end.
+
+If you are here because you are adding physics rather than auditing the code,
+read this chapter first and then \cref{ch:extending}, which restates these four
+as the rules a new term has to respect and gives the procedure for adding one.
+\Cref{ch:layout} is the map of where the code discussed here lives.
+
+\section{The deterministic reductions in \code{Vector}}
+\label{sec:repro:reduction}
+
+\code{\#pragma omp parallel for reduction(+:x)} decides how to split the
+partial sums, and in what order to add them, from the number of threads.
+Floating-point addition is not associative, so a different thread count gives
+different low-order bits in an inner product or a norm. Those bits do not stay
+small: they propagate into the iteration count of BiCGStab and into the
+acceptance test of the time-step control, and surface as ``one thread and two
+threads give different answers''.
+
+The inner product (\code{operator,}), \code{Sum()} and \code{Norm()} of
+\code{Vector} therefore split the array into \textbf{a fixed number of blocks
+that does not depend on the thread count}, form a partial sum per block, and
+add the blocks up in block order at the end. The number of blocks follows from
+the array length alone --- at least 512 elements per block, at most 256 blocks
+--- so the order of the additions is the same however many threads are running.
+
+\begin{warn}[Do not change the order of summation]
+  Do not replace these with a bare \code{reduction(+:...)}.
+  \file{yuzen/tests/test\_vector.cpp} pins the behavior down.
+\end{warn}
+
+\code{Max}, \code{Min} and \code{AbsMax} need none of this: they are exactly
+associative and exactly commutative, so a plain sequential loop is correct.
+
+\section{The storage order of \code{CRS\_Matrix}}
+\label{sec:repro:crs}
+
+Within a row, the entries are stored \textbf{in insertion order}, and the first
+entry of every row is always the diagonal. This is not a question of
+presentation. It fixes the order of the floating-point additions in the
+matrix--vector product, in \code{ScalingDiag} and in \code{Residual}.
+
+\begin{warn}[Do not sort the entries of a row into ascending column order]
+  Sorting changes how the sum rounds, and bit-identity is lost.
+\end{warn}
+
+Libraries that require ascending column indices within a row --- Eigen and
+AMGCL --- are given a \textbf{sorted mirror}, kept separately from the matrix
+proper. The permutation is built once, at the moment the sparsity structure is
+finalized; after that each handover is an $O(\mathrm{nnz})$ gather of the
+values.
+
+\code{CRS\_Matrix} has two states: a construction phase, in which each row is a
+separate variable-length array, so that rows are independent of one another and
+insertion can safely be done under OpenMP; and a finalized phase holding flat
+CRS. Any read-side call finalizes it automatically. One detail of the
+construction phase is worth knowing: the boundary-condition flag is a
+\code{char} rather than a \code{bool}, because \code{std::vector<bool>} is a
+bit-packed proxy reference and is not thread-safe to write.
+
+\section{The registration order of the physical terms}
+\label{sec:repro:order}
+
+\code{WellMixed\_HeightEquationBase::RegisterPhysics()} lists the physical
+terms, and that list decides the order of the \code{+=} operations into the
+matrix, which is the column insertion order of \cref{sec:repro:crs}. The order
+is
+
+\begin{plain}
+LaplacePressure -> VerticalGravity -> ParallelGravity
+                -> SolutoCapillarity -> Centrifugal -> DisjoiningPressure
+\end{plain}
+
+\begin{warn}[Do not reorder the list; add a new term at the end]
+  Reordering changes the storage order, and with it the rounding of the sums
+  described in \cref{sec:repro:crs}.
+\end{warn}
+
+The rule is worth stating positively as well, because it is what makes the
+constraint tolerable: \textbf{as long as a new term is appended at the end, no
+existing result changes by a single bit}. A term that is not enabled does not
+even have its \code{SetMatrixA} called, so it contributes nothing to the order
+of operations of any case that does not use it.
+
+The velocity calculation \code{CalVelocity} is the one exception. Each term
+writes into a velocity field of its own there, so the order in which they run
+cannot affect the result.
+
+\section{The two direction orderings}
+\label{sec:repro:directions}
+
+The kernels carry \textbf{two} orderings of the directions and use them in
+different places \emph{deliberately} (\file{GridTraits.h}):
+
+\begin{itemize}
+  \item \code{T::Dir(d)} is axis order --- in 2-D, \code{Xm}, \code{Xp},
+    \code{Ym}, \code{Yp}.
+  \item \code{T::StencilDir(k)} is stencil order --- in 2-D, \code{Ym},
+    \code{Xm}, \code{Xp}, \code{Yp}.
+\end{itemize}
+
+\code{SetMatrixA} sums each row in axis order. \code{SetJacobiMatrix} sums the
+diagonal and the cross terms in stencil order. The diagonal of the capillary
+pressure term contains both in a single expression:
+\code{gBo*aB + gLo*aL + gRo*aR + gTo*aT} is in stencil order and
+\code{sLo*bL + sRo*bR + sBo*bB + sTo*bT} is in axis order, on the two sides of
+the same sum.
+
+\begin{warn}[Follow the comment in the kernel about which ordering to use]
+  Swapping one for the other breaks bit-identity. In particular, do not ``tidy
+  up'' by making both sites use the same ordering.
+\end{warn}
+
+In 1-D the two orderings coincide, so the distinction is invisible; it shows up
+only in 2-D. That is exactly what makes it easy to break without noticing.
+
+\section{The remaining rules}
+\label{sec:repro:other}
+
+\begin{itemize}
+  \item \textbf{A preconditioner's triangular substitutions must run
+    sequentially.} Both the forward and the backward substitution carry a
+    loop-carried dependency. Parallelizing them makes a thread read values
+    another thread has not updated yet, which silently turns the
+    preconditioner into a block Jacobi whose blocks are the thread
+    decomposition --- so the preconditioner, and hence the iteration count,
+    becomes thread-count dependent. The rule binds any preconditioner added to
+    a backend of your own (\cref{ch:extending}). The block-Jacobi ILUT of
+    \val{"eigen"} keeps it: its blocks follow from the size of the system,
+    not from the threads, and each block's substitutions run sequentially
+    (\cref{sec:linsolve:eigen}).
+  \item \textbf{A decision taken inside a solve depends on numbers, not on
+    threads.} Whether a light preconditioner's try is kept or dropped, the
+    tolerance of a Newton pass and the start of the Newton iteration follow
+    from the convergence of the solves and the fields
+    (\cref{sec:linsolve:conc,sec:linsolve:ew,sec:time:newton}), all of them
+    the same at any thread count with \val{"eigen"}.
+  \item \textbf{\code{Vector} does not skip zero-initialization};
+    \code{resizeFast()} does exactly what \code{resize()} does. Any path that
+    can read an uninitialized value makes the result non-deterministic.
+  \item \textbf{The compiler does not fuse multiplies and adds.} The build
+    passes \code{-ffp-contract=off} to GCC and Clang. On a processor with a
+    fused multiply-add (every AArch64 one, including Apple silicon), the
+    compiler would otherwise turn \code{a*b + c} into one instruction where it
+    sees fit, and may do so differently in two places that inline the same
+    code. A run restarted from its state files then no longer matches the run
+    made straight through. On x86-64 built without \code{-march} the flag
+    changes nothing; do not remove it, and do not add an option that
+    re-enables contraction (\code{-ffast-math}, \code{-ffp-contract=fast}).
+  \item \textbf{Do not keep state in a function-local \code{static}.} State
+    that ought to belong to an instance becomes state belonging to the
+    translation unit: several cases can no longer be run in one process, and
+    counters bleed between separate instances --- between the thickness
+    equation and the concentration equation, for example.
+\end{itemize}

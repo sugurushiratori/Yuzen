@@ -1,0 +1,2175 @@
+% ch-verification.tex -- verification: every claim, how strong it is, and how to reproduce it
+\chapter{検証}
+\label{ch:verification}
+
+本章には検証の証拠をまとめる。Yuzenについて何を確認したか、何を測ったか、
+どのような数値が得られたかを記録する。導出は繰り返さない。支配方程式は
+\cref{ch:governing}、物理項は\cref{ch:terms}、濡れモデルは\cref{ch:wetting}、
+数値解法は\cref{ch:discretization,ch:timeintegration,ch:convergence}に示した。
+本章で新たに加えるのは証拠だけである。
+
+どの節も二つの方針に従う。第一に、\textbf{主張ごとにその強さを明記する}。
+「検証済み」という言葉は、代数的恒等式にも、誰かが以前に書き留めて以来ずっと
+比較の基準にしてきた数値にも使われてしまうからである。
+第二に、\textbf{主張ごとに再現方法を示す}。コマンドは
+\cref{sec:verification:reproduce}に一か所にまとめた。本章の
+数値に頼る場合は、コマンドを実行して同じ数値が得られることを確認されたい。
+得られなければ、本章の誤りである。
+
+\section{本章の読み方}
+\label{sec:verification:policy}
+
+ソルバーに関する主張には強さの段階があり、段階間の差は大きい。強い順に次のとおりである。
+
+\begin{description}
+  \item[解析解との一致。] 最も強い。コードとは独立に答えが存在し、
+    コードがその答えを再現する。
+  \item[収束次数。] 解析解との一致とほぼ同じくらい強く、得られる情報はむしろ多い。
+    誤差が小さいことに加え、実装した離散化から期待されるとおりの誤差であることも示すからである。
+    係数や符号を誤っていても、単一の格子で比べるだけなら見逃しやすいが、
+    格子細分化の調査では見逃しにくい。
+  \item[不変量と恒等式。] 厳密に成り立つべき性質である。
+    たとえば、ただの和になるべき和、一様のまま保たれるべき一様状態、
+    スレッド数によらず同じビットを与えるべき縮約がある。試験の
+    コストが低く、破れればはっきりと失敗する。
+  \item[回帰固定。] 最も弱い。現在の挙動を記録しておき、挙動を変える変更を
+    検出する。現在の挙動が\emph{正しい}かどうかは何も保証しない。変わっていない
+    ことを示すだけである。
+\end{description}
+
+Yuzenの主張はすべてが同じ段階にあるわけではない。そこで、各主張がどの段階に
+あるかを以下に明示する。
+
+\subsection*{強い主張}
+
+\begin{itemize}
+  \item \textbf{分離圧の係数$\Dpn$により、指定した平衡接触角が再現される。}
+    36通りのパラメータの組み合わせについて、数値計算を一切介さずに
+    閉じた形で確認した（\cref{sec:verification:disjoining}）。
+    この較正は前駆膜が無限に続く極限で成り立つ恒等式であり、コードは
+    相対誤差$10^{-14}$以内でこの恒等式と一致する。
+  \item \textbf{毛管圧と分離圧の離散化は 2次精度である。}
+    解析的な平衡液滴の上で、残差速度は格子細分化に伴い次数 1.94でゼロに近づく
+    （\cref{sec:verification:disjoining}）。係数、符号、離散化のいずれかに誤りがあれば、
+    細分化しても残差は消えないはずである。
+  \item \textbf{縮約とBiCGStabの結果は、スレッド数を変えてもビット単位で一致する}
+    （\cref{sec:verification:linalg}）。許容誤差内での一致ではなく、
+    完全に等しい。試験も\code{==}で行う。
+\end{itemize}
+
+\subsection*{弱い主張}
+
+\begin{itemize}
+  \item \textbf{Cox--Voinov則}（\cref{sec:verification:spreading}）。確認したのは
+    関係式の\emph{形}とフィットの相関である。対数因子$\ln(L/l)$は独立に
+    検証しておらず、素朴な見積もりとの一致もオーダーが合うことしか意味しない。
+  \item \textbf{連成のコスト}（\cref{sec:verification:coupling}）。1次元・鉛直一様モデルの
+    一群のケースについて、反復回数で測った結果である。2次元の場合、\val{"CZ"}モデルの場合、
+    実時間については何も述べていない。
+  \item \textbf{入力の解釈、出力形式、時間刻み制御。}
+    いずれも回帰固定である。外部に正解がないため、正しさは主張せず、
+    変わっていないことだけを主張する。
+\end{itemize}
+
+まったく確認していない事項は、\cref{ch:notverified}に別途まとめた。
+本章で扱っていないYuzenの機能に頼る前に、同章を参照されたい。
+
+\section{テストスイート}
+\label{sec:verification:suite}
+
+単体テストは次の三つのコマンドでビルドし、実行する。
+
+\begin{shell}
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j
+ctest --test-dir build
+\end{shell}
+
+\code{ctest}は同じ実行ファイルを別々のプロセスで三回実行する。既定のスレッド数、
+\env{OMP\_NUM\_THREADS}を\val{1}とした場合、\val{4}とした場合の三通りである。さらに
+\cref{ch:installation}で説明する十四の項目も実行する。この重複は無駄ではない。
+\textbf{スレッド数を変えても結果が変わらないことは、それ自体が主張の一つであり}
+（\cref{sec:verification:linalg,ch:reproducibility}）、仮定せずに実際に
+試す必要があるからである。
+
+実行ファイルを直接呼ぶと、件数が表示される。
+
+\begin{plain}
+$ ./build/bin/yuzen_tests
+[doctest] test cases:    128 |    128 passed | 0 failed | 0 skipped
+[doctest] assertions: 183297 | 183297 passed | 0 failed |
+\end{plain}
+
+ファイルごとの内訳を\Cref{tab:testfiles}に示す。
+
+\begin{yzntable}{十七のテストファイルと各ファイルのケース数・アサーション数\label{tab:testfiles}}{@{}L{0.28\textwidth} d d L{0.375\textwidth}@{}}
+\textsf{\bfseries ファイル} & \textsf{\bfseries ケース} &
+\textsf{\bfseries アサーション} & \textsf{\bfseries 対象} \\ \midrule
+\file{test\_grid.cpp}               & 9 & 6,252 & 格子のインデックス、移動、座標。場の配置位置 \\
+\file{test\_linear\_solver.cpp}     & 6 & 1,663 & 1次元ポアソン問題の解析解、2次収束、ビット単位の再現性 \\
+\file{test\_finite\_differences.cpp}& 11 & 171,651 & 補間係数と勾配の解析値との比較。全対流スキームの厳密性、有界性、対称性、凍結した重み \\
+\file{test\_boundary\_condition.cpp}& 11 & 1,025 & 境界条件のあらゆる組み合わせでの行列の整合性と、各組み合わせが与えるゴースト値。全辺での流入口、鏡映と転置。求解後に境界行が厳密に満たされること \\
+\file{test\_mixed\_velocity.cpp}    & 3 & 216 & 合成速度が各項の単純な和であること \\
+\file{test\_disjoining.cpp}         & 4 & 179 & 分離圧の較正と、平衡形状上の残差速度 \\
+\file{test\_restart.cpp}            & 12 & 193 & ASCIIリスタートファイルの行と格子点の対応。バイナリ読み込みでのマーカー探索。リスタート状態ファイル。破損したリスタートファイルの拒否 \\
+\file{test\_config.cpp}             & 11 & 76 & TOML形式と\file{.inp}形式の入力ファイルの解釈、未知の項目の報告、厳格な型変換 \\
+\file{test\_vector.cpp}             & 5 & 34 & 基本演算と、縮約のビット単位の再現性 \\
+\file{test\_positivity\_mobility.cpp}& 11 & 858 & セル界面移動度がDiez \& Kondicの正値性保存形であること。Navierすべりがある場合の、桁落ちのない参照値との比較。級数部での連続性と導関数。\val{"Pinning"}ゴーストでゼロになること \\
+\file{test\_crs\_matrix.cpp}        & 4 & 28 & CRS形式での要素アクセスと\code{MatVec} \\
+\file{test\_timesteps.cpp}          & 13 & 169 & 時刻の進行と出力間隔。リスタート後の出力スケジュール。時計が求解した刻み幅だけ進むこと \\
+\file{test\_newton\_convergence.cpp}& 9 & 23 & 外側反復の終了条件と、停滞でステップが失敗する条件 \\
+\file{test\_source.cpp}            & 2 & 15 & ノズルアームの角度と回転速度の積分の比較 \\
+\file{test\_opt.cpp}               & 2 & 29 & \env{YUZEN\_OPT}と\env{YUZEN\_GRAIN}スイッチの解釈 \\
+\file{test\_thread\_cap.cpp}        & 5 & 65 & スレッド数の上限 \\
+\file{test\_jacobian.cpp}          & 10 & 821 & 各項のヤコビアンと有限差分の比較（1次元と 2次元、全対流スキーム、すべりの有無）。壁を通る流束がないこと。毛管項と重力項のセル界面ごとの$A\cdot h$。各項のセル界面流束と$A\cdot h$の比較 \\ \midrule
+合計                               & 128 & 183,297 & \\
+\end{yzntable}
+
+アサーションの列の読み方には注意が要る。\textbf{この列はケース内のループがチェックに
+到達した回数を表し}、主張する性質の個数を表すものではない。
+\file{test\_finite\_differences.cpp}が合計の大部分を占めるのは、多数のランダムな
+分布のすべてのセル界面で、すべての対流スキームをチェックするためである。その結果、
+アサーション数では 94 \%を占めるが、カバーする範囲が 94 \%に及ぶわけではまったくない。
+
+\section{格子と差分}
+\label{sec:verification:grid}
+
+\file{test\_grid.cpp}では$N_x, N_y, N_z = 9, 7, 5$の\code{RectGrid<3>}を構築し、
+\textbf{八種類の配置型（\cref{ch:discretization}の\cref{tab:site-types}）すべてについて、
+全格子点で}次のことを確認する。
+
+\begin{itemize}
+  \item 線形インデックスと格子座標の変換が互いに逆写像になっている。
+  \item 隣接関係が周期的に閉じている。1セルの移動を$N_x$回繰り返すと出発点に戻る。
+  \item 1セルの移動も半セルの移動も、逆向きに移動すれば出発点に戻る。また、半セルの移動では
+    正しい配置型の点に移る。
+  \item 半セルの移動でインデックスが規則どおりに変わる。
+    $+\tfrac12$セルの移動では、その軸のスタッガードビットが\code{0}ならインデックスは
+    変わらず、\code{1}なら 1増える。$-\tfrac12$セルの移動はこの逆である。
+  \item 座標がスタッガード配置に従っている。$N_y = 1$のように 1列しかない方向でも
+    縮退は起こらない。
+  \item 場がゼロで初期化され、インデックスで値を読み戻せる。ベクトル場の各成分は
+    互いに異なる位置に置かれる。
+\end{itemize}
+
+差分については\file{test\_finite\_differences.cpp}で固定する。七つの固定スキーム
+（\val{Upwind\_1st}、\val{Upwind\_2nd}、\val{Central\_2nd}、
+\val{Upwind\_3rd}、\val{QUICK}、\val{KK}、\val{Central\_4th}）について、補間係数の
+和が 1で定数が保存されること、1次関数の勾配が厳密に再現されること、2次関数の
+勾配が 2次以上の精度で一致すること、\code{Node}版が両側の\code{Xedge}値の
+平均に等しいことを固定する。制限付きの二つのスキーム\val{Koren}と\val{VanLeer}は、
+他のスキームとあわせて\cref{sec:verification:schemes}で確認する。
+
+\section{線形代数と決定性}
+\label{sec:verification:linalg}
+
+\subsection{ポアソン問題}
+
+\file{test\_linear\_solver.cpp}では、\code{ILinearSolverBackend}インターフェースを通じて
+\val{"eigen"}バックエンドを呼び、1次元ポアソン問題
+$u'' = 2$（$[-1, 1]$上、$u(\pm1) = 0$）を解く。解は$u(x) = x^{2} - 1$である。
+三つの前処理（\val{None}、\val{Jacobi}、\val{ILU}）のいずれでも収束し、残差は
+$10^{-11}$未満、内部点での解析解との最大誤差は$10^{-4}$未満となる
+（$n = 202$、$\Delta x = 0.01$での測定値は$2.5\times10^{-5}$）。
+$n = 52, 102, 202, 402$と細分化すると、\textbf{最大誤差は毎回半分以下になる}。
+離散化から期待される 2次収束である。
+
+同じファイルでは、さらに二つの性質を固定する。一つは、右辺がゼロのとき自明解を返すことである。
+固定するのはこの点だけで、自明解に至るまでの反復回数は固定しない。
+反復ゼロ回で返るのは、開発中に試した自前のバックエンドでの最適化によるもので、問題の
+性質ではない。\val{"eigen"}は 520回の反復で同じ自明解に到達する。
+もう一つは、\code{Solve()}が行列と右辺の両方を呼び出し前の状態に戻すことである。前処理の
+対角スケーリングで両方が上書きされるため、この性質が必要になる
+（\cref{sec:linsolve:contract}）。
+
+\subsection{決定性}
+
+単体テストで固定する性質を\Cref{tab:determinism}に示す。要点は
+\emph{厳密に}という語にある。比較はすべて\code{==}で行い、doctestの
+\code{Approx}は用いない。
+
+\begin{yzntable}{単体テストで固定するビット単位の決定性\label{tab:determinism}}{@{}L{0.26\textwidth} L{0.17\textwidth} L{0.44\textwidth}@{}}
+\textsf{\bfseries 対象} & \textsf{\bfseries 条件} &
+\textsf{\bfseries 主張} \\ \midrule
+\code{Vector}の内積、\code{Sum}、\code{Norm} & $N = 100003$ &
+  1、2、4、8スレッドで\textbf{厳密に等しい}（\code{Approx}ではなく\code{==}で試験） \\
+ILUを用いた\val{"eigen"}バックエンド & $n = 402$ &
+  1、2、4、8スレッドで解の全成分が一致し、\textbf{反復回数と残差}も一致する \\
+ILUを用いた\val{"eigen"}バックエンド & 同じ問題を二回 &
+  反復回数、残差、解が厳密に一致する \\
+\end{yzntable}
+
+縮約では、スレッド数に依存しないブロック分割によって加算の順序を固定している。1ブロックは
+512要素以上、ブロック数は 256以下である（\cref{sec:repro:reduction}）。$N = 100003$は
+意図して選んだ値である。\textbf{256の倍数ではないので配列はブロックに均等に分かれず、
+テストはブロック境界をまたぐ場合を含む}。
+
+ソルバー全体についても、同じ性質を\file{tools/compare.py}で測る。このツールは、最大差を
+列のスケールで割った値を報告する。結果を\Cref{tab:wholesolver}に示す。すべての
+項目で厳密に一致する。この性質が成り立たないバックエンドは\val{"amgcl"}だけであり、
+\cref{sec:verification:amgclthreads}で別途測定した。
+
+\begin{yzntable}{ソルバー全体の再現性（列のスケールに対する最大差）\label{tab:wholesolver}}{@{}L{0.52\textwidth} d@{}}
+\textsf{\bfseries 比較} & \textsf{\bfseries 結果} \\ \midrule
+\file{leveling\_1d\_reg}、1スレッド対 2スレッド（\val{"eigen"}） & 0.000e+00 \\
+\file{leveling\_1d\_reg}、2スレッドで二回実行                   & 0.000e+00 \\
+\file{allphys\_2d\_reg}、1スレッド対 2スレッド（\val{"eigen"}） & 0.000e+00 \\
+\end{yzntable}
+
+\section{バックエンド間の一致}
+\label{sec:verification:backends}
+
+線形ソルバーのバックエンドは入力ファイルで選び、膜厚の方程式と濃度の方程式で
+別々に指定できる（\cref{ch:linearsolver}。キーは\cref{sec:verification:reproduce}に示す）。
+\file{leveling\_1d\_reg}（$N_x = 300$、出力間隔 20回）を、1スレッドで\val{"eigen"}と
+\val{"amgcl"}の両方を用いて解き、出力を比較した。
+結果を\Cref{tab:backendagreement}に示す。
+
+\begin{yzntable}{\file{leveling\_1d\_reg}における二つのバックエンドの比較（列のスケールに対する最大差）\label{tab:backendagreement}}{@{}L{0.33\textwidth} L{0.24\textwidth}@{}}
+\textsf{\bfseries 比較対象} &
+\textsf{\bfseries \val{"eigen"}対\val{"amgcl"}} \\ \midrule
+\file{field*.dat}の物理量 & 7.033e-11（\code{Ux}） \\
+\file{History.dat}                       & 9.615e-02（\code{ResinVolErr}） \\
+\file{CalcInfo.dat}の時刻とステップ     & 0.000e+00 \\
+\end{yzntable}
+
+この表を読むうえで、数値そのものより重要な点が二つある。
+
+\textbf{$7.033\times10^{-11}$は線形ソルバーの許容誤差によるもので、時間積分の食い違いでは
+ない。}このケースの\key{Epsilon}は\val{1e-13}であり、収束判定にこの程度の幅があれば
+解にもこの程度の差が出る。二つの異なる時間積分の間に生じる$O(\Delta t)$の
+不一致では\emph{ない}。二つのバックエンドは同じ離散系を解いており、同じ許容誤差の
+範囲内で、わずかに異なる点で反復を止めているにすぎない。
+
+\textbf{\code{VolErr}をはじめとする保存誤差の列で相対差が大きく出るのは、
+もともとほぼゼロの量だからである。}絶対値はゼロ付近にあり、スケールで割ると
+残った誤差がそのまま拡大される。このケースでは辺が対称で何も流出しないため、
+\code{VolErr}と\code{ResinVolErr}は丸め誤差程度で、最大でも$7\times10^{-15}$である。
+二つのバックエンドの差は$6\times10^{-16}$にすぎない。この列の相対差$0.096$は、
+二つのバックエンドで溶質の扱いが食い違うことを意味しない。
+
+開発中に試した自前のBiCGStabバックエンドを除外した根拠も、同じ比較にある。
+このバックエンドも\val{"eigen"}と同程度に一致した（物理量（\code{Ux}）で$1.220\times10^{-10}$、
+誤差指標（\code{ResinVolErr}）で$2.935\times10^{-6}$）。しかし、そこに至るコストが
+はるかに大きかった。同じ出力間隔 20回でのBiCGStab反復の総数は、自前のバックエンドで
+\textbf{3676}、\val{"eigen"}で\textbf{21}であった。同じ答えを得るのに約 175倍かかる。
+この点と、見つかったバグとを理由に、選択肢として提供せずリリースから外した。
+反復回数の合計は、\file{CalcInfo.dat}の\code{BCG\_iter}列から手で集計した。
+\file{tools/compare.py}は合計を取らないが、この列と他の三つの診断列を合否判定から
+外し、差を別に報告する。これは妥当な扱いである。これらの列は答えではなく
+ソルバーの性質を表すからである。
+
+\subsection{\val{"amgcl"}はスレッド数を変えると結果が変わる}
+\label{sec:verification:amgclthreads}
+
+スレッド数を変えると結果が変わるバックエンドは\val{"amgcl"}だけである。
+Yuzen自身の縮約は\cref{sec:repro:reduction}のとおり順序を固定しているが、このライブラリ内部の
+縮約は順序が固定されていない。そのため、スレッド数を変えると下位ビットが変わりうる。同じ
+\file{leveling\_1d\_reg}を 1スレッドと 4スレッドで実行すると、物理量で
+$6.089\times10^{-11}$（最大の列は\code{Ux}）、誤差指標で$9.615\times10^{-2}$
+（最大の列は\code{ResinVolErr}。ここでは丸め誤差で、最大でも
+$6\times10^{-15}$、二つの実行の差は$6\times10^{-16}$）の差が出る。2スレッドでは
+1スレッドと同じビットが得られ、\file{allphys\_2d\_reg}でも 1、2、4スレッドで同じビットが
+得られた。ビットが変わるかどうかはライブラリの仕事の分割の仕方で決まり、
+変わらないという保証はない。\val{"eigen"}では、同じ比較が
+どのスレッド数でも厳密に$0.000\mathrm{e}{+}00$となる（\cref{tab:wholesolver}）。
+
+\begin{warn}[\val{"amgcl"}の測定の適用範囲]
+  \code{ctest}はAMGCLビルドでも合格する。しかし、上に示した一致とスレッド間の差は、
+  一つの回帰ケースを手で実行して得たものであり、テストスイートがコミットのたびに
+  確認し直す性質ではない。\cref{sec:verification:linalg}で主張する
+  ビット単位の一致は\val{"eigen"}だけが対象である。\val{"amgcl"}は
+  構造上ビット単位で再現しないため、対象に含めることはできない。
+  \cref{sec:notverified:numerics}を参照されたい。
+\end{warn}
+
+\section{速度の合成}
+\label{sec:verification:velocity}
+
+合成速度は出力される膜の速度（\code{Ux}、\code{Uy}）であり、クーラン数の
+チェックにも用いる（鉛直一様モデルの濃度自体はセル界面の体積流束で
+輸送し、開いた辺を通過する量もこの流束から数える。\cref{sec:disc:wm-conservative}）。
+したがって、各物理項を合成する規則に誤りがあれば、これらがすべて誤る。
+支配方程式を$-\nabla\cdot(\dots)$の形に書くことによる符号規約は、各項の
+\code{\_Magnitude}にすでに含まれている（\cref{ch:terms}）。そのため、\textbf{合成は
+単純な和でなければならず、それ以外の処理を加えてはならない}。
+
+\file{test\_mixed\_velocity.cpp}では、この性質を 2のべき乗を用いて固定する。六つの項に
+互いに異なる値（毛管圧 1、マランゴニ 2、鉛直重力 4、面内重力 8、遠心力 16、分離圧 32）を
+与えると、合成速度は\textbf{63}になるはずである。どれかの項が抜けても、倍になっても、
+二重に数えられても、合計はその項を一意に特定できる値に変わる。
+
+符号は別のテストで、同様にあからさまな形で確認する。鉛直重力だけを$+3$にすれば合成速度は$+3$、
+遠心力だけを$-5$にすれば$-5$になるはずである。\textbf{符号はそのまま保たれる。}
+2次元では$x$成分と$y$成分のどちらでも同じことが成り立つ。
+
+\section{同じ問題を二通りに解く}
+\label{sec:verification:equivalence}
+
+既知の答えと比べる試験には既知の答えが要るが、ほとんどの項には既知の答えがない
+（\cref{sec:notverified:physics}）。一方、どの項についても、物理を変えないはずの入力の
+変更がいくつかある。$x$と$y$の交換、$x$の鏡映、$y$方向に変化しない膜を 1次元と
+2次元のどちらで解くか、周期的な膜を周期方向にセル単位でずらすこと、
+別のスケールでの無次元化である。\file{tools/equivalence.py}では、
+同梱のケースと、これらのいずれかの方法で書き換えた複製を固定時間刻みで実行し、
+二つの結果を点ごとに比較する。ある方向を他の方向と違う扱いにする項、片側だけで
+処理される辺や角、ステンシルや出力ルーチンでのインデックスのずれ、打ち消し合わない
+無次元数の組があれば、いずれも丸め誤差をはるかに上回る差として現れる。
+三十三のチェックを\Cref{tab:equivalence}に示す。\code{ctest}では
+\code{equivalence}として約 30秒で実行する。
+
+\begin{yzntable}{\file{tools/equivalence.py}のチェック\label{tab:equivalence}}{@{}L{0.22\textwidth} L{0.52\textwidth} d@{}}
+\textsf{\bfseries チェック} & \textsf{\bfseries 同じ問題の別の立て方} & \textsf{\bfseries 最大差}\\ \midrule
+\code{wm2d\_transpose} & $x \leftrightarrow y$（$\Delta x \ne \Delta y$の格子、形状、重力、回転軸、辺） & $2\times10^{-9}$ \\
+\code{wm2d\_mirror\_x} & $x \to -x$ & $1\times10^{-15}$ \\
+\code{cz2d\_dry\_transpose} & マランゴニ項を含む乾燥中の 2次元\val{"CZ"}膜、$x \leftrightarrow y$ & $3\times10^{-11}$ \\
+\code{cz2d\_dry\_mirror\_x} & 同上、$x \to -x$ & $3\times10^{-11}$ \\
+\code{wm2d\_spin\_transpose} & 強い回転のもと膜厚にUTOPIAを用いた転置。遠心力流束の風上側をセル中心から選ぶ & $8\times10^{-10}$ \\
+\code{wm2d\_spin\_mirror\_x} & 同条件での鏡映 & $2\times10^{-9}$ \\
+\code{wm2d\_nozzle\_transpose} & 中心から外れた固定ノズルを含む転置 & $2\times10^{-10}$ \\
+\code{wm2d\_nozzle\_thin} & 同上、セルが一方向に他方向の 5.6倍長い場合 & $2\times10^{-10}$ \\
+\code{wm2d\_nozzle\_mirror\_x} & 同じノズルを含む鏡映 & $2\times10^{-10}$ \\
+\code{wm\_1d\_vs\_2d} & 2次元、$y$方向に一様かつ周期 & 0 \\
+\code{wm\_1d\_vs\_2d\_koren} & 同上、濃度にKorenスキームを使用。リミッターは各ステップの解で確定させ、陽的な半分はステップ開始時の状態から作る & 0 \\
+\code{wm\_io\_1d\_vs\_2d} & 同上、$x$方向に\val{"FreshInlet"}と\val{"Outlet"}、膜の縁が流入口をまたぐ & $4\times10^{-10}$ \\
+\code{wm\_io\_1d\_vs\_2d\_sym} & さらに$y$を対称とし、流入口と流出口の角を壁とする & $9\times10^{-10}$ \\
+\code{wm\_io\_1d\_vs\_2d\_ymin} & 流入のある実行を、Yminの流入口から$+y$方向へ流す。$x$は周期 & $9\times10^{-10}$ \\
+\code{wm\_io\_1d\_vs\_2d\_ymax\_sym} & Ymaxの流入口から$-y$方向へ流す。$x$は対称 & $3\times10^{-10}$ \\
+\code{wm1d\_io\_mirror} & 1次元の流入のある実行を鏡映し、流入口をXmaxに置く & $5\times10^{-10}$ \\
+\code{wm1d\_shift} & 周期的な膜を領域内で 13セルずらす & $1\times10^{-9}$ \\
+\code{wm2d\_shift} & 同上を 2次元で、$x$に 5セル、$y$に 7セル & $5\times10^{-10}$ \\
+\code{wm1d\_scales} & \key{TotalHeight} $\times 2.5$、$L_0 = \SI{0.7}{\milli\metre}$ & $6\times10^{-9}$ \\
+\code{cz1d\_hscale} & \val{"CZ"}、\key{TotalHeight} $\times 2.5$ & $1\times10^{-14}$ \\
+\code{cz1d\_lscale} & \val{"CZ"}、$L_0 = \SI{0.7}{\milli\metre}$ & $1\times10^{-14}$ \\
+\code{wm1d\_nozzle\_mirror} & 平坦な膜で中心から外れたノズル、$x \to -x$ & $4\times10^{-12}$ \\
+\code{cz1d\_mirror} & \val{"CZ"}、$x \to -x$ & $3\times10^{-14}$ \\
+\code{cz1d\_shift} & \val{"CZ"}、周期的な膜を 11セルずらす & $2\times10^{-13}$ \\
+\code{cz2d\_transpose} & \val{"CZ"}、$x \leftrightarrow y$ & $2\times10^{-13}$ \\
+\code{cz\_1d\_vs\_2d} & \val{"CZ"}、$y$方向に一様な 2次元 & $1\times10^{-14}$ \\
+\code{cz2d\_deficit\_transpose} & \val{"CZ"}、$x \leftrightarrow y$。壁に隣接する 1列を$c = -0.05$としてリスタートし、隣の列から補われる & $2\times10^{-15}$ \\
+\code{body\_velocity} & 平坦な膜で$\rho g h^2/3\mu$と$\rho\omega^2 r h^2/3\mu$が厳密に得られる & $2\times10^{-14}$ \\
+\code{cz\_solute} & 乾燥中の平坦な\val{"CZ"}膜で溶質量が保たれる & 0 \\
+\code{cz\_solute\_slope} & 起伏の上で乾燥中の\val{"CZ"}膜で溶質量が保たれる & $5\times10^{-15}$ \\
+\code{cz\_uniform} & 膜が動いても一様な\val{"CZ"}濃度が一様に保たれる & 0 \\
+\code{cz\_wm\_advection} & 流れによる溶質の輸送が\val{"WM"}と一致する & $2.7\times10^{-3}$ \\
+\code{wm\_retry} & 棄却後に再試行したステップと、最初からその$\Delta t$で進めたステップの比較 & 0 \\
+\end{yzntable}
+
+\textsf{最大差}の列は、場ファイルの全列にわたる最大差を、実行中にその場が変化した
+幅で相対化した値である。最大となるのは常に濃度である。濃度の変化が最も小さいからである。
+膜厚自体は、鉛直一様モデルのすべてのチェックと、マランゴニ流のない\val{"CZ"}の
+チェックで$2\times10^{-13}$以内で一致する。マランゴニ流がある場合は、表面張力勾配によって
+$c$の丸め誤差が$A_s\,\mathrm{Ma}/\Delta x$倍されるため、膜厚の一致は$10^{-12}$、速度の一致は
+$3\times10^{-11}$となる。テストの許容限界は$10^{-7}$である。
+
+表の最後の六行は本節の原則から外れ、閉じた形、もう一方のモデル、または別の実行と
+比較する。\code{body\_velocity}では、面内重力項と遠心力項が書き出す速度
+（\file{field*.dat}に出力されるもの）を、1次元と 2次元の平坦な膜で読み取る。平坦な膜では
+速度は\key{Acceleration}方向に$\rho g h^2/(3\mu)$、回転軸から離れる向きに
+$\rho\omega^2 r h^2/(3\mu)$となるはずであり、$10^{-10}$の精度で一致を要求する。
+\Cref{sec:verification:velocity}では各項が正しく足し合わされることを確認したが、
+このチェックでは各項の大きさと符号が正しいことを確認する。
+\code{cz\_solute}では、平坦な\val{"CZ"}膜を\SI{0.4}{\percent}乾燥させ、溶質量$h\,\bar c$の
+変化を、失われた溶媒量に対する割合として測る。結果は丸め誤差の範囲でゼロであり、
+テストの許容値は$10^{-10}$である。\code{cz\_wm\_advection}では、蒸発量が$x$方向に変化する
+乾燥中の膜に強い面内重力をかける。鉛直拡散係数は\val{"CZ"}の分布を平坦に保てる
+程度に大きくし、流れによる深さ平均濃度の変化を二つのモデルで比較する。壁から離れた
+位置では\SI{0.3}{\percent}以内で一致し、テストの許容値は\SI{3}{\percent}である。
+このチェックで、\val{"CZ"}が溶質を移流させる向きを固定する。対称性を使ったチェックでは
+これはできない。溶質を上流へ運ぶスキームも、下流へ運ぶスキームと同じように対称だからである。
+\code{wm\_retry}では、レベリングする膜の最初のステップを時間刻み制御に 18回棄却させ、
+最終的に採用されたステップを、最初からその$\Delta t$で進めた同じステップと比較する。
+どちらも同じ膜から出発するので、丸め誤差の範囲で一致するはずである。ところが
+当初は一致しなかった。再試行の際に、クランク・ニコルソン法の更新の陽的な半分を、直前に棄却した
+試行の解から作っていたため、変化量の$3.5\times10^{-5}$だけずれていた。
+\code{wm1d\_nozzle\_mirror}と\code{wm2d\_nozzle\_mirror\_x}は通常の鏡映チェックだが、
+他のチェックにはないノズル付きのケースを用いる。このチェックで次の誤りが見つかった。
+供給範囲をセル中心ではなくセルの各細分区間の端で測っていたため、
+供給位置が細分区間の半分だけ一方にずれていた（\cref{sec:terms:source}）。
+
+\file{tools/concz\_vs\_wm.py}では、別の意味で膜を二通りに立てる。すなわち、二つの濃度モデル
+（\cref{sec:disc:positivity-concz}）で同じ膜を解き、膜に加えて\file{History.dat}の
+\code{Volume}が$10^{-6}$で一致することを要求する。このチェックにより、1次元の膜について
+二つのモデルが異なる量を書き出していたことが判明した。鉛直一様モデルは長さスケール$L_0$の
+幅の帯の体積を、\val{"CZ"}は\key{Grid.Ymax} $-$ \key{Grid.Ymin}の幅の帯の体積を
+書き出していた（同じ膜で$8.7\times10^{-12}$対
+$1.0\times10^{-8}$\,\si{\metre\cubed}）。修正後は、どちらも幅\SI{1}{\metre}の帯の
+体積を書き出し（\cref{sec:output:history}）、1次元でも 2次元でも厳密に一致する。
+
+\section{閉じた形の解をもつ問題}
+\label{sec:verification:analytic}
+
+\file{tools/analytic.py}では、潤滑方程式の解が閉じた形で得られる問題を設定し、
+ソルバーで解いて比較する。線形の問題では、周期長が 1波長
+$L = \SI{0.25}{\milli\metre}$の周期領域で、厚さ\SI{5}{\micro\metre}の平坦な膜に
+振幅$10^{-3}$の正弦波を与えて出発し、セル中心の値からその波数のフーリエ係数を
+追跡する。減衰率は$\sigma h_0^3 k^4/3\mu$（毛管）と比較し、鉛直重力がある場合は
+これに$\rho g h_0^3 k^2/3\mu$を加えた値と比較する。面内重力がある場合は、位相の変化を
+速度$\rho g h_0^2/\mu$での並進と比較する。誤差が既知の速さで減少するはずの場合は、
+その減少の速さを確認する。
+
+\cref{sec:terms:disjoining}の分離圧を加えると、厚さ$h_0$の平坦な膜は$\Pi'(h_0) > 0$の
+範囲で長波長の摂動に対して線形不安定になる。波数$k$の正弦波の成長率は次式で与えられる。
+\begin{equation}
+  \omega = -\frac{h_0^3}{3\mu}\,k^2\bigl(\sigma k^2 - \Pi'(h_0)\bigr),\qquad
+  \Pi'(h) = -\frac{B}{h}\Bigl[n\Bigl(\frac{\hstar}{h}\Bigr)^{n} - m\Bigl(\frac{\hstar}{h}\Bigr)^{m}\Bigr],
+  \label{eq:spinodal}
+\end{equation}
+ここで$B$は\cref{sec:terms:disjoining}の較正済み係数である。$(n,m) = (3,2)$の場合、
+不安定となる条件は$h_0 > 1.5\hstar$である。無次元変数では
+$\omega = -\tfrac13 H_0^3k^2\bigl(k^2 + \Bo - \Dpn\,\Pihat'(H_0)\bigr)$と書ける。
+\code{spinodal}のチェックでは、$1.5\hstar$の前後の厚さの膜について、線形領域内（不安定な方は 1.85倍まで
+成長させる）で正弦波を追跡する。
+結果を\Cref{tab:analytic}に示す。
+\code{ctest}では\code{analytic}として約 1分で実行する。
+
+\begin{yzntable}{\file{tools/analytic.py}のチェック\label{tab:analytic}}{@{}L{0.18\textwidth} L{0.58\textwidth} L{0.16\textwidth}@{}}
+\textsf{\bfseries チェック} & \textsf{\bfseries 比較対象} & \textsf{\bfseries 結果}\\ \midrule
+\code{leveling\_1d} & 毛管による減衰率。波長あたり 16セルと 32セル & $\Delta x$について次数 1.99 \\
+\code{leveling\_2d} & $\cos k_x x\cos k_y y$で同上。12セルと 24セル & 次数 1.98 \\
+\code{leveling\_dt} & 同じ減衰率。$\Delta t$ = 8と\SI{4}{\milli\second} & $\Delta t$について次数 2.00 \\
+\code{leveling\_cz} & 同じ問題で\val{"CZ"}と\val{"WM"}を比較 & $1\times10^{-11}$ \\
+\code{leveling\_slip\_1d} & Navierすべり$\lambda = h_0/2$（\key{Physics.Slip}）での減衰率$\sigma(h_0^3/3 + \lambda h_0^2)k^4/\mu$。16セルと 32セル & $\Delta x$について次数 1.99（32セルで$6.4\times10^{-3}$） \\
+\code{leveling\_slip\_dt} & 同上。$\Delta t$ = 3.2と\SI{1.6}{\milli\second} & $\Delta t$について次数 2.00 \\
+\code{energy\_\bk leveling}、\code{\_slip}、\code{\_box}、\code{\_2d} & 振幅 30\,\%の正弦波のレベリングにおける\key{Output.Energy}（周期境界、すべりあり、鉛直重力ありで\val{"Symmetry"}壁の間、2次元）。実行全体の収支$|\mathcal F(T)-\mathcal F(0)+\int_0^T\mathcal D\,\mathrm dt|$を$\int_0^T\mathcal D\,\mathrm dt$（各ステップの収支の和）で相対化した値と、$\mathcal F$がステップ間で一度も増加しないこと & $\Delta t$について次数 2.00（\SI{2}{\milli\second}と\SI{1}{\milli\second}で$2\times10^{-4}$〜$5\times10^{-5}$、レベリング）。増加なし \\
+\code{energy\_\bk dewetting} & 同上を厚さ$5.5\hstar$の膜で。スピノーダル不安定により約\SI{10}{\second}で前駆膜まで破断し、\SI{40}{\second}までに液滴にまとまる。128セル、$\Delta t$ = 0.125と\SI{0.0625}{\second} & $\Delta t$について次数 1.97。増加なし \\
+\code{energy\_\bk saturate\_mono} & \code{spinodal\_1d\_unstable}の膜に毛管圧と分離圧を与え、振幅 30\,\%の正弦波を\SI{40}{\second}かけて定常な膜まで成長させる。$\mathcal F$が一度も増加せず、$\mathcal D \ge 0$であること（分離圧に以前用いていたセル界面移動度の平均では、$\mathcal D$が最大値の$5.9\times10^{-5}$だけ負になった） & 0 \\
+\code{eq\_slip} & \cref{sec:verification:disjoining}の平衡液滴（$N_x = 2000$）を、前駆膜の 5倍にあたる\SI{1}{\micro\metre}のすべりで\SI{0.01}{\second}進めたときの$\max|\Delta h|/\max h$ & $9.5\times10^{-6}$（すべりなしで$6.5\times10^{-6}$） \\
+\code{gravity\_1d} & 鉛直重力ありの減衰率。32セル & $6\times10^{-3}$ \\
+\code{potential\_1d} & \key{WritePotential}。初期場（毛管圧、分離圧、鉛直重力のもとでの正弦波）の\code{PHI}列と$\sigma\nabla^2 h + \Pi(h) - \rho g h$の比較 & $1.5\times10^{-15}$ \\
+\code{leveling\_logout\_\bk times} & \file{leveling\_1d\_logout}。$10^{-7}$から\SI{1}{\second}まで 1桁あたり 20回、計 141回の場の出力と\key{ExactTimes}。$|t - t_i|/t_i$ & $0$ \\
+\code{leveling\_logout} & 同上。各出力時刻での減衰率、64セル & $1.6\times10^{-3}$、固定刻みと同じ \\
+\code{spinodal\_1d\_\bk unstable} & 分離圧（$\thetae = \ang{10}$、$(n,m) = (3,2)$）、膜厚$h_0 = 2\hstar$、長さ\SI{1}{\milli\metre}の正弦波。成長率と\cref{eq:spinodal}の比較。16セルと 32セル & $\Delta x$について次数 2.00（32セルで$2.3\times10^{-3}$） \\
+\code{spinodal\_1d\_\bk unstable\_dt} & 同上。$\Delta t$ = 0.4と\SI{0.2}{\second} & $\Delta t$について次数 2.00 \\
+\code{spinodal\_1d\_stable} & 同上を$1.5\hstar$未満の$h_0 = 1.25\hstar$で。減衰率 & 次数 1.99（32セルで$3.9\times10^{-3}$） \\
+\code{spinodal\_1d\_\bk stable\_dt} & 同上。$\Delta t$ = 0.4と\SI{0.2}{\second} & $\Delta t$について次数 2.01 \\
+\code{wave\_1d} & 風上化した面内重力（UTOPIA）による減衰。32セルと 64セル & 次数 3.25 \\
+\code{wave\_1d\_speed} & 波の速さ$\rho g h_0^2/\mu$（UTOPIA）。32セル & $5\times10^{-5}$ \\
+\code{wave\_2d\_speed} & 同上を 2次元で、\key{Acceleration}方向に & $1\times10^{-4}$ \\
+\code{wave\_1d\_koren} & 既定のKorenスキームでの減衰。32セルと 64セル & 次数 3.41 \\
+\code{wave\_1d\_koren\_speed} & 同じ波の速さ（32セル）と、$\Delta x$についての次数 & $6.7\times10^{-4}$。2.85 \\
+\code{wave\_2d\_koren\_speed} & 同上を 2次元で。24セル & $1.1\times10^{-3}$ \\
+\code{wave\_cz} & 面内重力ありの\val{"CZ"}の減衰率。32セルと 64セル & $\Delta x$について次数 2.10 \\
+\code{wave\_cz\_speed} & \val{"CZ"}の波の速さ。32セル & $6\times10^{-3}$ \\
+\code{spin\_1d} & 平坦な膜の帯（両端に\val{"Outlet"}）で$h_0/\sqrt{1 + 4\rho\omega^2 h_0^2 t/3\mu}$ & $4\times10^{-7}$ \\
+\code{spin\_balance} & 回転する 1次元の閉じた箱（\val{"Symmetry"}壁または\val{"Pinning"}壁。\val{"WM"}は固定刻みと適応刻み、\val{"CZ"}は蒸発の有無）。$y$方向への流出を含めた$|\code{VolErr}|$、$|\code{ResinVolErr}|$ & $\le 10^{-12}$（$2\times10^{-15}$） \\
+\code{evap\_wm} & 乾燥する平坦な膜と常微分方程式の比較。$\Delta t$ = 10と\SI{5}{\milli\second} & $\Delta t$について次数 2.00 \\
+\code{evap\_cz} & 同上を\val{"CZ"}で & 次数 2.16 \\
+\code{slab\_cz} & \val{"CZ"}の分布と平板の級数解の比較。$N_z = 20$ & $3\times10^{-4}$（$N_z$について 2次） \\
+\code{dry\_cz} & $D(c)$を用いた$Eh/D \approx 1$での\val{"CZ"}の乾燥と参照解の比較。$N_z$ = 16と 32 & $N_z$について次数 1.81 \\
+\code{evap\_cap} & $h/2$とステップあたりの溶媒量で上限を課した蒸発。$h_1 = \tfrac23 h_0$、$hc$の保存 & $3\times10^{-8}$ \\
+\code{evap\_solvent} & 溶媒の限界$E\Delta t \le h(1-c)$。$c_0 = 0.5$、$E\Delta t/h_0$ = 0.3と 0.75、1次元と 2次元 & $3\times10^{-8}$ \\
+\code{dried\_wm}、\code{dried\_cz} & $c$によらない速さで$c = 1$まで乾き切った膜。溶質の保存と$c \le 1$（刻みを延ばした場合も含む） & $\le 10^{-12}$ \\
+\code{conc\_overshoot} & 一様な流れで運ばれる$c = 0.99$から 0.3への前線。1次元でUTOPIAとCentral4、2次元でUTOPIA、クーラン数 0.4。$c = 1$を超えた分は切り捨てずに移す。$|\code{ResinVolErr}|$と$c \le 1$ & $\le 10^{-12}$（$2\times10^{-14}$） \\
+\code{conc\_overshoot\_koren} & 同上をKorenで、クーラン数 1.5 & $\le 10^{-12}$（$1\times10^{-15}$） \\
+\code{conc\_drying} & 閉じた周期的な膜上の$c = 0.9$から 0.3への前線。流れで運ばれ、ラウールの法則に従って乾燥する。50セルでUTOPIAとKoren、2次元で 24セルのUTOPIA。$|\code{ResinVolErr}|$ & $\le 10^{-12}$（$2\times10^{-15}$） \\
+\code{conc\_uniform} & ノズルと強い面内重力（1次元では回転も）を与えた閉じた箱の中の一様な$c$。$\max|c - c_0|$、1次元と 2次元 & $\le 10^{-12}$（$6\times10^{-16}$） \\
+\code{conc\_undershoot}、\code{\_cz} & 流れで運ばれる$c = 0.7$から 0.005への前線（UTOPIA、KK、Central4。2次元でUTOPIA。\val{"CZ"}でUTOPIA）。$c = 0$を下回った分は周囲のセルから補う。$c \ge 0$と$|\code{ResinVolErr}|$ & $\le 10^{-12}$（$1\times10^{-14}$） \\
+\code{wall\_balance\_cz}、\code{\_solute} & すべての項が壁に向かう\val{"CZ"}の閉じた箱。体積と溶質、蒸発の有無 & $\le 10^{-12}$ \\
+\code{leveling\_adaptive}、\code{\_cz} & 適応刻みでのレベリング。報告された時刻での減衰と、時計と求解した刻みの和との比較 & $5\times10^{-4}$（\key{Criterion} $=10^{-5}$で$2.9\times10^{-4}$）。$10^{-12}$ \\
+\code{inlet\_outlet} & \val{"Outlet"}から運び出される隆起と、\val{"FreshInlet"}から供給される膜。100セル。$\max|\code{VolErr}|$、$|\code{ResinVolErr}|$ & $\le 10^{-12}$（$1.3\times10^{-15}$） \\
+\code{inlet\_outlet\_left} & 同上。隆起が去った後に膜が再び一様になること & $3\times10^{-5}$ \\
+\code{solute\_balance} & 同じ膜を乾燥させる。UTOPIA、Koren、適応刻み、濃度なし。$\max|\code{VolErr}|$、$|\code{ResinVolErr}|$ & $\le 10^{-12}$（$2.2\times10^{-15}$） \\
+\code{solute\_balance\_2d} & 同上を 2次元で。$y$方向に一様な場合（UTOPIA、Koren）と、四辺がすべて開いてあらゆる種類の開いた角をもつ場合 & $\le 10^{-12}$（$1.1\times10^{-14}$） \\
+\code{evap\_threshold} & $E\Delta t = 0.3, 0.45, 0.75\,h_0$を失う平坦な膜の 1ステップ。ステップのいずれかの端で$E\Delta t > h/2$となる場合の上限を、膜と濃度について確認 & $10^{-7}$ \\
+\code{evap\_threshold\_2d} & 同上を 2次元で & $10^{-7}$ \\
+\code{negpow\_rim} & 平坦な膜、流れなし、\val{"negPow"}。1ステップで失われる膜厚と分布の比較。ブレンド部を経て\key{NegPowRmax}の外側、ブレンド幅 3.9個分まで & $3\times10^{-15}$ \\
+\code{negpow\_rim\_slope} & ブレンド開始点での勾配の跳び（勾配に対する相対値） & $0.056$（許容 0.2） \\
+\code{negpow\_rim\_flat} & \key{NegPowRmax}の外側での速さのばらつき（その値に対する相対値） & $0$ \\
+\code{wall\_balance}、\code{wall\_balance\_2d} & 閉じた箱。壁に向かう重力と回転、四つの対流スキーム、すべての辺と角。$|\code{VolErr}|$ & $\le 10^{-12}$（約$10^{-14}$） \\
+\code{wall\_balance\_pinned}、\code{\_pinned\_2d} & 同上を\val{"Pinning"}の辺で & $\le 10^{-12}$ \\
+\code{wall\_balance\_slip} & 上の四つの箱に\SI{3}{\micro\metre}のNavierすべりを加えたもの & $\le 10^{-12}$（$1.1\times10^{-14}$） \\
+\code{nozzle\_balance} & 適応刻みのノズル（1次元と 2次元）と、アームが回転する\file{nozzle\_1d\_rotating}。膜厚は百倍になる。\code{VolErr}に供給量を含める & $\le 10^{-12}$（$1\times10^{-13}$） \\
+\code{nozzle\_solute} & 同上。\code{ResinVolErr}に、供給とともに入る溶質を含める & $\le 10^{-12}$（$1.3\times10^{-13}$） \\
+\code{nozzle\_supplied} & 同上を、\key{Conc}の濃度の液を供給して（\key{ConcType = "supplied"}）。\code{ResinVolErr}に$\int c_S S$を含め、\code{VolErr}も確認。厚い膜ではニュートン修正量が停滞したステップを切り詰める & $\le 10^{-12}$（$2\times10^{-13}$） \\
+\code{nozzle\_mixing} & 流れのない膜に\key{Conc}の液を、領域全体と小さなノズルの下に供給（1次元と 2次元）。$c$と\cref{eq:source-mixing}の比較。\val{"local"}では$c = c_0$ & $\le 10^{-12}$（$4.2\times10^{-15}$） \\
+\code{nozzle\_arm} & 回転するノズルが液を置く位置。定常回転と停止 & アーム長の$2\times10^{-4}$ \\
+\code{nozzle\_area} & ほぼ正方形のセルと、一方向に他方向の 11倍および 20倍長いセルの上に固定した 2次元ノズル。供給量と\key{InletRate} $\pi R^2 t$の比較 & $3.6\times10^{-3}$（面積はセルあたり$20\times20$点で評価） \\
+\end{yzntable}
+
+線形のチェックの誤差は、比較する減衰率・成長率や位相に対する相対値である。平坦な膜の誤差は、
+実行中の変化量に対する相対値である。
+
+表に記録した結果のうち一つは、スキームの検証ではなくスキームの性質を示している。
+\textbf{\val{"WM"}の面内重力は風上化しており}、風上化は進行波を減衰させる。
+UTOPIAでの減衰は、波長あたり 32セルで毛管による減衰率の\SI{3.3}{\percent}、64セルで
+\SI{0.35}{\percent}であり、3次で減少する（KKではその三倍で、\SI{11}{\percent}と
+\SI{1.3}{\percent}）。既定のKorenスキームによる減衰は\SI{4.6}{\percent}と\SI{0.43}{\percent}にとどまるが、
+山と谷を切り取るため、速さの誤差はUTOPIAの 13倍になる。\val{"CZ"}では
+同じ流束を中心差分で扱い、誤差は 32セルでの\SI{0.6}{\percent}から 2次で減少する。
+
+\code{slab\_cz}では、平坦な\val{"CZ"}膜を十分ゆっくり（$E h/D = 5\times
+10^{-5}$）乾燥させる。こうすると厚さ方向の分布は、上面から一定の流束$q = cE$が入り、下面では流束が
+ない平板の分布
+\begin{equation*}
+  c - \bar c = \frac{q h}{D}\left[\frac{3\zeta^2 - 1}{6}
+    - \frac{2}{\pi^2}\sum_{n\ge1}\frac{(-1)^n}{n^2}\,
+      \mathrm{e}^{-n^2\pi^2 D t/h^2}\cos n\pi\zeta\right],
+\end{equation*}
+に一致するはずであり、これと計算した分布を比較する。誤差は$qh/D$の三分の一に対する相対値で、
+$N_z = 10$、20、40でそれぞれ$1.3\times10^{-3}$、$3.2\times10^{-4}$、$8.7\times10^{-5}$
+である。$Eh/D$のオーダーである線形化の誤差が下限となるまで、誤差は 2次で減少する。
+
+\code{dry\_cz}では、\code{slab\_cz}が避けている領域を扱う。溶質が表面直下にたまるほど
+速く（$Eh/D \approx 1$）乾燥する膜で、拡散係数は濃度 1単位あたり$e^{-3}$倍に減少する。
+閉じた形の解はないので、\file{tools/analytic.py}自身が同じ問題を解いて参照解とする。
+セルあたりの溶質を$\zeta$について保存する形
+$(hc)_t = \partial_\zeta[h_t\zeta c
++ (D/h)c_\zeta]$を、両面で流束なし、600セル、時間は陰的中点法で解く。
+\val{"CZ"}の分布は$N_z$について 2次でこの参照解に近づく必要がある
+（$N_z = 8$から 64までで 1.79、1.81、1.87。テストでは 16から 32で 1.8以上を要求する）。
+このチェックは、$\zeta$写像によって生じる鉛直移流と、表面でのその風上化を確認するもので、
+これらを拘束するチェックは他にない。
+
+\code{evap\_cap}では、1ステップで膜の半分以上が失われるほど速く平坦な膜を乾燥させる。
+このとき蒸発はステップの始めと終わりで$h/(2\Delta t)$に制限されるので、
+クランク・ニコルソン法のステップでは$h_1 = h_0 -
+(h_0 + h_1)/4$、すなわち$h_1 = 0.6\,h_0$となり、溶質量$hc$は変わらないはずである。
+ところが、このチェックで当初そうなっていないことが判明した。濃度方程式が上限を課さない
+速さで溶質を濃縮しており、1ステップで溶質が\SI{30}{\percent}増えていた（発見済み、
+修正済み）。現在、鉛直一様モデルの濃度方程式は$hc$自体の収支であり、蒸発は
+現れない。膜厚方程式が取り除いた溶媒は$h_1$に反映されるので、$hc$は厳密に保存される
+（\cref{sec:disc:wm-conservative}）。溶媒の限界も加えると、$c_0 = 0.5$に対して
+$h_1 = \tfrac23 h_0$となる。\code{evap\_threshold}では、上限が働き始める位置を確認する。
+上限より下で 1ステップ、ステップ内で上限をまたいで 1ステップ、両端で上限を超えて
+1ステップを、膜と両方の濃度方程式について実行する。場だけで決まる速さによる濃縮$c_t = Ec/h$では、
+上限より下でも溶質はスキームの次数までしか保存されず、ステップあたり
+$1 + O((E\Delta t/h)^3)$の誤差があった。\code{evap\_wm}が測っているのはこの量である（発見済み、
+同じ方法で修正済み）。\code{negpow\_rim}では、\val{"negPow"}分布の速さを縁をまたいで
+定義と比較する。このチェックで、分布を定数につなぐ余弦ブレンドが\key{NegPowRmax}で
+止まっていなかったことが判明した。速さは外側で再び減少して振動し、ブレンド幅
+二つ分外側では縁での値の 0.75まで下がっていた（半幅が\key{NegPowRmax}の正方形
+領域の角などで生じる）。修正後は、\key{NegPowRmax}の外側で一定である。
+
+\code{inlet\_outlet}では、斜面上の膜に\val{"FreshInlet"}から液を供給し、\val{"Outlet"}から
+排出して、\SI{1.5}{\micro\metre}の隆起を領域外へ運び出す。領域内の体積と流出量の
+和は変わらないはずであり、溶質も同様である（\file{History.dat}はこの収支を
+\code{VolErr}と\code{ResinVolErr}として報告する）。また、隆起が去った後には膜が再び
+一様になるはずである。\cref{sec:verification:equivalence}の\code{wm\_io\_1d\_vs\_2d}では、
+これらの辺がつくる角も含めて確認する。
+
+\code{solute\_balance}では、同じ膜を流しながら乾燥させる。濃度は下流ほど高くなり、
+溶質は両方の辺を通って拡散する。流入口ではセル界面で$c$を保持し、流出口では
+外挿する。膜厚方程式と濃度方程式は有限体積の収支なので
+（\cref{sec:disc:wm-conservative}）、領域内の量は辺のセル界面を通過する量と生成項
+によってのみ変わる。\file{History.dat}では、開いた辺を通過する量を、確定した各
+ステップがその辺に流したセル界面流束から、そのステップの時間方向の重みを掛けて数える
+（\cref{sec:output:history}）。実行全体での$|\code{VolErr}|$と$|\code{ResinVolErr}|$の
+最大値は、丸め誤差程度の$10^{-12}$以下に収まる必要がある。この確認は、濃度にUTOPIAとKoren
+（リミッターを確定させてステップを完了する）を用いた場合、制御によって時間刻みを縮めたり
+延ばしたりした場合（確定したステップだけを数える）、濃度なし（体積のみ）の場合について行う。
+\code{solute\_balance\_2d}では同じ確認を 2次元で、$y$方向に一様な場合と、四辺がすべて
+開いて対角方向に流れる膜の場合に行う。後者では、流入口--流入口、流出口--流出口、
+二つの流入口--流出口の角を液が通過する。これらのチェックにより、場ではなく収支計算の不具合が
+三つ見つかった。いずれも修正済みである。第一に、\file{History.dat}は流れが運び出す溶質だけを
+数え、濃度方程式が辺のセル界面を通して拡散させる量を数えていなかった。そのため収支の誤差は
+$\Delta x$と$\Delta t$によらず、流出した溶質の$1.7\times10^{-4}$で一定であった。第二に、2次元
+では膜と濃度をセル界面ではなく境界セルの値でとっており、\code{VolErr}にも 1次の誤差が
+あった（$1.5\times10^{-3}$）。第三に、この二つを修正した後も、通過量を方程式が運んだセル界面
+流束からではなく、各ステップ後の速度と場のセル界面値から台形則で積分して数えていた。
+このとき\code{VolErr}と\code{ResinVolErr}は、100セルで$6\times10^{-7}$（開いた角のある
+24× 24で$1.5\times10^{-6}$）であり、$\Delta x$について次数 1.8で減少していた。
+ステップ自身のセル界面流束から数えると、$1\times10^{-15}$〜$1\times10^{-14}$になる。
+\code{restart\_chain}（\cref{sec:verification:bcio}）では、このような実行を 1次元と 2次元で
+状態ファイルから継続し、通しで実行した結果とビット単位で一致することを確認する。
+
+\code{nozzle\_balance}では、アームが\SI{1}{\radian\per\second}で回転する
+\file{nozzle\_1d\_rotating}も実行する。ノズルは領域の半分を横切り、一部は領域外に出る。
+膜は幅\SI{3.3}{\micro\metre}のセル上で\SI{10}{\micro\metre}から\SI{1.1}{\milli\metre}まで
+厚くなり、その間、回転する基板は解いていない$y$方向へ液を振り飛ばす。供給量は初期
+体積の約 200倍に達するが、初期体積で規格化した\code{VolErr}は丸め誤差程度に収まる必要がある。
+修正前の同梱ケースではこの値が$-5.4\times10^{-5}$（膜の$2\times10^{-7}$。アームが回転する
+場合は$4.3\times10^{-5}$）であり、ニュートン法と線形ソルバーの許容誤差を厳しくしても
+変わらなかった。供給量と収支計算はどのステップでも丸め誤差の範囲で一致していたが、
+ステップで加わった体積は一致せず、差は$\Delta t$と、閉じた箱ではゼロになるはずの
+$A\cdot\varphi$のセルにわたる和との積であった。$A$の要素と$\varphi$の積として計算すると、
+毛管項の和にはセルあたり$\epsmach\,\lVert A\rVert\,\lvert\varphi\rvert$の誤差が生じ、要素の大きさは
+360セル分の厚さの膜で$D/\Delta x^{4}$のオーダーになる。さらに、辺のセル界面からも漏れがあった。
+1次元の\val{"Symmetry"}ゴーストは独自に連成した 2行をもち、膜の丸め誤差によって鏡像から
+ずれていた。修正後は、$A\cdot\varphi$のうち毛管項と鉛直重力の部分を膜の差分からセル界面ごとに
+計算し、境界行は毎回の線形求解の後に厳密に満たされる。\val{"Symmetry"}ゴーストも、2次元と同様に
+1次元でも厳密な鏡像になる（\cref{sec:time:apply}）。現在の\code{VolErr}は、同梱のケースの最後で
+$2\times10^{-13}$、アームが回転する場合でも最大$1\times10^{-13}$である。あわせて、ニュートン反復の
+修正量の下限も下がった（\cref{sec:convergence:floor}）。
+
+\code{nozzle\_supplied}では、\code{nozzle\_balance}の三つの実行を、独自の濃度の液を
+供給して繰り返す（\key{ConcType =
+"supplied"}。濃度 0.5の膜に\key{Conc} 0.9、厚い膜では 0.1）。
+\code{SuppliedResin}は溶質収支に取り込まれた供給項から直接$\Delta t\,S\,c_S$を
+積算するので、\code{ResinVolErr}は丸め誤差程度（$5\times10^{-14}$）に収まる。$c$が
+変化しなければ、チェックは失敗とする。厚い膜では、濃度 0.1で供給した液によってノズル直下の
+粘度が$e^{4}$分の一に下がり（\key{Exponent} 10）、いくつかのステップでニュートン修正量が
+収束からほど遠いところで停滞して、最初の修正量の$8\times10^{-4}$〜1.9倍にとどまる。
+以前はこのようなステップが警告付きで受理され、膜がその残差を$2.2\times10^{-8}$の\code{VolErr}
+として抱えていたことが判明した。修正後は、このステップは失敗として扱われ、切り詰められる
+（\cref{sec:convergence:stagnation}）。切り詰められたステップは 29で、実行には 1982ステップでは
+なく 3259ステップを要する。\code{VolErr}は$2\times10^{-13}$であり、三つの膜すべてで確認している
+（閉じた箱では$1\times10^{-14}$）。厚い膜でステップが一つも切り詰められなければ
+チェックは失敗とする。これにより、切り詰めの処理が常に試験されるようにしている。\code{nozzle\_mixing}では、
+流れのない（すべての項をオフにした）$c_0 = 0.5$の平坦な膜に、$c_S = 0.1$の液を供給する。ノズルが
+領域より広い場合は$h = h_0 + St$となり、$c$は\cref{eq:source-mixing}に従う。半径
+\SI{0.1}{\milli\metre}のノズルの下では、拡散をオフにすると、各セルは自身の$h$に対して
+$hc = h_0c_0 + (h - h_0)\,c_S$を保つ。各ステップで$h$に$\Delta t\,S$、$hc$に
+$\Delta t\,S\,c_S$が厳密に加わる（$S$は一定）ため、時間離散化の誤差は生じず、1次元と
+2次元を通じた最大誤差は丸め誤差の$4.2\times10^{-15}$である。\val{"local"}では、同じ膜が
+厳密に$c = c_0$を保つ。
+
+\code{nozzle\_arm}では、まったく流れのない膜の上で、アームに付いたノズルを回転させる。
+各点は自分の上に落ちた量をそのまま保持するので、二つの出力の間に届いた量の
+重心は、その間のノズルの平均位置に一致する。アームは\SI{0.3}{\second}かけて加速し、
+\SI{0.5}{\second}回転し、\SI{0.3}{\second}かけて減速する。以前は加減速の時間を時間スケール
+$T_0$で割らずに掛けていたため、アームが独自の時計で動いていた。
+このチェックは、アーム長の\SI{30}{\percent}のずれを検出して失敗した。
+
+\code{nozzle\_area}では、閉じた箱の中に 2次元ノズルを固定し、供給量を
+\key{InletRate} $\pi R^2 t$と比較する。以前は、ノズルからセル中心までの
+距離が$R + 2\min(\Delta x, \Delta y)$以内のセルを供給対象として選んでいた。この判定では、縦横比が
+3.9を超えるセルの場合、円が一部を覆うセルを取りこぼす。$y$方向に 11倍長いセルの格子では、
+ノズルの供給量が規定の\SI{81}{\percent}にとどまっていた（ミューテーションテストで発見。
+\cref{sec:notverified:mutation}）。修正後は、セルの対角線一本分
+$R + \sqrt{\Delta x^2 + \Delta y^2}$まで判定を広げた。残る誤差は、セルあたり$20\times20$点で面積を数える
+ことによるものだけである。縦横比が 3.9未満のセルでは、結果は修正前とビット単位で同じである。
+
+\section{製造解}
+\label{sec:verification:mms}
+
+\cref{sec:verification:analytic}のチェックでは膜の振幅が$10^{-3}$なので、移動度$h^3$は
+ほとんど変化せず、離散化の非線形な部分はほとんど試験されない。製造解の方法には、この
+制限がない。\key{Numerics.ManufacturedSolution}（\cref{sec:ref-numerics:mms}）を
+指定すると、ソルバーは膜厚方程式に生成項を加え、
+\[
+  h = h_0 + a\cos(k_x x - \Omega t)\cos(k_y y)
+\]
+が厳密解となるようにする。\file{tools/mms.py}では、$a = 0.3\,h_0$（移動度は
+1波長の間に六倍変化する）とし、毛管圧、鉛直重力、面内重力をすべてオンにして、
+幅 1波長の周期領域で、$\Omega =
+\SI{60}{\per\second}$として\SI{20}{\milli\second}実行する。誤差は、終了時の製造解の膜との
+最大差を$a$に対する相対値で表したものである。$\Delta x$についての次数は、時間刻みの影響を無視できる
+ほど小さい刻みで測る。$\Delta t$についての次数は細かい格子で、小さい方の刻みの
+四分の一で実行した結果を基準として測る。\code{ctest}では\code{mms}として実行し、
+両方の次数が 1.8以上であることを要求する。
+
+\cref{tab:mms}で「all」と記した四行では、モデルのすべての項を同時にオンにする。各項が
+$h_t$（または$c_t$）に与える変化がほぼ同程度になるよう調整し、どの項も他の項に
+埋もれないようにした。起伏\SI{2}{\micro\metre}の基板上で、毛管圧、二種類の
+重力、領域の中心から外れた軸まわりの遠心力項を含める。鉛直一様モデルではさらに、
+膜厚を前駆膜の 1.75〜3.25倍とした分離圧、マランゴニ流束、濃度に依存する粘度・表面張力・
+拡散係数、蒸発を含める。蒸発は、1次元では\val{"PowerN"}則、2次元では
+\val{"negPow"}分布を用いたラウールの法則とする。濃度も製造解とし、
+$c = 0.5 + 0.1\cos(k_x x - 40t + 0.7)\cos(k_y y)$とする。濃度の方程式にも独自の生成項を
+加えるので、濃度の対流、拡散、蒸発による濃縮とその誤差も比較の対象になる。
+これだけ項が多いと、導関数は長すぎて手で誤りなく書けない。しかも生成項の誤りは
+ソルバーの誤りと見分けがつかない。そこで、
+\file{tools/mms\_generate.py}で\cref{ch:governing}の方程式からSymPyにより導関数を
+導出し、\file{model/\bk ManufacturedSourceTerms.inc}に書き出す。
+SymPyがインストールされている場合、\code{ctest}はこのファイルが現在の方程式から
+生成器が作るものと一致することを確認する（\code{mms\_source\_current}）。導関数を
+必要としない蒸発は、ソルバー自身のコードを流用せず、\cref{sec:terms:evaporation}
+の式から\file{ManufacturedSource.cpp}に手で書き下した。
+
+\begin{yzntable}{製造解の誤差（$a$に対する相対値）\label{tab:mms}}{@{}L{0.12\textwidth} L{0.40\textwidth} L{0.40\textwidth}@{}}
+\textsf{\bfseries ケース} & \textsf{\bfseries $\Delta x$について} & \textsf{\bfseries $\Delta t$について}\\ \midrule
+\val{"WM"}、1次元 & $6.2\times10^{-3} \to 1.0\times10^{-3}$（32、64セル）：2.61 & $9.5\times10^{-4} \to 2.2\times10^{-4}$（1、\SI{0.5}{\milli\second}）：2.08 \\
+\val{"WM"}、2次元 & $4.6\times10^{-2} \to 6.7\times10^{-3}$（16、32）：2.78 & $2.9\times10^{-3} \to 6.5\times10^{-4}$（2、\SI{1}{\milli\second}）：2.15 \\
+\val{"CZ"}、1次元 & $2.5\times10^{-2} \to 6.2\times10^{-3}$（32、64）：2.02 & $6.4\times10^{-3} \to 1.5\times10^{-3}$（1、\SI{0.5}{\milli\second}）：2.06 \\
+\val{"CZ"}、2次元 & $8.0\times10^{-2} \to 2.0\times10^{-2}$（16、32）：2.01 & $1.5\times10^{-2} \to 4.0\times10^{-3}$（2、\SI{1}{\milli\second}）：1.94 \\ \midrule
+\val{"WM"}、1次元、all & $9.9\times10^{-4} \to 2.7\times10^{-4}$（64、128）：1.89 & $4.4\times10^{-4} \to 1.1\times10^{-4}$（1、\SI{0.5}{\milli\second}）：2.07 \\
+\val{"WM"}、2次元、all$^{*}$ & $7.7\times10^{-3} \to 1.8\times10^{-3}$（24、48）：2.11 & $1.4\times10^{-3} \to 3.3\times10^{-4}$（2、\SI{1}{\milli\second}）：2.07 \\
+\val{"CZ"}、1次元、all & $1.2\times10^{-2} \to 3.0\times10^{-3}$（32、64）：2.00 & $1.8\times10^{-3} \to 4.4\times10^{-4}$（1、\SI{0.5}{\milli\second}）：2.05 \\
+\val{"CZ"}、2次元、all & $4.6\times10^{-2} \to 1.1\times10^{-2}$（16、32）：2.05 & $6.1\times10^{-3} \to 1.5\times10^{-3}$（2、\SI{1}{\milli\second}）：2.01 \\ \midrule
+\val{"CZ"}、1次元、$c(x)$ & $7.4\times10^{-3} \to 1.9\times10^{-3}$（32、64）：2.00 & $4.0\times10^{-4} \to 8.5\times10^{-5}$（1、\SI{0.5}{\milli\second}）：2.22 \\
+\val{"CZ"}、2次元、$c(x,y)$ & $2.9\times10^{-2} \to 7.4\times10^{-3}$（16、32）：1.97 & $1.6\times10^{-3} \to 3.2\times10^{-4}$（2、\SI{1}{\milli\second}）：2.32 \\
+\val{"CZ"}、1次元、$c(x,\zeta)$ & $2.0\times10^{-2} \to 4.9\times10^{-3}$（32、64）：2.01 & $7.5\times10^{-4} \to 1.5\times10^{-4}$（1、\SI{0.5}{\milli\second}、128セル）：2.30 \\
+\val{"CZ"}、2次元、$c(x,y,\zeta)$ & $7.7\times10^{-2} \to 2.0\times10^{-2}$（16、32）：1.96 & $6.4\times10^{-4} \to 1.6\times10^{-4}$（1、\SI{0.5}{\milli\second}、16セル）：2.02 \\ \midrule
+\val{"WM"}、1次元、slip & $2.2\times10^{-3} \to 3.0\times10^{-4}$（32、64）：2.90 & $4.5\times10^{-4} \to 1.0\times10^{-4}$（1、\SI{0.5}{\milli\second}）：2.12 \\
+\val{"WM"}、1次元、all、slip & $2.1\times10^{-3} \to 5.1\times10^{-4}$（64、128）：2.03（$h$ 2.03、$c$ 1.90） & $6.6\times10^{-4} \to 1.6\times10^{-4}$（1、\SI{0.5}{\milli\second}）：2.07 \\
+\end{yzntable}
+\noindent$^{*}$\,拡散係数を 1次元のケースの十分の一、起伏を半分とした（下記参照）。
+「slip」と記した行は\code{wm\_slip\_1d}と\code{wm\_all\_slip\_1d}である。それぞれ、
+この表の最初の二つのケースに、平均膜厚の半分にあたるNavierすべり
+$\lambda = \SI{2.5}{\micro\metre}$（\key{Physics.Slip}）を加えた。これにより
+$\lambda h^2$は$h^3/3$と同程度の大きさになる。生成項はすべりを含む移動度
+\cref{eq:q-slip}に対するもので、同じスクリプトで生成している。
+
+鉛直一様モデルで$\Delta x$についての次数が 2を超えるのは、2次の毛管項と 3次の風上化した
+面内重力が混在する漸近域前の状態にあるためで、これらの格子では後者の誤差が支配的である。
+\val{"CZ"}モデルは両者を中心差分で扱うので、明確に 2次を示す。どちらのモデルも、すべての
+項をオンにした状態で時間について 2次である。\val{"CZ"}がそうなるのは
+\cref{sec:time:newton}の予測子--修正子法によるもので、これがなければ膜厚方程式の陽的な
+項は 1次になる。「all」と記した\val{"CZ"}の行では、濃度は一様である。$c(x)$と$c(x,y)$と
+記した行では、\val{"CZ"}に面内で変化する濃度
+$c = 0.5 + 0.2\cos(k_x x - 40t + 0.7)\cos(k_y y)$を与える。濃度は膜内のどの高さでも
+同じで、この範囲で粘度は$e^{1.2}$倍、拡散係数は$e^{-0.8}$倍まで変化する。他の
+\val{"CZ"}の項すべてに加え、$\sigma(c)$とマランゴニ流束も含む。濃度方程式には独自の生成項
+$c_t + \mathbf{u}(\zeta)\cdot\nabla c -
+\nabla\cdot(D\nabla c)$を加える。この生成項は、潤滑近似の速度分布を通じて$\zeta$に依存する。
+$c$の誤差は全高さで測り、速度分布自体も全高さで厳密解と比較する。
+$h$、$c$、$\mathbf{u}$はそれぞれ単独で 2次で収束する必要がある（1次元：2.00、
+1.92、2.01。2次元：1.97、1.82、2.00）。最後の二行では、膜内で変化する成分
+$0.1\cos(k_x x-30t)\cos(k_y y)\cos\pi\zeta$を加える。この成分は、基板での流束なし条件と、
+蒸発がない場合の表面での流束なし条件を満たす。このとき表面値は深さ平均と 0.1だけ異なり、
+粘度は厚さ方向に$e^{0.6}$倍変化する。拡散係数は
+$1.5\times10^{-9}$~\si{\metre\squared\per\second}で、上の行の二十分の一とし、
+膜を通る拡散が$c_t$の他の項と 1桁以内に収まるようにした。これより小さくしないのは、
+2次元で約$1.25\times10^{-9}$（1次元で$10^{-9}$）を下回ると、短波長でこの状態をモデルが
+安定に保てないためである（\cref{sec:verification:schemes}）。流束にも速度分布にも閉じた形が
+ない。そこで\file{mms\_generate.py}で被積分関数と写像後の残差（$\zeta$格子の
+鉛直移流$\Omega$、計量項、$z$一定での拡散）を導出し、生成項ではそれらをガウス・ルジャンドル
+求積で積分する。$N_z$は格子とともに細分化する。$h$、$c$、$\mathbf u$はそれぞれ
+$\Delta x$と$\Delta t$について 2次で収束する必要がある
+（1次元：2.01、1.98、1.96および 2.30、2.04、2.58。2次元：1.96、1.88、1.98および
+1.97、2.02、2.25）。2次元では、膜を通る拡散の速さは、膜が最も薄く$c$が最も低い位置で
+$D\pi^2/h^2 = \SI{2.2e3}{\per\second}$であり、\SI{2}{\milli\second}のステップは緩和時間の
+4.4倍に相当する。このため$\mathbf u$は 2から\SI{1}{\milli\second}の間では次数 1.7でしか収束しなかった。
+そこで$\Delta t$についての次数は 1と\SI{0.5}{\milli\second}、16セルで測る。膜を通る
+セル数は、16セルと 32セルの格子に対してそれぞれ 6と 12とする（4と 8では、$c$の$\Delta x$についての収束次数は
+1.83であった）。製造解の分布が表面条件$D c_z = cE$を満たさないため蒸発は含めず、
+分離圧（\val{"CZ"}にはない）も含めない。厚さ方向の濃度は、代わりに参照解との比較で
+確認する（\code{dry\_cz}、\cref{sec:verification:analytic}）。ノズルはどちらのモデルでも
+製造解の対象外である。
+
+すべての項をオンにした実行により、項が三つだけの実行では見つけようのなかった不具合が
+四つ見つかった。
+\begin{itemize}
+  \item 面内重力と遠心力項が、粘度をセル界面ではなく各行のセルの濃度で評価していた。
+    同じセル界面を共有する二つの行が、そこを通る流束を別々の値で見ていたことになる。スキームは
+    保存形になっておらず、濃度に依存する粘度ではまったく収束しなかった（どの格子でも誤差 0.8）。
+  \item 起伏のある基板上で、鉛直重力が各セル界面の基板形状による流束を中心セルと隣接セルに
+    分ける際、中心セルの分にセル界面ではなくセルの粘度を用いていた。
+    上と同じ種類の不具合で、誤差$3.7\times10^{-2}$が細分化しても減少しなかった。
+  \item 鉛直一様モデルの濃度方程式が、最初の速度を計算する前に最初のステップの陽的な
+    半分を作っていた。そのため、このステップの対流の半分では速度がゼロであった。全体として
+    $\Delta t$について 1次（$1.24$）となり、この誤差が濃度から粘度を通じて膜に伝わっていた。
+  \item 1次元の場合、鉛直一様モデルは、遠心力項によって横方向（解いていない$y$方向）へ
+    振り飛ばされる液を数えるが、\val{"CZ"}は数えていなかった。そのため回転する帯の上で二つの
+    モデルの結果が食い違っていた。修正後は、\val{"CZ"}でもこの量を膜厚方程式で数え、連続の式を
+    通じて鉛直速度にも反映する。
+\end{itemize}
+
+面内で変化する濃度を与えた\val{"CZ"}の実行により、さらに五つの不具合が見つかった。いずれも
+\val{"CZ"}の膜厚方程式と速度分布にあった。
+\begin{itemize}
+  \item 毛管項で、左側の$x$方向セル界面の表面張力を右側のセル界面にも用いていた。
+    このため、ここでも共有するセル界面を通る流束を二つの行が別々の値で見ていた（$h$について 1次）。
+  \item 遠心力項の$x$方向速度で、回転軸の$x$方向のオフセットが考慮されていなかった。$y$方向速度と
+    膜厚方程式では考慮されていた（どの格子でも溶質の誤差 0.19）。
+  \item 速度の積分で、最初のシンプソン区間の中点を基板上にとっていた。このため粘度が一様でも分布が
+    $h^2\Delta\zeta^2/12\mu$だけずれていた（細分化しても減少しない誤差）。
+  \item 2次元の毛管速度に、膜厚方程式には含まれる交差微分
+    $\partial_x\partial_{yy}h$と$\partial_y\partial_{xx}h$が欠けていた
+    （$2.4\times10^{-2}$、減少しない）。
+  \item 周期境界の継ぎ目で、各セル界面が反対側のセル界面の速度をコピーしていた。周期的な力で
+    あれば両者は等しいが、遠心力は周期的でないため、このコピーにより濃度が 1次になっていた。
+    修正後は、継ぎ目の各セル界面は自身の速度、すなわち膜厚方程式がそこで用いる流束に
+    対応する速度を保持する。
+\end{itemize}
+
+鉛直一様モデルにも同じ継ぎ目の不具合があった。遠い側の継ぎ目のセル界面が近い側の速度を
+用いており、遠心力項があると濃度が 1次になっていた（\code{wm\_all\_1d}：32から 64セルで
+1.24、64から 128で 0.92）。しかし膜厚と合わせた次数ではこれが隠れていた。修正後は、継ぎ目の各セル界面が
+自身の速度を保持する。周期的な力では、両者は丸め誤差の範囲で一致する。\code{wm\_all\_1d}では、
+$h$と$c$がそれぞれ単独で 2次であることを要求する（既定のスキームで、64セルと 128セルで
+1.89と 1.94）。濃度に河村・桑原スキームを用いると（\cref{sec:verification:schemes}）、
+32セルでの濃度の次数は 1.50で、まだ漸近域に達していなかった。風上化した対流の 3次の散逸が、
+残りの誤差と逆符号でその一部を打ち消していたためである。さらに二回細分化すると（256セルまで）1.80と 1.91に
+達し、対流をオフにすると 1.96〜1.99であった。\code{wm\_all\_2d}でも、$h$と$c$がそれぞれ
+収束する必要がある。河村・桑原の風上化は 3次の散逸
+$-|u|\Delta x^3/4\,\partial^4$（UTOPIAはその三分の一）を加える。この散逸は、拡散（$c$の場合）
+と毛管項（$h$の場合）の 2次の誤差と逆符号である。セルペクレ数が$1/3$付近では両者が
+打ち消し合い、2次元のテストで扱える範囲の格子では、どれも次数が 2を下回る。1次元の
+パラメータを用い、濃度にKKを用いると、16、32、64、128セルで$c$の収束次数は 1.66、1.58、1.81、
+$h$は最後の二組で 1.96と 1.89である。風上部分をオフにすると（両方に\val{"Central2"}）、
+同じ格子で$c$は 1.99、1.98、1.95、$h$は 2.02、2.00、1.96で収束し、誤差は継ぎ目と角も
+含めてどこでも滑らかである。項を一つずつオフにしても、単独で次数を下げる項は
+見つからなかった。そこで 2次元のケースでは拡散係数を十分の一、起伏を半分にして、
+セルペクレ数を打ち消しが起こる範囲から十分に離した。24セルと 48セルで、濃度にKKを用いると
+$c$は 2.58、$h$は 2.12で収束し、既定のスキームでは 2.38と 2.11で収束する。打ち消しの範囲を
+外れたときの濃度自体の漸近的な次数は、誤差が既知の 2次元の線形問題、すなわち、より低い
+セルペクレ数で移流・拡散する斜めの正弦波で確認する
+（\code{oblique\_wm}、\cref{sec:verification:schemes}）。UTOPIAでもKorenでも 2次であり、
+16から 64セルで次数は安定している。
+
+成層した\val{"CZ"}の実行により、厚さ方向に一様な濃度では現れない不具合が四つ見つかった。
+\begin{itemize}
+  \item 膜厚の流束で表面張力と粘度を深さ平均濃度で評価していたため、濃度を運ぶ速度分布を
+    深さ方向に積分したものと一致していなかった（減少しない 0.2--0.3の誤差）。修正後は、$\sigma$を
+    表面濃度で評価し、
+    移動度とマランゴニ流束では$1/\mu(c(\zeta))$を$3(1-\zeta)^2$と$2(1-\zeta)$で重み付けして
+    平均する。これは上の積分そのものである（\cref{sec:disc:positivity-concz}）。
+  \item \code{Uz}が 1セル上の位置に格納されていた。
+  \item \code{Uz}が鉛直速度$w$ではなく、$\zeta$一定での$-h\int\nabla\cdot\mathbf u\,d\zeta$に
+    なっていた。そのため傾いた膜の表面で$\zeta$方向速度が消えず、溶質が表面を通って運ばれていた。
+  \item 表面より上のゴーストが直下のセルの鏡像になっておらず、最上部のセルの移流が
+    1次になっていた。
+\end{itemize}
+また、場ファイルに書き出す速度が、最後のステップの中点、すなわち$h$と$c$より半ステップ遅れた時点の
+値になっていた。修正後は、書き出した状態での速度を書き出す。
+
+\code{cz\_strat\_1d\_koren}では、成層したケースを濃度にKorenスキームを用いて実行する。
+厚さ方向についてKorenスキームを試すチェックは他にない。$\Delta t$についての次数は 0.25と
+\SI{0.125}{\milli\second}のステップで測る。粗い方の組では、各ステップの中点でリミッターを
+確定させると、$\mathbf u$はまだ漸近域に入っていない（3.26。$h$は 2.22、$c$は
+2.05）。\code{cz\_strat\_1d\_central4}ではCentral4を用いる。Central4はどの方向にも
+散逸を加えない（\cref{sec:verification:schemes}）。
+
+厚さ方向に成層した濃度では、以前は\val{"CZ"}の時間刻みが$\Delta x^2$に比例して制限されていた。
+128セルでは\SI{0.5}{\milli\second}のステップで発散した。原因はマランゴニ項ではなく、
+食い違う二つの速度であった。膜は外挿した中点濃度$c^*$での毛管流束・マランゴニ流束で
+動いていた。一方、濃度を運ぶ速度の毛管部分は、\emph{予測}した終状態までの中間の膜から求めていた。
+この終状態は、$c_n$のマランゴニ応力とすでに釣り合っている。両者の差、すなわち
+$c^* - c_n$に対するマランゴニ流束が自由表面に$\zeta$方向速度を残し、成層を自らの勾配を
+横切る向きに動かしていた。このとき$c_t \approx D_M\nabla^2(c_n - c_{n-1})/2$（ただし
+$D_M = h\sigma_c c_\zeta/2\mu$）となり、
+$\Delta t < \Delta x^2/2D_M$の場合に限り安定である。64、128、256セルで観測したしきい値はこの式に
+従う。修正後は、速度をそのステップ自身の膜から作り、中点まで連成を反復する
+（\cref{sec:time:newton}）。時間刻みを制限するのは精度だけになった。128セルと 256セルで、
+\SI{2}{\milli\second}までのステップで数$10^{-3}$という通常の時間誤差となり、適応
+ステップで 1548回を要していた蒸発する 1次元の膜は 134回で済むようになった。\code{cz\_strat\_1d}の$\Delta t$に
+ついての実行は 128セルで行う。この修正により、成層した実行の$\Delta t$についての誤差は
+4〜5分の一に下がった。
+
+\section{境界条件、リスタート、入力の解釈}
+\label{sec:verification:bcio}
+
+この分野は三つのファイルで分担し、それぞれ異なる性質を固定する。
+
+\file{test\_boundary\_condition.cpp}では、五つの境界条件（\val{"Symmetry"}、
+\val{"Periodic"}、 \val{"Pinning"}、 \val{"FreshInlet"}、 \val{"Outlet"}）のあらゆる
+組み合わせを、三つの場\code{Height}、\code{HeightJacobi}、\code{Conc}について試す。
+確認するのは、行列の列インデックスが範囲内に収まること、どのゴースト行もちょうど一つの方程式を
+担うこと（対角要素が非ゼロであること）、対称な境界条件からは鏡像に対して不変な行列が
+得られることである。境界条件が与える値も確認する。一様な膜は、どの組み合わせでも
+角を含む全ゴースト点で一様な値を返す。各辺の流入口は、内部がその後どう変化しても、
+セル界面の値を構築時の場の値に保つ。場を辺の種類ごと鏡映または転置すると、
+ゴースト値もすべてそれに従って移る。これらの確認により、二つの不具合が見つかった。XmaxまたはYmaxにある流入口では、
+セル界面の両側の二点ではなく、ゴースト二層の平均が保たれていた。また、そのセル界面の
+速度が 1セル内側の速度で上書きされていたため、流入する溶質が膜の運ぶ量と一致して
+いなかった。どちらも修正済みである（鏡映した実行との差は$0.25$から
+$2\times10^{-9}$に下がった）。これらの辺に流入口をもつ同梱ケースはない。
+
+\file{test\_restart.cpp}を設けているのは、\file{field*****.dat}が出力ファイルであると同時に
+ASCIIリスタートの入力形式でもあるからである。\textbf{書き出した行番号と、読み戻した格子点は
+同じ点でなければならない。}この性質を三つのケースで固定する。
+(a) 1次元では、行$i$は$x$インデックス$i+1$に対応する。(b) 非対称な形状を書き出して
+読み戻すと、相対$10^{-13}$の精度で同じ位置に戻る。(c) 行番号の分解は 2次元格子でも
+正しい。(c)では\textbf{$12 \times 5$}の格子を用いており、この非対称性が
+肝心である。\textbf{行番号を$N_x$と$N_y$のどちらで割るかを取り違えても、正方形の格子では
+見えず、両者が異なる場合にだけ現れる}。
+
+\code{restart\_chain}（\file{tools/restart\_roundtrip.py --chain}）では、途中で停止して
+リスタートした実行を、通しで行った実行と照合する。対象は両モデルの十三のケースで、1次元と
+2次元、適応刻み、蒸発、\val{"CZ"}の連成パス、制限付き対流スキーム、移動するノズル
+（局所濃度で液を供給する場合と独自の濃度で供給する場合）、プローブ、定常状態と乾き切りによる停止を
+含む。各ケースを出力時刻でないステップで\key{MaxSteps}により停止させ、最後のファイルから
+同じディレクトリにリスタートする。リスタートには\file{.vts}と\file{field*.dat}を交互に用いる。
+一つのケースは、より前のファイルからリスタートして実行の一部を二度行う。二つのケースは、実行が定常に
+なるステップ、あるいは乾き切るステップでちょうど停止する。二つ（\code{wm1d\_pinned\_dry}、
+\code{\_adapt}）では、膜を\val{"Pinning"}壁に押し付けて乾燥させ、最後のリスタートの前に
+壁での膜厚が最も厚い部分の十分の一を下回るようにする。さらに二つ（\code{wm1d\_open}、
+\code{wm2d\_open}）では、膜に\val{"FreshInlet"}から液を供給して\val{"Outlet"}の辺から排出し、
+辺を通過した量の合計が状態ファイルから引き継がれるようにする。すべての場ファイル、
+\file{History.dat}、\file{CalcInfo.dat}、プローブの全行、各部分を通して
+合計したステップ数が、ビット単位で一致しなければならない。状態ファイルがない場合は
+（\cref{sec:ref-numerics:restart}）、固定刻みの二つのケースで出力時刻が保たれ、
+$10^{-11}$（鉛直一様モデル）と$10^{-7}$（\val{"CZ"}）で一致する必要がある。この
+チェックにより、五つの不具合が見つかった。リスタート後に出力スケジュールが$t = 0$から再開し、
+半間隔ごとに場を書き出していた。\file{History.dat}の合計がゼロから始まっていた。\val{"CZ"}が
+与えた場ではなく初期場から最初のステップを進めていた。\file{field*.dat}から読み込んだ
+\val{"CZ"}の場で、外側のゴースト列が初期の膜のままであった。各部分の最後のステップが
+定常状態の判定に数えられていなかったため、定常となるステップで停止した実行がリスタート後に
+続行していた。
+
+\file{test\_config.cpp}では入力ファイルの解釈を固定する。対象はスカラー、ベクトル、入れ子の
+ブロック、繰り返しブロックと、\file{.toml}の入力から等価な\file{.inp}と同じ木が得られる
+という要件である（\cref{sec:inputformat:legacy}）。
+
+\section{分離圧と接触線}
+\label{sec:verification:disjoining}
+
+本節が本章の中核である。接触線モデルは、Yuzenのなかで最も多くの物理を含み、微妙な
+誤りが入り込む余地も最も大きい。一方で、解析的な参照解が得られる部分でもある。テストは
+\file{yuzen/tests/test\_disjoining.cpp}にあり、対象のモデルは\cref{ch:wetting}で
+導出した。
+
+\subsection{閉じた形での較正の確認}
+
+平衡とは圧力が一様な状態であり、毛管圧と分離圧については\cref{eq:eq-ode}、
+すなわち$H'' + \Dpn\,\Pihat(H) = K$（$K$は一定の圧力）で表される。前駆膜が無限遠まで続く
+極限では$K = 0$となり、$H'$を掛けると方程式を一回積分できる。
+
+\begin{equation}\label{eq:ver-first-integral}
+  \tfrac{1}{2}\,(H')^{2} = -\Dpn \int_{\Hstar}^{H} \Pihat\,\mathrm{d}s .
+\end{equation}
+
+無限遠までの積分は初等的に求まり（\cref{eq:pi-integral}）、値は負である。したがって
+\cref{eq:ver-first-integral}から遠方での勾配\cref{eq:slope-limit}、
+$(H')^{2} \to \As\,\thetae^{2}$が得られる。無次元の勾配に$\varepsilon = h_0/L_0$を掛けると
+物理的な勾配になり、$\As = 1/\varepsilon^{2}$であるから、物理的な勾配は\emph{厳密に}
+$\thetae$となる。コードで構築する係数\cref{eq:dp-def}は、これと恒等的に一致する。導出は
+\cref{sec:wetting:dp}に示したので、ここでは繰り返さない。
+
+テストで新たに確かめるのは、実装が確かにこの式を評価していることである。どの因子に
+代数的な誤りがあっても現れるよう、パラメータを広い範囲で格子状に掃引する。
+\textbf{36通りの組み合わせ}
+（$\thetae \in \{2, 5, 10, 20\}^{\circ}$、$\Hstar \in \{0.01, 0.05, 0.2\}$、
+$(n,m) \in \{(3,2), (4,3), (9,3)\}$）のすべてについて、次を要求する。
+
+\begin{itemize}
+  \item $\Dpn$が\cref{eq:dp-def}と相対$10^{-14}$以内で一致する。
+  \item 復元した角度$\varepsilon\sqrt{-2\,\Dpn\int\Pihat}$が、ラジアン単位の
+    $\thetae$と相対$10^{-12}$以内で一致する。
+\end{itemize}
+
+別のケースでは、分離圧を無効にすると$\Dpn$が厳密にゼロになることを固定する。
+\textbf{これが本章で最も強い主張である}。離散化も時間進行も関与せず、許容誤差は
+数値解法ではなく倍精度演算で決まる。
+
+\subsection{解析的な平衡液滴上の残差速度}
+
+平衡液滴は 1パラメータの族をなす（\cref{sec:wetting:equilibrium}）。$\Hmax$を与え、
+\cref{eq:Hf-Hmax}を二分法で解いて$\Hf$を求め、$H'' = K - \Dpn\,\Pihat(H)$を裾から
+頂部まで積分する。偏微分方程式は解かない。
+
+測定の内容は単純である。この形状を格子に載せ、毛管圧と分離圧による速度を
+足し合わせる。連続な平衡ではこれらは厳密に打ち消し合うので、\textbf{残る値はすべて
+離散化の打ち切り誤差である}。条件は$\thetae = 10^\circ$、
+$\Hstar = 0.02$（\SI{0.2}{\micro\metre}）、$\Hmax = 1.0$（
+\SI{10}{\micro\metre}）、領域$\pm\SI{300}{\micro\metre}$である。ソルバーを実行して
+\file{field00000.dat}から\code{Ux}を読み出し、速度スケール
+$U_0 = 5.6069\times10^{-8}$~\si{\metre\per\second}で割る。
+
+\begin{yzntable}{解析的な平衡液滴上の残差速度\label{tab:eqresidual}}{@{}d d d d d@{}}
+\textsf{\bfseries $N_x$} & \textsf{\bfseries $\Delta x$ [\si{\micro\metre}]} &
+\textsf{\bfseries 残差速度} & \textsf{\bfseries 比} &
+\textsf{\bfseries 次数} \\ \midrule
+1000 & 0.6  & 18.94 &      &      \\
+2000 & 0.3  & 5.074 & 3.73 & 1.90 \\
+4000 & 0.15 & 1.294 & 3.92 & 1.97 \\
+\end{yzntable}
+
+\cref{tab:eqresidual}の残差速度は無次元である。$N_x = 1000$から$N_x = 4000$までの
+全体で次数は\textbf{1.94}、細かい方の組では 1.97であり、2次収束している。
+
+\textbf{最大値は$H \approx 2\Hstar$となる接触線の位置にあり、頂部でも裾でもない。}この点は
+それ自体知っておく価値がある。このモデルの打ち切り誤差は、分布の曲がりが最も急な
+位置に集中している。\cref{sec:wetting:sizing}で述べた格子の
+要件が生じるのも、この位置である。
+
+同じ量を、テストの内部でも独立に測っている。テストでは液滴を 4次のルンゲ・クッタ法で
+その場で構築し、\code{LaplacePressure\_WM1D}と
+\code{DisjoiningPressureKernel<WM1D\_Grid>}の速度を足し合わせて最大値をとる。
+\env{YUZEN\_DBG\_EQ}を\val{1}にすると内訳が表示される。
+
+\begin{plain}
+  [eq] nx=1000 umax=2.0295e+01  at X=-6.843746e-02 H=3.953799e-02
+  [eq] nx=2000 umax=5.1789e+00  at X=6.869474e-02 H=3.599702e-02
+  [eq] nx=4000 umax=1.3013e+00  at X=6.865186e-02 H=3.656075e-02
+\end{plain}
+
+この場合の比は 3.92と 3.98である。\textbf{ソルバーを実行して得た表とテスト内部の独立な
+積分は、$N_x = 4000$で 0.6 \%、$N_x = 2000$で 2 \%、$N_x = 1000$で 7 \%以内で一致する}。
+液滴の構築も速度の評価も二通りに別々に行っている。残差は、それぞれ約 170倍の大きさをもつ
+二つの項の小さな差なので、二つの構築の補間誤差がそのまま現れる。
+
+テストのアサーションは上の数値より緩く、細分化すると残差が必ず減少すること、
+比が 3.0と 5.0の間にあることだけを求める。幅を広くとるのは、形状構築の補間誤差が離散化誤差に
+加わるからである。それでも鋭いテストである。係数や符号が誤っていれば、比は
+4付近ではなく 1付近になるからである。
+
+\subsection{液滴の構築における二つの落とし穴}
+
+\begin{warn}[どちらも収束次数の測定を無意味にする]
+  \file{test\_disjoining.cpp}では両方をコード中のコメントに記してある。写すだけでなく
+  理解しておくべき点である。どちらの誤りも、答えを少し悪くする程度では済まない。\textbf{測定した
+  収束次数を無意味にする}のであり、誤った数値よりもはるかに気づきにくい。
+
+  \textbf{(a) 形状は線形補間ではなく 3次エルミート補間で求めなければならない。}
+  平衡形状上で 2階差分を評価すると、$\Delta x^{2}$で割ることになる。線形補間の誤差は、
+  形状を構築した常微分方程式の積分刻み$\Delta X$について$O(\Delta X^{2})$であり、
+  \textbf{格子間隔$\Delta x$によらない一定の高さの誤差}となる。
+  これを$\Delta x^{2}$で割ると$\Delta x^{-2}$に比例して増大し、\textbf{格子を
+  細分化するほど残差速度が増える}。3次エルミート補間にすると誤差は
+  $O(\Delta X^{4})$となり、細分化のテストに影響しない。
+
+  \textbf{(b) 頂部がちょうど格子点に乗るよう、裾での初期値を調整しなければならない。}
+  裾の初期値$\eta_0$を$c$倍すると、形状全体が$X$方向に$-\ln(c)/\lambda$だけずれる。
+  これを利用して、積分の最後の点を$H' = 0$となる頂部に合わせる。この調整を
+  省くと最後の点は頂部から最大$\Delta X$だけ外れ、頂部で鏡映した分布はそこで折れ曲がる。
+  この折れ曲がりによる高さの誤差も格子間隔によらないので、(a)と同じ理由で
+  収束次数の測定を無意味にする。
+\end{warn}
+
+\subsection{平衡形状からの時間発展}
+
+続いて、$N_x = 2000$の平衡液滴を\SI{0.01}{\second}だけ時間発展させた。
+結果を\Cref{tab:eqtime}に示す。
+
+\begin{yzntable}{解析的な平衡形状からの時間発展（$N_x = 2000$）\label{tab:eqtime}}{@{}d d d d@{}}
+\textsf{\bfseries $t$ [\si{\second}]} &
+\textsf{\bfseries $\max\lvert\Delta h\rvert$ [\si{\micro\metre}]} &
+\textsf{\bfseries 相対値} & \textsf{\bfseries 残差速度} \\ \midrule
+0       & 0       & 0       & 5.074 \\
+2.5e-3  & 4.23e-5 & 4.23e-6 & 0.709 \\
+5.0e-3  & 5.36e-5 & 5.36e-6 & 0.418 \\
+7.5e-3  & 6.02e-5 & 6.02e-6 & 0.296 \\
+1.0e-2  & 6.48e-5 & 6.48e-6 & 0.229 \\
+\end{yzntable}
+
+形状はほとんど動かず（終了時の変化は相対$6.5\times10^{-6}$）、残差速度は
+\textbf{単調に減少する}。これは予想どおりの挙動であり、理由を述べておく。
+出発点の形状は\emph{連続}問題の平衡であり、緩和していく先は\emph{離散}問題の平衡である。
+両者は同じ形状ではなく、その差が\cref{tab:eqresidual}で測った打ち切り誤差にあたる。
+
+同じ期間に、見かけの接触角は$9.56613^\circ$から$9.56610^\circ$に変わる。
+\textbf{5桁目まで変わらない}。緩和していく先の離散平衡は、離散ポテンシャルが一様な膜、
+すなわち離散自由エネルギーが最小となる状態である（\cref{sec:disc:positivity-one}）。
+
+\begin{note}[この表を再現するには定常状態判定をオフにする]
+  \key{SteadyStateCriterion}が既定値の\val{1e-3}のままだと、実行はほぼ直ちに定常と判定されて
+  停止する。形状は実際に変化していないので、この判定は正しい。\cref{tab:eqtime}を
+  得るには判定を無効にする必要がある。手順は\cref{sec:verification:reproduce}を、
+  判定基準の意味については\cref{sec:convergence:termination}を参照されたい。
+\end{note}
+
+関連する、より単純な恒等式も同じファイルで確認している。\textbf{一様な前駆膜
+$H = \Hstar$は厳密な平衡である}。$\Pihat(\Hstar) = 0$が恒等的に成り立つからである。
+テストでは、ここで速度を評価するだけでなく、\textbf{あらかじめ速度場を汚しておく}。値 1.0で埋めてから
+\code{CalVelocity}を呼び、すべての内部\code{Xedge}で分離圧の寄与が$10^{-12}$未満で
+あることを要求する。これにより、ゼロを書き込む処理と、何もせずゼロのまま残す処理を
+区別できる。
+
+\subsection{前駆膜によるバイアス}
+
+前駆膜が\emph{有限の}厚さをもつモデルでは、液滴が前駆膜に比べて十分厚くない限り、指定した角度は
+得られない。このバイアスは\cref{sec:wetting:apparent,sec:wetting:sizing}で導出して
+表にまとめ（\cref{tab:apparent-angle}）、寸法決めの規則としている。
+ここではいずれも繰り返さない。
+
+本章で扱うのは、この表の検証状況である。表は\code{tools/make\_equilibrium\_1d.py --out /dev/null --sweep}
+により、$\thetae = 10^\circ$、$\Hstar = 0.02$、$(n,m) = (3,2)$で作成した。表について次の二点は、
+仮定ではなく測定で確かめている。\textbf{数値積分した見かけの角度は、閉じた形
+\cref{eq:theta-cap}と 4桁一致する。}また、\textbf{分布の最大勾配は、見かけの角度よりも
+はるかに遅く$\thetae$に収束する}。このため、\cref{tab:apparent-angle}の二つの列は
+別々に読む必要がある。また、計算した分布の最も急な点から角度を測る場合は、
+放物線外挿で測る場合よりもさらに厚い液滴が必要になる。
+
+\section{濡れ広がりとCox--Voinov則}
+\label{sec:verification:spreading}
+
+\subsection{測定する量と、Tannerの法則を用いない理由}
+
+Tannerの法則（二次元の稜線状液膜に対する$R \sim t^{1/7}$）は、
+\emph{完全}濡れ、すなわち$\thetae = 0$の場合の法則である。本ソルバーの分離圧の形では、この場合を
+まったく表現できない。\cref{eq:dp-def}より
+\textbf{$\thetae \to 0$のとき$\Dpn \to 0$となる}からである。つまり、
+接触線を生み出す項自体がこの極限で消えてしまう。したがって、Tannerの法則は
+ここで目標とすべき関係ではない。
+
+部分濡れの場合に測れるのは、Tannerの法則の基礎にある関係、すなわち
+\textbf{Cox--Voinov}の関係
+
+\begin{equation}\label{eq:cox-voinov}
+  \theta_d^{3} - \thetae^{3} = 9\,\ln(L/l)\;\Ca,
+  \qquad \Ca = \frac{\mu U}{\sigma}.
+\end{equation}
+
+である。この関係は少ない費用で測れる点を強調しておく。\textbf{一つの
+計算の各出力時刻がそれぞれ一つの$(\theta_d, U)$点を与える}ので、一回の計算で
+曲線全体が得られる。この関係を見るために、時間を三桁にわたって追う必要は
+ない。
+
+ケースは\file{cases/eq/spread\_n500.toml}である。$\thetae = 20^\circ$に対して
+構成した平衡液滴を初期条件とし、\key{ContactAngle}を\val{10.0}に設定して
+計算する。液滴は新しい平衡形状に向かって濡れ広がる。
+\file{tools/measure\_spreading.py}では、各出力時刻に液滴の外側部分へ最小二乗で放物線を
+当てはめ、$h = 0$まで外挿して、底面半径$R$と見かけの接触角$\theta$を
+求める。
+
+\begin{plain}
+  theta : 19.1201 -> 9.4397 deg     (t = 0 .. 1 s)
+  R     : 59.744  -> 85.507 um
+  volume proxy theta*R^2 : 1.1911e-09 -> 1.2046e-09   (conserved to within 1.1 %)
+
+  theta^3 - theta_e^3 = 19.6272 * Ca + 5.97e-05
+    => 9 ln(L/l) = 19.627  =>  ln(L/l) = 2.181   (L/l = 8.9)
+  correlation = 0.99791   (108 points, Ca = 1.41e-05 .. 1.12e-03)
+\end{plain}
+
+\textbf{相関係数は、$\Ca$の二桁にわたる 108点で 0.99791である。}
+したがって、関係\cref{eq:cox-voinov}は形として成り立っている。毛管数の範囲も十分に広く、
+狭い範囲に当てはめたことによる見かけの相関ではないといえる。
+切片$5.97\times10^{-5}$は、$\theta^{3}$の大きさの約 1 \%である
+（$9.44^\circ$は\SI{0.165}{\radian}で、その三乗は$4.5\times10^{-3}$）。
+これは、平衡接触角が正しく扱われていることを裏付ける。$\thetae$が誤っていれば、
+信号と同程度の大きさの切片が現れるはずだからである。
+
+\begin{warn}[対数因子は検証していない]
+  当てはめから得られる値は$\ln(L/l) = 2.18$である。素朴な見積もり（液滴の半幅
+  \SI{85.51}{\micro\metre}と裾の減衰長\SI{1.196}{\micro\metre}の比の
+  対数）は 4.27である。両者は同じ桁であり、この比較からいえるのはそれだけである。
+  \textbf{この対数は内側と外側の長さの選び方によって約二倍変わる}ので、
+  一致は桁が合うことしか意味しない。$\ln(L/l)$の値自体は
+  検証していない。
+\end{warn}
+
+\subsection{濡れ広がりの終点と独立に構成した液滴の比較}
+
+測定の後半は、ソルバーとは無関係な参照解があるので、より強い主張になる。
+濡れ広がりを平衡まで進め、到達した形状を、\cref{sec:wetting:equilibrium}の
+常微分方程式から\textbf{ソルバーを使わずに構成した}平衡液滴と比較する。
+どちらも同じ放物線当てはめで、\code{--hcut 1.0} \si{\micro\metre}として
+測る。
+
+\begin{yzntable}{濡れ広がりの終点と独立に構成した平衡液滴の比較\label{tab:spreadend}}{@{}d d d d d@{}}
+\textsf{\bfseries $N_x$} & \textsf{\bfseries $\Delta x$ [\si{\micro\metre}]} &
+\textsf{\bfseries 濡れ広がりの終点 [deg]} &
+\textsf{\bfseries 解析的液滴 [deg]} & \textsf{\bfseries 差} \\ \midrule
+500  & 1.2 & 9.4073 & 9.4052 & 0.02 \% \\
+2000 & 0.3 & 9.4101 & 9.4083 & 0.02 \% \\
+\end{yzntable}
+
+\cref{tab:spreadend}の解析的液滴は、比較する計算と同じ頂部高さで構成した。
+当てはめた接触角だけでなく、形状自体も一致する。\textbf{二つの
+形状の差の最大値は、$N_x = 2000$で頂部高さ\SI{7.0567}{\micro\metre}に対して
+\SI{0.0022}{\micro\metre}、すなわち 0.03 \%である}
+（$N_x = 500$では\SI{0.0032}{\micro\metre}）。
+
+終点はスキームの定常状態、すなわち離散ポテンシャルが一様な膜
+（\cref{sec:disc:positivity-one}）である。接触線の外側では、
+$N_x = 500$でもこの形状は連続系の平衡形状と一致する。このときの
+$\Delta x = \SI{1.2}{\micro\metre}$は、遷移長$\ell = \SI{1.15}{\micro\metre}$の
+5分の 1ではなく、同程度の大きさである。終点に至る経路も一致しており、
+二つの格子の見かけの接触角の差は、最初の 1秒間で最大でも\SI{0.06}{\percent}である
+（分離圧のセル界面移動度に以前用いていた算術平均では、終点のずれは
+$N_x = 500$で\SI{1.7}{\percent}、$N_x = 2000$で
+\SI{0.11}{\percent}であった）。\cref{sec:wetting:sizing}の規則
+$\Delta x \le \ell/5$は出発点の目安にすぎない。この液滴は条件の緩いケースであり、
+最終的な判断は格子の細分化で行う。
+
+\section{連成の費用}
+\label{sec:verification:coupling}
+
+膜厚と濃度は、外側のニュートン反復の中でブロック・ガウス＝ザイデル法により
+解く（\cref{sec:time:coupling}）。ここで調べるのは、外側反復のうち
+どれだけが濃度のために費やされているかである。
+
+設定は\file{cases/eq/spread\_n500.toml}（$N_x = 500$、
+$\hstar = \SI{0.2}{\micro\metre}$、$\thetae = 10^\circ$。
+\cref{sec:verification:spreading}で検証したケースと同じ）で、濃度の連成を
+すべて有効にする。すなわち対流、拡散、蒸発、マランゴニを含め、粘度指数は
+10とする。\textbf{比較はすべて\key{EndTime} $=$ \val{0.1}~\si{\second}で
+行う}。\env{YUZEN\_DEBUG\_RESIDUAL}を\val{1}にすると、外側反復ごとに膜厚の
+修正量と濃度の修正量が出力される。測定では、濃度の修正量の方が大きかった
+反復の数を数える。
+
+\begin{yzntable}{濡れ広がりケース群における外側反復の費用\label{tab:couplingspread}}{@{}L{0.25\textwidth} d d d d d@{}}
+\textsf{\bfseries 条件} & \textsf{\bfseries ステップ数} &
+\textsf{\bfseries NK平均} & \textsf{\bfseries NK最大} &
+\textsf{\bfseries 濃度支配} & \textsf{\bfseries 最終反復で} \\ \midrule
+蒸発 1e-7、分離圧なし   & 1129 & 2.56 & 3 & 57.7 \% & 91.5 \% \\
+蒸発 1e-7、分離圧あり & 1129 & 2.56 & 3 & 60.7 \% & 88.0 \% \\
+蒸発 1e-6、分離圧あり & 1129 & 2.69 & 3 & 96.3 \% & 92.3 \% \\
+蒸発 1e-5、分離圧あり & 1129 & 3.04 & 4 & 98.7 \% & 96.4 \% \\
+\end{yzntable}
+
+蒸発係数\val{1e-5}では、\SI{0.1}{\second}の間に濃度が最大値で 0.500から 0.619
+（平均で 0.500から 0.571）まで変化するので、連成としては十分に厳しい条件である。
+\cref{sec:convergence:tests}の停滞による打ち切りの警告は、四つの条件のいずれでも
+\textbf{一度も}出なかった。
+
+反復ごとの修正量を並べると、何が起きているかが明らかになる。以下は蒸発係数\val{1e-7}の二つの計算の
+1000ステップ目である。
+
+\begin{plain}
+  with disjoining pressure     thickness     2.62e-06 -> 7.23e-11 -> 1.84e-15
+                               concentration 3.21e-06 -> 9.18e-10 -> 3.51e-14
+
+  without disjoining pressure  thickness     6.20e-06 -> 1.38e-10 -> 3.47e-15
+                               concentration 3.70e-06 -> 1.43e-09 -> 7.94e-14
+\end{plain}
+
+分離圧の有無によらず、膜厚の修正量は反復ごとに四～五桁下がり、二回で丸め誤差に
+達する。分離圧の項は硬い（$\Pihat \sim H^{-n}$はモデル中で最も硬い項
+である。\cref{sec:terms:disjoining}）。しかしヤコビアンが厳密なので
+（\cref{sec:verification:jacobian}）、余分な反復は要らない。ヤコビアンを
+修正する前は、同じ計算に四～五回を要した。膜厚が収束した後は、多くの反復で
+濃度の修正量の方が相対的に大きくなり、蒸発が強いほどその傾向が強い。
+その割合は、\val{1e-7}では反復の\SI{61}{\percent}、\val{1e-5}では\SI{99}{\percent}である。
+表の百分率が表すのはこの割合であり、それ以上の意味はない。
+
+\begin{warn}[百分率の大小は逆に読む]
+  \textbf{「濃度が支配する反復の割合」が表すのは膜厚方程式の解きやすさであり、
+  濃度方程式の解きにくさではない。}
+  \cref{tab:couplingspread}で値が最も高い行（98.7 \%）は平均 3.04回で収束し、
+  最も低い行は 2.56回である。値が大きくても、濃度の求解に問題があるわけではない。
+\end{warn}
+
+同じ測定を、連成を意図的に強めたケース\file{cases/stress\_*.toml}でも行った。
+いずれも\file{allphys\_1d\_reg}を元に作ったものである。ここでも停滞による打ち切りの警告は、
+四つのケースのいずれでも一度も出なかった。
+
+\begin{yzntable}{\file{stress\_*}ケースにおける外側反復の費用\label{tab:couplingstress}}{@{}L{0.19\textwidth} L{0.29\textwidth} d d d d@{}}
+\textsf{\bfseries ケース} & \textsf{\bfseries 変更点} &
+\textsf{\bfseries ステップ数} & \textsf{\bfseries NK平均} &
+\textsf{\bfseries NK最大} & \textsf{\bfseries 濃度支配} \\ \midrule
+\file{stress\_evap}     & 蒸発係数を$\times 100$ & 675 & 3.01 & 4 & 68.0 \% \\
+\file{stress\_coupling} & 粘度指数を 10から 30へ。表面張力の濃度係数を$\times 10$ & 675 & 2.19 & 4 & 2.2 \% \\
+\file{stress\_dt}       & $\Delta t \times 100$で固定（刻み制御なし） & 21 & 4.29 & 6 & 14.4 \% \\
+\file{stress\_all}      & 上記すべて & 21 & 5.05 & 6 & 0.0 \% \\
+\end{yzntable}
+
+\subsection{この測定で裏付けられること、裏付けられないこと}
+
+\textbf{裏付けられること。}測定した八つの条件で、外側反復は\textbf{最大 6回}で
+収束し、停滞による打ち切りは一度も作動しなかった。濃度の修正量が収束判定を
+支配した反復の割合は\textbf{0～99 \%}の範囲にあった。この割合が最も高かった最も強い
+蒸発の条件でも、反復回数の平均は 3.04回であった。収束判定では両方の修正量を見る
+（\cref{sec:time:coupling}）ので、収束先は\textbf{膜厚と濃度を合わせた
+完全陰的な連成解}である。ヤコビアンの非対角ブロックを実装しても、この解は
+変わらない。変わるのは外側反復の回数だけであり、現在の回数は 2から 6の
+範囲である。
+
+\textbf{裏付けられないこと。}限界は三つあり、いずれも重要である。
+
+\begin{itemize}
+  \item \textbf{反復回数を測ったのであり、実時間は測っていない。}
+    連成を有効にしたときに一回の反復の費用がどれだけ増えるかは、まったく
+    測っていない。
+  \item \textbf{結果はすべて 1次元かつ\val{"WM"}（鉛直一様）のものである。}
+    二次元の場合や\val{"CZ"}モデル（\cref{ch:concentration}）については
+    何もいえない。
+  \item \textbf{ステップ数は適応時間刻みが選んだ結果であり}、共通の刻み幅での
+    比較ではない。濡れ広がりケース群では、四つの条件すべてで刻みが一度も縮められずに
+    予定どおり大きくなったため、いずれも 1129ステップとなった。設定で固定しているのは
+    終了時刻\SI{0.1}{\second}だけである。
+\end{itemize}
+
+\subsection{\texorpdfstring{\val{"CZ"}}{CZ}の連成パス}
+\label{sec:verification:czpasses}
+
+マランゴニ項を有効にすると、\val{"CZ"}では各ステップの膜と濃度を一段ずつ解き直す。
+このとき、直前のパスで求めた中点濃度$c_m$を用い、中点が落ち着くまで
+繰り返す（\cref{sec:time:newton}）。各パスは写像
+$c_m \mapsto c_{\mathrm{mid}}(c_m)$であり、Aitkenの緩和では
+$c_m + \omega\,(c_{\mathrm{mid}} - c_m)$を次の値とする。$\omega$はパス間の残差の
+変化から求める。
+
+\textbf{素のパスのゲインの導出。}内部に
+分布$c_0(\zeta)$をもつ厚さ$h$の静止した平坦な膜のまわりで線形化し、波$e^{ikx}$の摂動を与える。
+摂動は膜では$\eta$、濃度では$\gamma(\zeta)$とする。膜が$c_m$の影響を受けるのは
+表面値$\gamma_{m,s}$によるマランゴニ応力だけであり、濃度が膜の影響を受けるのは、
+マランゴニ流とそれに対する膜の応答が作る$\zeta$方向の速度だけである。
+この速度が成層$\partial c_0/\partial\zeta$を運ぶ。したがって、素のパス
+（$\omega = 1$）は各波についてランク 1の写像
+$\gamma_m \mapsto b + v\,\gamma_{m,s}$となり、ただ一つの非零固有値
+$\lambda_k = v_s$でパスの収束が決まる。線形分布
+$\partial c_0/\partial\zeta = \Delta c$の場合は
+
+\begin{equation}\label{eq:cz-gain}
+  \lambda_k = \frac{\Delta t}{2}\,D_M k^2\,\psi(1), \qquad
+  D_M = \frac{h\,\sigma_c\,\Delta c}{2\mu},
+\end{equation}
+
+である。ここで$\psi$は、$\psi'(0) = \psi'(1) = 0$のもとで
+$\bigl(1 + \tfrac12\Delta t\,D k^2\bigr)\psi - \tfrac{\Delta t\,D}{2h^2}\,\psi''
+ = \zeta(1-\zeta)\,\varphi(\zeta)$の解である。
+$\varphi = m_k - \frac{a}{1+a}\bigl(1 - \frac{\zeta}{2}\bigr)$であり、
+$a = \Delta t\,\sigma h^3 k^4/(6\mu)$は毛管圧のクランク・ニコルソン法の因子である。
+$\sigma_c$は\key{Fluid.SurfaceTension.Coef}、$D$は拡散係数、$k^2$は膜の
+2点差分のシンボル$(2 - 2\cos k\Delta x)/\Delta x^2$、$m_k$は速度の 4次精度の
+表面勾配と膜の 2点勾配の比（長波長で 1、最短波長で$7/6$）である。
+$\varphi$の第 1項はマランゴニ流を、第 2項はマランゴニ流で持ち上がった膜の戻り流れを表す。
+この式から、次の三つの性質が導かれる。
+
+\begin{itemize}
+  \item $\lambda_k$は$\sigma_c\,\partial c_0/\partial\zeta$と同じ符号をもち、
+    $\Delta t$と$k$とともに増大する。拡散がステップ内に膜を横断する場合
+    （$\Delta t\,D/h^2 \gg 1$）は、
+    $\lambda_k \to \tfrac12 \mathrm{Ma}_h\,\bar s\,\theta/(1+\theta)$に近づく。
+    ここで$\theta = \tfrac12\Delta t\,D k^2$である。
+    $\bar s = \int_0^1\zeta(1-\zeta)\varphi\,d\zeta$は$1/24$（毛管圧が硬い場合）
+    と$1/6$の間にあり、$\mathrm{Ma}_h = \sigma_c\,\Delta c\,h/(\mu D)$は
+    膜のマランゴニ数である。ゲインが$|\mathrm{Ma}_h|/12$を超えることはない
+    （最短波長では$\times 7/6$。$\Delta t$を$10^{-4}$から
+    $10^{2}$~\si{\second}まで、三つの膜厚、三つの拡散係数、膜厚方向 4～32セルの
+    範囲で掃引したところ、最大でも$0.072\,|\mathrm{Ma}_h|$）。
+  \item パスの不動点は、線形化系$\dot y = A_k y$の陰的中点ステップであり、
+    $1 - \lambda_k = \det(I - \tfrac12\Delta t A_k)\,/\,[(1+a)\det B_k]$
+    が成り立つ。$B_k$は膜厚方向の拡散に対するクランク・ニコルソン法の因子であり、
+    分母の二つの因子はいずれも正である。したがって$\lambda_k > 1$となるのは、
+    モデルのある波が$2/\Delta t$より速く成長し、陰的中点則によってその成長が
+    符号の反転する摂動に変わってしまうステップに限られる。成長する波がなければ、
+    どのステップのどの波でも$\lambda_k < 1$である。
+  \item Aitkenの因子は、残差を担う波に対して$\omega \approx 1/(1-\lambda)$に
+    落ち着く。$\lambda < 0$なら 0と 1の間、$0 < \lambda < 1$なら 1より大きく、
+    $\lambda > 1$なら負になる。このとき、一つの波、またはゲインがほぼ等しい
+    波の帯は、ゲインの値によらず除去される。一方、ゲインが 1の両側にある波を
+    一つの因子で同時に除去することはできない。
+\end{itemize}
+
+\file{tools/cz\_coupling.py}では、線形分布、蒸発する膜の境界層、または
+場ファイルから読んだ鉛直列について、格子のすべての波の\cref{eq:cz-gain}の
+$\lambda_k$を評価する。あわせて、$A_k$の最大成長率と、行列式から求めた$1-\lambda_k$も
+求める。\env{YUZEN\_DEBUG\_COUPLING}を設定すると、計算中のすべてのパスが出力される。
+
+\textbf{測定したゲイン。}蒸発する平坦な膜（初期膜厚\SI{10}{\micro\metre}、
+\key{Physics.Evaporation.Coef} $= 3\times10^{-5}$で蒸発速度は$c$に依存しない、
+$D = 10^{-9}$、\SI{0.5}{\milli\metre}に 64セル、\key{Grid.Nz} $=11$、
+16セルの波で振幅は膜の$10^{-3}$）を\SI{0.04}{\second}、すなわち
+$\Delta c = 0.039$～$0.042$、$h = \SI{8.8}{\micro\metre}$となるまで計算し、
+最後のステップで素のパスを 10回行った。最初のパスで分布のドリフトが除かれた
+後（ゲイン 0）は、最短波長が残差を担う。あるパスの移動量と直前のパスの移動量の
+比は、その計算の鉛直列について\file{tools/cz\_coupling.py}が与える最大の
+$|\lambda_k|$に近づく（\cref{tab:czgain}）。ゲイン 0.34～2.4に対し、比は
+その 0.97～1.09倍の範囲に収まる。\SI{20}{\milli\second}でゲインが 2～3の場合は、
+六回のパスの後も比はまだ増加していた。符号は$\sigma_c$の符号に一致する。
+同じ膜で\SI{10}{\milli\second}の場合、$\sigma_c = \pm0.05$に対して
+Aitkenの因子は$\omega = -0.64$と$0.28$となった。これは
+$\lambda = 1 - 1/\omega = 2.56$と$-2.57$にあたり、予測値は$\pm 2.37$である。
+九回のパスで、緩和したパスでは残差が$10^{4}$分の一と$10^{6}$分の一に下がったが、
+素のパスでは一回ごとに 2.6倍に増えた。
+
+\begin{yzntable}{蒸発する平坦な膜における素の連成パスのゲイン。
+  \cref{eq:cz-gain}の最大の$|\lambda_k|$ / 連続するパスの比の測定値
+  \label{tab:czgain}}{@{}L{0.20\textwidth} L{0.17\textwidth} L{0.17\textwidth} L{0.17\textwidth} L{0.17\textwidth}@{}}
+$\sigma_c$ [\si{\newton\per\metre}] & $\Delta t = \SI{2}{\milli\second}$ & \SI{5}{\milli\second} & \SI{10}{\milli\second} & \SI{20}{\milli\second} \\ \midrule
+$+0.03$ & 0.336 / 0.358 & 0.836 / 0.843 & 1.419 / 1.529 & 1.955 / 2.636 \\
+$-0.03$ & 0.336 / --- & 0.836 / --- & 1.419 / 1.539 & 1.955 / 2.602 \\
+$+0.05$ & 0.560 / 0.542 & 1.393 / 1.392 & 2.365 / 2.589 & 3.250 / 4.322 \\
+\end{yzntable}
+
+（---：最短波長が残差を担う前に、残差が丸め誤差の約$10^{-11}$に達した。）
+
+\textbf{実際の計算で要するパス数。}\code{cz\_strat\_1d}の成層した製造解の状態
+（\cref{sec:verification:mms}）を固定刻みで\SI{0.02}{\second}計算すると、
+一ステップあたりのパス数の最大値は、32、64、128セルで同じであった。
+0.5と\SI{1}{\milli\second}で 1、2と\SI{5}{\milli\second}で 2、
+\SI{10}{\milli\second}で 4または 5であり、\SI{20}{\milli\second}ではパスが
+落ち着かなかった（八回の後も、中点は最初のパスの変化の 0.56～0.68倍だけ
+動いていた）。$\sigma_c$の符号を反転しても、拡散係数を 5分の 1にしても結果は同じである。
+\SI{20}{\milli\second}で破綻する原因は\cref{eq:cz-gain}ではない。粘度を$c$に
+依存させない場合（\key{Fluid.Viscosity.Exponent}を 3ではなく$=0$とした場合）、
+32セルのどのステップも 2回のパスで落ち着いた。$c$に依存する粘度があると、
+この状態の強い流れのもとで各層の濃度が速度と結合し、パスはランク 1では
+なくなる。\SI{20}{\milli\second}のステップでは、波が 1.2ラジアン動く。
+$\sigma_c$を四倍にして、モデル内で不安定にした膜では、パスは最大 8回を要し、
+\SI{10}{\milli\second}以上では落ち着かなかった。刻み制御のもとで蒸発する平坦な膜
+（\SI{0.5}{\milli\metre}に 128セル、$\sigma_c = \pm0.01$～$\pm0.05$、
+\key{Criterion} $=10^{-2}$と$10^{-1}$）では、一ステップあたり 1～3回のパスを要し、
+$\sigma_c > 0$では最大 8回であった。このうち二つの計算で、55ステップ中
+1ステップが落ち着かなかった。\file{concz\_1d\_reg}では、蒸発が
+$3\times10^{-5}$まで、$\sigma_c$が$\pm0.03$まで、120～480セルの範囲で、
+パス数が 2回を超えたことはない。
+
+\textbf{パスが落ち着かない場合の扱い。}以前は、八回以内に
+パスが落ち着かなかったステップを、最後のパスが残した状態のまま警告付きで
+採用していた。打ち切り誤差の判定でパスの前の膜を見る時間刻み制御では、
+これを検出できなかった。\code{cz\_strat\_1d}を 32セル、刻み制御あり、
+\key{InitialDt} $=\SI{0.02}{\second}$、このステップを受理するほど緩い
+\key{Criterion}の 1で実行すると、\SI{0.02}{\second}での誤差は膜の振幅の 2.1倍で
+あった。\key{Criterion}が$10^{-3}$～0.3の場合は、打ち切り誤差の判定が先に
+ステップを縮めた。修正後は、落ち着かないパスは、収束しない線形求解と同様に
+ステップを失敗させる。刻み制御のもとでは、ステップを\key{ChangeFactor}で縮めて
+解き直す（最初のそのようなステップは\file{Warnings.txt}に報告し、
+\file{JobInfo.txt}では\code{Steps failed: the passes did not
+settle}としてその数を数える）。上の計算は、このとき誤差 0.17で終わる。これは
+\key{Criterion}が 0.3のときに打ち切り誤差の判定が選ぶステップの誤差に等しい。
+固定刻みの場合は計算が停止し、原因としてパスを挙げる。また、中点の移動量が
+\key{Numerics.ConcEquation.LinearSolver.Epsilon}の十倍（ただし
+$10^{-10}$を下限とする）未満になった場合も、落ち着いたとみなす。これにより、
+外挿がすでに厳密であったステップが、求解の丸め誤差のために失敗とされることはない。
+\file{tools/features.py}の\code{coupling\_cz}で、この状態での両方の挙動を
+確認する。
+
+\textbf{安全な範囲。}モデル内で膜が安定であれば、素のゲインはどの刻みでも
+すべての波で 1未満である。$\sigma_c\,\partial
+c/\partial\zeta < 0$の場合はゲインが負となり、緩和によってどの刻みでも落ち着く。
+要するパス数は$|\lambda|$とともに増える。
+$|\mathrm{Ma}_h| \approx 10$未満であれば、素のパスでも収束する。測定した計算で
+パスが落ち着かなかったのは、モデル内で不安定な膜
+（$\sigma_c\,\partial c/\partial\zeta > 0$で$\mathrm{Ma}_h$が約
+100～180のもの、および$\sigma_c$を四倍にした製造解の状態）と、濃度に依存する
+粘度によって状態が約 1ラジアン動くステップだけである。現在、そのようなステップは
+失敗として扱う。ゲインを導出したのは線形化した平坦な膜についてだけであり、粘度の
+寄与は導出ではなく測定によるものである。
+
+\section{ヤコビアン}
+\label{sec:verification:jacobian}
+
+膜厚方程式のニュートン反復では、ヤコビアン
+$J = \partial(A(h)h)/\partial h$を用いる。ヤコビアンは、$A$に、係数が$h$に依存することによる
+各項の寄与を足して組み立てる。この後半部分に誤りがあっても反復の収束先は
+変わらず、収束の速さだけが変わる。他のテストはどれも、少し遅くなるだけで収束して
+しまう。実際の計算では、時間刻みの破綻が最初の兆候として現れる。そこで
+\file{test\_jacobian.cpp}では、項ごとに、1次元と 2次元で、平坦でない膜、平坦でない
+基板、変化する濃度、滑らかでない方向$v$を与え、$J v$を
+$R(h) = A(h)h$の中心差分$[R(h+\epsilon v) -
+R(h-\epsilon v)]/2\epsilon$と比較する。両者が一致していれば、差は
+丸め誤差の$10^{-10}$程度であり、テストの許容値は$10^{-7}$である。このテストにより
+三つの誤りが見つかった。
+
+\begin{itemize}
+  \item 鉛直重力と分離圧で、セル界面移動度$\tfrac12(h_o^3 + h_a^3)/\mu$の
+    隣接セルについての微分を、そのセル自身の列にも用いていた（$2\times10^{-2}$）。
+  \item 分離圧で、$A$に由来する$\hat\Pi/h$（$\hat\Pi$を行列に書き込む形）をすでに
+    含むヤコビアンに、$\hat\Pi'$の全体を加えていた。誤差は\SI{50}{\percent}で
+    あった。
+  \item 1次元の遠心力項の側方流出で、$2\,\mathrm{Sp}\,h^2/\mu$とすべきところに
+    $2\,\mathrm{Sp}\,h/\mu$を加えていた（$3\times10^{-2}$）。
+\end{itemize}
+
+蒸発は$J$に一切含めない。膜厚方程式では蒸発を現在の反復値で評価する。
+$h$についての微分は、前駆膜の近くと上限が働く場合を除けばゼロであり、
+反復に任せている。
+
+同じファイルでは、鉛直一様モデルで濃度を運ぶセル界面流束
+（\code{FaceFlux}、\cref{sec:disc:wm-conservative}）も確認する。すべての項について、また
+風上化する項ではすべてのセル界面補間について、1次元（遠心力項の側方流出を含む）と
+2次元で次の二点を要求する。ある行のセル界面流束の符号付き和が、その行の$A$の成分と$h$の積に
+行の大きさの$10^{-13}$の精度で一致すること。一つのセル界面を共有する
+二つのセルが、最大値の$10^{-13}$の精度で同じ流束を見ること。
+
+風上化する三つの項（面内重力、遠心力、マランゴニ）は、
+\cref{sec:disc:convection}の対流スキームのうち七つで確認する。リミッター付きの
+スキームは、急峻な前線をもち極値をもたない膜で確認する。この膜ではKorenの
+リミッターのすべての分岐を通り、どの折れ点からも 0.05以上離れている。
+差分の刻みは$10^{-7}$とする。$10^{-6}$では、van Leerの曲率のために差分自体が
+$4\times10^{-7}$ずれるからである。
+
+\section{対流スキームの選択}
+\label{sec:verification:schemes}
+
+\file{test\_finite\_differences.cpp}では、すべてのスキームについて次の性質を固定する。
+多項式に対するセル界面値の厳密性（リミッターが効かない範囲で、KK、UTOPIA、Korenは 3次、
+Central2、Central4、QUICK、Upwind2は 2次、van Leerは 1次）、滑らかな分布での
+次数、ランダムなデータと階段状のデータに対するリミッター付きスキームの有界性と
+線形スキームのオーバーシュート、ビット単位の鏡映対称性と符号対称性、凍結した
+重みの符号、差分に対する微分である。\file{tools/advection.py}
+（\code{ctest}: \code{advection}）では、面内重力で動く周期的な平坦な膜の上で、
+$c$の階段と正弦波をクーラン数 0.4で両方のモデルを用いて運ぶ。\file{tools/mms.py}と
+\file{tools/equivalence.py}は\code{--conc}、\code{--height}、
+\code{--scheme}を受け付け、どのケースも別のスキームで実行できる。
+既定値は、もう一方のキーを\val{"KK"}として行った以下の比較に基づいて選んだ。
+
+\begin{yzntable}{濃度の階段と正弦波に対する対流スキームの比較（\file{tools/advection.py}）\label{tab:schemes-advection}}{@{}L{0.16\textwidth} L{0.34\textwidth} L{0.40\textwidth}@{}}
+\textsf{\bfseries スキーム} & \textsf{\bfseries 階段のオーバーシュート、WM / CZ} & \textsf{\bfseries 正弦波、128セルでの最大誤差（次数）}\\ \midrule
+KK & \SI{6.3}{\percent} / \SI{7.0}{\percent} & $1.9\times10^{-4}$ (2.99) \\
+UTOPIA & \SI{8.6}{\percent} / \SI{10.4}{\percent} & $6.3\times10^{-5}$ (2.99) \\
+Central4 & \SI{36}{\percent} / \SI{39}{\percent} & $6.4\times10^{-4}$ (2.00) \\
+Koren & 0 & $5.1\times10^{-3}$ (1.56; 平均誤差 2.35) \\
+van Leer & 0 & $1.0\times10^{-2}$ (1.41; 平均誤差 1.98) \\
+\end{yzntable}
+
+有界性はクーラン数 1までしか保たれない。これを超えるとクランク・ニコルソン法は
+有界性を失い、Korenは 1.5で\SI{16}{\percent}、1次風上差分でさえ 3で
+\SI{9}{\percent}のオーバーシュートを生じる。ソルバーは 1を超えるステップを報告し
+（\cref{sec:ref-numerics:convection}）、\file{tools/advection.py}ではこの報告を
+確認する。Korenの場合、\val{"WM"}の濃度の前線は 1.5で報告され、0.4では
+報告されない。表面が$1.5u$で動く\val{"CZ"}の前線も、1.5で報告され 0.4では
+報告されない。風上化した流束が$3u$で動く膜厚は、0.4で報告され 0.3では
+報告されない（膜は平坦なので、\cref{tab:schemes-advection}の計算で 0.4のときに
+報告が出ても結果に影響はない）。
+
+上の正弦波は拡散なしに$x$方向へ運ばれるので、対流だけを測っている。
+\file{tools/advection.py}では、鉛直一様モデルの濃度が対流と拡散を合わせて
+2次元で示す次数も確認する（\code{oblique\_wm}。\code{advection}の一部で、
+\code{--oblique}で単独に実行できる）。$x$と$y$に周期的な一辺
+\SI{1}{\milli\metre}の正方形の平坦な膜を、面内重力によって
+\SI{1}{\milli\metre\per\second}で方向$(2,1)/\sqrt5$に運ぶ。濃度は対角線に
+沿った正弦波$c = 0.5 + 0.2\sin k(x+y)$とする。流れの方向とも両軸とも斜めなので、
+場も運動も変数分離できない。拡散係数は$D = 5\times10^{-7}$~\si{\metre\squared\per\second}
+とする。解は$c = 0.5 + 0.2\,e^{-D|\mathbf k|^2t}\sin\mathbf
+k\cdot(\mathbf x - \mathbf u t)$である。格子は一辺 16、32、64セル、ステップ数は減衰時間
+\SI{25}{\milli\second}あたり 20、40、80とする。つまり時間刻みも格子と
+ともに細分化する。期待される次数は、スキームの修正方程式から導かれる。中心差分の
+拡散は波の減衰を$D(k_x^4+k_y^4)\Delta x^2/12$だけ過小にし、UTOPIAは
+$(|u_x|k_x^4+|u_y|k_y^4)\Delta x^3/12$だけ過大にする。クランク・ニコルソン法は
+$\Delta t^2$の誤差を加えるが、ここでは残りの誤差の約\SI{1}{\percent}にすぎない。
+したがって誤差は 2次で、逆符号の 3次の成分を含む。両者の比は
+$r = (|u_x|+|u_y|)\Delta x/2D$、すなわちセルペクレ数の$0.67$倍である。
+観測される次数は$2 + \log_2[(1-r)/(1-r/2)]$となり、$r$が小さくなるまでは
+2を下回る。1次元と同じ拡散係数を用いた\code{wm\_all\_2d}で$c$の次数が
+低くなるのは、この打ち消しのためである（\cref{sec:verification:mms}）。ここではセルペクレ数は
+0.125～0.031で、式からは 1.94と 1.97が得られる。測定では、UTOPIAの収束次数は 1.91と 1.97で、
+誤差はどの格子でも式の値と\SI{3}{\percent}以内で一致する（振幅に対して
+$4.2\times10^{-3}$、$1.1\times10^{-3}$、$2.9\times10^{-4}$）。正弦波の極値を
+1次精度に切り詰めるKorenの収束次数は、1.88と 1.92である。チェックでは両スキームについて、
+32～64セルでの次数が 1.9～2.1であり、16～32セルでの次数がそれと 0.1以内であること、
+すなわち漸近域にあることを要求する。対流の誤差が拡散の誤差に埋もれているわけではない。
+1次風上差分では 0.72と 0.87、UTOPIAの三倍の散逸をもつKKでは 1.76と 1.90で
+収束する。膜は丸め誤差の範囲で平坦なままなので、このチェックは膜厚については何も
+示さない。2次元での膜厚の次数は製造解で確認している。六つの計算は 2コアで約
+\SI{20}{\second}かかる。
+
+\begin{yzntable}{製造解での対流スキームの比較。細かい方の格子での誤差 / $\Delta x$についての次数\label{tab:schemes-mms}}{@{}L{0.20\textwidth} L{0.13\textwidth} L{0.13\textwidth} L{0.13\textwidth} L{0.13\textwidth} L{0.13\textwidth}@{}}
+\textsf{\bfseries ケース} & \textsf{\bfseries KK} & \textsf{\bfseries UTOPIA} & \textsf{\bfseries Central4} & \textsf{\bfseries Koren} & \textsf{\bfseries van Leer}\\ \midrule
+\multicolumn{6}{@{}l}{\emph{\key{Concentration}を変更。$c$の誤差}} \\
+\code{wm\_all\_1d} & $8.3\times10^{-5}$ / 1.80 & $9.0\times10^{-5}$ / 1.94 & $9.1\times10^{-5}$ / 2.00 & $1.0\times10^{-4}$ / 2.21 & $1.3\times10^{-4}$ / 2.04 \\
+\code{wm\_all\_2d} & $6.9\times10^{-4}$ / 2.58 & $4.8\times10^{-4}$ / 2.38 & $6.7\times10^{-4}$ / 1.80 & $2.7\times10^{-3}$ / 1.91 & $3.4\times10^{-3}$ / 2.21 \\
+\code{cz\_conc\_1d} & $4.9\times10^{-4}$ / 1.72 & $5.5\times10^{-4}$ / 1.92 & $6.5\times10^{-4}$ / 2.00 & $5.2\times10^{-4}$ / 1.90 & $4.8\times10^{-4}$ / 1.94 \\
+\code{cz\_strat\_1d} & $2.0\times10^{-3}$ / 2.01 & $1.9\times10^{-3}$ / 1.98 & $1.6\times10^{-3}$ / 1.98 & $2.0\times10^{-3}$ / 2.02 & $2.9\times10^{-3}$ / 2.19 \\
+\code{cz\_strat\_2d} & $9.3\times10^{-3}$ / 1.78$^{\dagger}$ & $9.0\times10^{-3}$ / 1.88 & $7.2\times10^{-3}$ / 1.89 & $1.2\times10^{-2}$ / 2.04 & $1.8\times10^{-2}$ / 1.79 ($u$: 1.67) \\
+\multicolumn{6}{@{}l}{\emph{\key{Height}を変更。$h$の誤差}} \\
+\code{wm\_1d} & $8.1\times10^{-4}$ / 2.82 & $5.3\times10^{-4}$ / 2.26 & $1.0\times10^{-3}$ / 2.04 & $1.0\times10^{-3}$ / 2.61 & $3.0\times10^{-3}$ / 2.12 \\
+\code{wm\_2d} & $5.5\times10^{-3}$ / 2.89 & $2.5\times10^{-3}$ / 2.50 & $3.4\times10^{-3}$ / 2.13 & $6.7\times10^{-3}$ / 2.78 & $1.3\times10^{-2}$ / 2.32 \\
+\code{wm\_all\_1d} & $2.5\times10^{-4}$ / 1.85 & $2.7\times10^{-4}$ / 1.93 & $3.1\times10^{-4}$ / 2.00 & $2.7\times10^{-4}$ / 1.89 & $4.2\times10^{-4}$ / 2.01 \\
+\end{yzntable}
+\noindent$^{\dagger}$\,\code{wm\_all\_2d}でのKKと同様、漸近域に達していない（\cref{sec:verification:mms}）。24セルと 48セルでは$c$の次数は 1.93である（$h$は 2.02、$\mathbf u$は 1.96）。
+
+$\Delta t$についての次数は、いずれも 1.9から 2.3の間にある。\code{cz\_strat\_*}の
+製造解の状態は、モデルが安定に保てるものを選んでいる。表面張力が$c$とともに増加し、
+かつ$c$が表面に向かって増加する場所（$\sigma_c\,\partial
+c/\partial\zeta > 0$。ここでは各波長の半分以上）では、膜に沿った表面
+濃度の変化がマランゴニ循環を駆動する。その鉛直速度が成層を運び、粘度の$c$依存性を通じて
+この変化が表面へ帰還する。成長する短波長を減衰させるのは拡散だけで
+ある。線形化方程式の凍結係数解析（\file{tools/cz\_stability.py}）では、$\mu(c)$を含む潤滑近似の速度分布、マランゴニ
+応力、毛管圧、成層の鉛直移流、拡散を、計算の各点・各時刻の製造解の状態のまわりで扱い、
+2次元ではあらゆる方向の波を考える。
+この解析から各波長の成長率が得られる。チェックで用いる拡散係数
+$1.5\times10^{-9}$~\si{\metre\squared\per\second}では、状態の波長の 4分の 1から、
+チェックで用いる最も細かい格子をさらに二倍細かくした格子（1次元で 256セル、2次元で 64セル）の
+2セル分までのすべての波が、\SI{7.8}{\per\second}（1次元）、
+\SI{3.5}{\per\second}（2次元）以上の率で減衰する。
+
+この不安定性は、最初に$3\times10^{-10}$~\si{\metre\squared\per\second}で
+行った成層のチェックで見つかった。この拡散係数では、長さ
+\SI{2.6}{\micro\metre}～\SI{5}{\micro\metre}の波（128セル中の 1～3セル）
+に対して、解析から最大$7\times10^{2}$~\si{\per\second}の成長率が得られる。計算の
+\SI{20}{\milli\second}の間に最大$e^{14}$倍に増幅される値である。$\sigma_c = 0$とするか、
+$\mu$を$c$に依存させないと、成長は小さくなるか消える。$\sigma_c$の符号を反転すると、
+成長する場所は$\partial c/\partial\zeta$が逆符号となる位置へ移る。Central4または
+Central2では、\code{cz\_strat\_1d}は時間について収束したが、収束先は$x$方向に 2～3セルの長さの
+振動をもち、膜厚方向の中ほどで振動が最も強い解であった。この振動は、刻み 0.125と
+\SI{0.031}{\milli\second}、膜厚方向 32セルと 64セルで同じであった。つまりスキームではなく
+解自体の成長である。$c$は$\Delta t$について 0.48で収束した。UTOPIAの散逸は、
+128セル以下ではこの振動を減衰させたが、256セルではUTOPIAでも振動が成長した
+（開発初期に中心スキームで解が滑らかだったのは、濃度方程式の層速度の合計が最短波長で
+膜の流束と一致していなかった間だけであった。体積流束を一致
+させると（\cref{sec:disc:cz-conservative}）、振動は成長した）。対策として拡散係数を
+上げた。1次元ではすべてのスキームが 2次で収束し
+（\cref{tab:schemes-mms}）、Central2も同様である（$c$は$\Delta x$について 1.90、$\Delta t$について 2.05）。128セルと 256セルでも
+UTOPIAは次数を保ち（$h$、$c$、$\mathbf u$が$\Delta x$について 2.01、2.05、1.99、
+256セルで$\Delta t$について 2.31、2.05、2.37）、KKとCentral4もこれらと 0.05以内で
+同様である。\file{tools/mms.py}の\code{cz\_strat\_1d\_central4}では、1次元の
+ケースをCentral4で実行する（\cref{sec:notverified:numerics}）。
+リミッター付きの濃度スキームは、基板と表面の流束なし条件によって膜厚方向の分布に
+生じる極値を切り詰める。ステップの中点まで落ち着かせる\val{"CZ"}では、
+UTOPIAに比べて誤差が最大 2倍、鉛直一様モデルの 2次元のケースでは
+6--7倍に悪化する。リミッター付きのスキームは、本当に前線をもつ問題のために用意している。
+膜厚については、滑らかな解でのリミッターによる悪化は小さく（Korenの誤差はKKの
+1.2--1.3倍）、\cref{sec:verification:analytic}の線形波でも同じ傾向が見られる。
+波長あたり 32セルでの速さの誤差は$5\times10^{-5}$に対して
+$6.7\times10^{-4}$であり、次数 2.85で減少する。
+
+リミッター付きスキームの利点は、薄い前駆膜の上の急峻な膜で現れる。高さ\SI{5}{\micro\metre}の
+ブロックが強い重力のもとで\SI{0.1}{\micro\metre}の前駆膜上を滑る場合を考え、
+100セル、適応刻みとする。到達する最小膜厚は、KKで\SI{0.085}{\micro\metre}、
+UTOPIAで\SI{0.028}{\micro\metre}、Korenとvan Leerで
+\SI{0.0998}{\micro\metre}であり、Central4は刻みがアンダーフローして停止する。
+\SI{0.02}{\micro\metre}の前駆膜の上では、KK、UTOPIA、Central4はいずれも停止し、
+Korenとvan Leerは前駆膜を保ったまま計算を終える。200セルでもKKでは
+\SI{0.007}{\micro\metre}まで落ち込むが、Korenでは\SI{0.01998}{\micro\metre}に
+とどまる。リミッター付きスキームではセル界面の膜厚が隣接セルの値の間に収まる。
+\cref{sec:disc:positivity}の正値性を保つ移動度は、この性質を
+前提としている。
+
+すべてのスキームが\cref{sec:verification:equivalence}の 33項目のチェックに合格し
+（最大差は$6.4\times10^{-9}$）、同梱のすべてのケースをKKと同じステップ数と
+刻みの縮小回数で実行し、1スレッドと 2スレッドで最後のビットまで同じ答えを与える。
+ニュートン反復の回数も同じだが、ステップが百倍長い\file{stress\_all}と
+\file{stress\_dt}は例外である。濃度にKorenとvan Leerを用いると、
+\file{stress\_all}ではKKの 104回に対して 142回と 139回、\file{stress\_dt}では
+Korenで 85回に対して 87回を要する。同梱のケースでの結果のKKとの差は、\key{Height}を変えた場合は$h$の
+最大$1\times10^{-5}$、\key{Concentration}を変えた場合は$2\times10^{-6}$である
+（\file{stress\_all}では$3\times10^{-5}$と$1\times10^{-4}$）。これらのケースでは濃度が
+$0.5000$--$0.5020$の範囲にとどまるので、濃度スキームの違いが表れない。
+そこで既定値は、両方のモデルで\key{Height}を\val{"Koren"}、
+\key{Concentration}を\val{"UTOPIA"}とした。この既定値で、すべての製造解が
+合格する（\code{wm\_all\_1d}：$c$ 1.94。\code{wm\_all\_2d}：$c$ 2.38、$h$ 2.11）。
+
+スキームの比較により、マランゴニ項の誤りも見つかった。この項は流束の
+符号ではなく$\Delta c$の符号で風上側を選んでいたため、
+\key{Fluid.SurfaceTension.Coef}が負の場合に風下側を取っていた。そのような
+同梱ケースはない。
+
+\section{他のチェックでは使われない機能}
+\label{sec:verification:features}
+
+\file{tools/features.py}（\code{ctest}のエントリ\code{features}）では、同梱のケースでは
+使わない機能を実行する。\code{probe\_wm\_1d}、\code{probe\_wm\_2d}、
+\code{probe\_cz\_1d}では、ある点の近くにプローブを置き、\file{Probe00.dat}の最終行が、
+同じ時刻の場ファイルで最も近い点の値と一致することを要求する。このチェックにより、
+次のことが判明した。プローブが最も近い点ではなく、指定した点から 1セル以内にある最初の点に置かれて
+いた（2次元ではテストのプローブが半セルずれていた）。また、\val{"CZ"}では
+入力のメートル単位の値を無次元の格子と比較していたため、プローブが指定した場所の
+近くにすらなかった。このチェックでは、プローブファイルのヘッダに記される
+位置と、\val{"CZ"}では膜厚方向のレベルも確認する。1次元の鉛直一様モデルの計算では、
+ヘッダに値を取った点より 1セル手前の点が記されていた。三つとも修正済みである。
+\code{coupling\_cz}では、\code{cz\_strat\_1d}を\SI{0.02}{\second}のステップで計算し、
+\val{"CZ"}の連成パスに上限の八回を超えさせる。固定刻みでは、計算が停止して原因としてパスを
+挙げる必要がある。このステップを受理するほど緩い刻み制御のもとでは、
+ステップが縮められ、一度だけ報告され、回数が数えられ、誤差が膜の振幅の 0.5倍未満に
+収まる必要がある（0.17。ステップを採用した場合は 2.1。
+\cref{sec:verification:czpasses}）。\code{stagnation\_wm}では
+\file{stress\_wetting}を開始する。最初のステップは\key{InitialDt}のもとで、収束から遠く
+離れたところで停滞する（\cref{sec:convergence:stagnation}）。固定刻みでは、計算が停止して
+原因として停滞を挙げる必要がある（警告付きで採用すると、次のステップで膜厚が負になり、
+計算は発散として終了した）。刻み制御のもとでは、ステップが収束するまで縮められ
+（十三回の縮小）、一度だけ報告され、回数が数えられ、計算が正常に終了し、\code{VolErr}が
+丸め誤差（$2\times10^{-15}$）に収まる必要がある。\code{evap\_precursor\_wm}と
+\code{evap\_precursor\_cz}では、基板の段差の裾で膜が前駆膜より薄くなる
+\file{leveling\_1d\_reg}と\file{concz\_1d\_reg}を実行し、
+\code{EvaporatedVol}が一度も減少しないことを要求する。このチェックにより、
+前駆膜補正$f_h$が$\Hstar$未満で負になっていたことが判明した（\cref{sec:terms:evaporation}）。
+そのため溶媒が膜に凝縮しており、\file{allphys\_1d\_reg}では
+\SI{1000}{\second}の間に初期体積の\SI{43}{\percent}もの溶媒が凝縮し、平均濃度は 0.5から
+0.15に低下していた。
+修正後、この範囲で$f_h$はゼロである。\code{steady\_wm}と
+\code{steady\_cz}では、レベリングする膜が\key{EndTime}よりずっと前に平坦になり、
+\code{Steady state}で停止することを要求する。
+\code{dry\_wm}と\code{dry\_cz}では、乾燥する膜が、平均濃度が\key{EndConcValue}を
+超えたステップで\code{Dry out}により停止することを要求する。
+\code{maxsteps}では、計算がちょうど\key{MaxSteps}ステップ後に停止し、その旨を
+表示することを要求する。\code{adaptive\_dt}では、時間刻み\SI{1}{\nano\second}から
+始めた計算が刻みを大きくしながら、なお、固定の小さな刻みでの計算と比べて要求した
+誤差の範囲内で終わることを要求する（\key{Criterion} $=10^{-4}$で、変化量の
+$1\times10^{-4}$）。\code{adaptive\_clock\_*}では、両方のモデルの 1次元と 2次元で
+刻みを縮めたり延ばしたりし、報告される時刻が解いたステップの和と$10^{-12}$の精度で一致する
+ことを要求する。\code{adaptive\_source}では、緩和するノズルが、報告される時刻に
+対して時間関数が与える体積を供給することを要求する。
+\code{restart\_edited\_wm}と\code{restart\_edited\_cz}では、計算が書き出した後で
+場ファイルの一つの列を\SI{1}{\percent}持ち上げる。リスタートでは編集後の場をそのまま
+読み込み、隣に保存された状態ファイルと一致しないことを警告する必要がある。編集して
+いないコピーでは、警告なしに継続する必要がある
+（\cref{sec:ref-numerics:restart}）。\code{restart\_pinned}では、\val{"Pinning"}の
+壁に押し付けられ、壁での膜厚が最も厚い部分の\SI{14}{\percent}になるまで乾燥した
+膜をリスタートする。計算は継続する必要があり、固定端のチェックの行は警告となる
+（\cref{sec:ref-bcout:boundary}）。
+
+\section{入力のファジングとランダム入力}
+\label{sec:verification:fuzzing}
+
+入力ファイル（TOMLと\file{.inp}）とリスタートファイル
+（\file{field*.dat}、\file{.vts}、\file{field*.state}）の読み込み処理を、
+AddressSanitizerとUndefinedBehaviorSanitizerのもとでlibFuzzerによりファジング
+した。1コアで約\SI{2.7}{\hour}、入力数は 14.5百万個である。コーパスは同梱のケース、
+その\file{.inp}形式、短い計算のリスタートファイルから作った
+（\file{tools/fuzz\_corpus.py}。\code{-DYUZEN\_BUILD\_FUZZERS=ON}で構成し、
+Clangでのみ利用可能）。入力を拒否するのは許容される結果だが、クラッシュ、サニタイザーの報告、
+ハングは許容しない。見つかった問題は次のとおりである。非ASCII文字を含む
+裸のキーで、toml\texttt{++}が到達不能な分岐に入ること。\file{.vts}の読み込みが
+格子と合わないブロック長をそのまま信用すること（ヒープオーバーフロー）。ASCIIの読み込みが
+短い行を受け付け、欠けた値を未初期化のまま残すこと。状態ファイルの読み込みが、巨大な配列長で
+例外を投げること。末尾のテキスト、\val{nan}、小数の個数、スカラーに対するリスト、
+語のない日付を受け付けてしまう変換（\cref{sec:inputformat:types}）。さらに、
+無意味な結果に至る値として、負の\key{MaxDtFactor}（計算が終わらなかった）、負の粘度、
+液体のない膜があった。液体のない膜は、終了コード 0で、\file{History.dat}にNaNを書き出しながら実行された。
+いずれも修正し、拒否するようにした。また、鉛直一様モデルも\val{"CZ"}と同様に、
+破綻した場で停止するようにした（\cref{sec:output:calcinfo}）。
+
+\file{tools/proptest.py}では、シードからランダムな有効入力を生成する。生成するのは、モデル、
+次元、小さな格子、桁にわたるパラメータをもつ項の任意の部分集合、辺、初期形状、
+対流スキーム、固定刻みまたは適応刻みである。各入力を数十ステップ実行し、
+場が有限で膜厚が正のまま正常に終了すること、有界なスキームではクーラン数 1までなら
+濃度が有界であることを確認する。閉じた領域、および鉛直一様
+モデルでは\val{"FreshInlet"}や\val{"Outlet"}の辺をもつ領域で、
+辺を通過した量を含めて体積（$10^{-9}$）と溶質（鉛直一様で移流を有効に
+した場合$10^{-11}$、\val{"CZ"}で$10^{-13}$）が保存されることも確認する。蒸発のない一様な濃度が一様のまま
+保たれること（鉛直一様で$10^{-10}$、\val{"CZ"}で$10^{-12}$）も確認する。
+一部の入力では、転置・鏡映した入力が転置・鏡映した結果を与えること、1スレッドと
+2スレッドの結果が一致すること、リスタートの連鎖が通しの計算とビット単位で一致する
+ことも確認する。約 990の構成を実行し、次の問題が見つかった。
+失敗した濃度の求解が、そのステップのすべての再試行の初期推定値にNaNを残すこと。
+二つの\val{"FreshInlet"}の辺がなす角が、ニュートン反復のたびに動き、ステップが
+破綻するまで続くこと。膜が乾き切ったステップでリスタートした後に余分な
+ステップを進めること。\val{"CZ"}の発散判定が最後のステップを飛ばすこと。リスタートの開始点
+となった場の 6桁の時刻が切り上げられると、\file{.pvd}からその項目が抜け落ちること。
+\val{"CZ"}の\file{CalcInfo.dat}の列ラベル。さらに以下の誤りも
+見つかり、いずれもリリース前に修正した。
+
+\begin{itemize}
+  \item 鉛直一様モデルの面内体積力とマランゴニ応力により、\val{"Symmetry"}や
+    \val{"Pinning"}の壁を通して液体が流れていた。これらの流束は勾配ではなく、
+    膜のセル界面値と駆動力の積であり、そのセル界面値をゴーストセルから取っていた。
+    対称壁ではゴーストセルは膜の鏡像である。壁面の速度はゼロであったが、$A$、
+    ヤコビアン、速度はゼロではなかった。$|\code{VolErr}|$は
+    \code{wall\_balance\_2d}で$2.5\times10^{-4}$に達したが、修正後は$10^{-14}$で
+    ある。あわせて次の二点も修正した。1次元の体積計算がゴーストセルを端のセルに含めていたため、
+    固定された膜が体積の$5\times10^{-5}$を失うように見えていた。また、
+    \code{VolErr}がノズルの供給量を数えていなかった。
+    \code{ResinVolErr}も、ノズルの液体が持ち込む溶質を数えていなかった
+    （シード 1122で$0.057$、\file{nozzle\_1d\_fixed}の終了時に$1.9$）。
+    現在はこの溶質を\code{SuppliedResin}で数え（\cref{sec:output:history}）、
+    \code{nozzle\_solute}でその収支が$10^{-12}$まで保たれることを確認する。
+  \item 平坦でない\val{"CZ"}の膜を乾燥させると、$\Delta t$、$N_x$、$N_z$によらず、
+    蒸発した割合に応じて濃縮されるはずの溶質の 3～\SI{25}{\percent}が失われていた。
+    表面と基板での条件は拡散流束の鉛直成分しか定めておらず、斜面に沿った成分が
+    漏れ出していた。濃度方程式は保存形でもなく、一様な濃度が$10^{-6}$だけドリフトし、
+    鏡映した計算ではドリフトの仕方が異なった。修正後は$hc$について保存形で解く
+    （\cref{sec:disc:cz-conservative}）。閉じた膜の溶質は$10^{-14}$まで保存され、
+    一様な濃度は厳密に一様のまま保たれ、鏡映・転置した計算はマランゴニ項を含めて
+    $10^{-12}$まで一致する。
+  \item \val{"CZ"}の面内体積力でも、同じように液体が\val{"Symmetry"}の壁を通過していた
+    （$2\times10^{-5}$、シード 1015。\code{wall\_balance\_cz}で
+    $3.7\times10^{-3}$）。修正後は、壁面での流束、層速度、
+    面内拡散がすべてゼロであり、閉じた箱の体積と溶質は$10^{-15}$まで保存される。
+  \item 乾燥する膜が$c = 1$を超え、上限処理で超過分の溶質を削除していた
+    （鉛直一様の\code{ResinVolErr} $-0.21$、シード 1206。\val{"CZ"}
+    $4\times10^{-4}$、シード 1118。\code{dried\_wm}では溶質をすべて失い、
+    \code{dried\_cz}は停止した）。修正後は、蒸発量を存在する溶媒の量までに制限し
+    （\cref{sec:terms:evaporation}）、溶質は$10^{-13}$まで保存され、$c$は
+    1以下にとどまる。
+  \item 時間刻み制御で受理したステップの後に刻みを延ばす処理を、時計を進める前に
+    行っていた。そのため時計は、実際には解いていない新しい刻みの分だけ先へ進んで
+    しまい、\file{leveling\_1d\_reg}の終了時に\SI{0.37}{\percent}、接触線の
+    ケースで最大\SI{0.5}{\percent}進んでいた。ノズルと製造解の生成項は誤った
+    時刻で評価され、定常状態の判定に用いる変化率は誤った刻みで割られていた。\val{"CZ"}
+    では、膜は古い刻みで解いたのに、そのステップの膜の更新と濃度には新しい刻みを
+    用いていた。修正後は、延ばした刻みは次のステップから適用される。
+  \item 1次元では、遠心力項によって膜が解いていない$y$方向へ振り飛ばされる
+    （\cref{sec:terms:centrifugal}）が、\code{VolErr}と\code{ResinVolErr}は
+    この量を数えていなかった。壁の間で回転する帯状の膜では、失った量がそのまま誤差として現れた
+    （\code{spin\_balance}で体積の$-0.12$）。修正後は、膜厚方程式自身の側方流出を、
+    その方程式を解いたステップについて\code{OutflowedVol}と\code{OutflowedResin}で
+    数える。\val{"CZ"}も同じ収支の列を書き出す（\cref{sec:output:history}）。
+    いずれも収支は$2\times10^{-15}$まで合う。
+  \item \val{"Pinning"}の壁に接して$c = 1$まで乾燥した膜（シード
+    1035）を状態ファイルから継続すると、通しの計算と一致しなかった。
+    一回後の出力で、$c$が最大$3\times10^{-3}$異なった。場には（したがって状態ファイルにも）
+    1で上限処理した$c$が保存されていたが、通しの計算の濃度方程式は、上限処理していない
+    自身の解から先へ進んでいた。上記のシード 1206に対する修正（方程式自身の状態に対する上限処理と、
+    存在する溶媒の量までの蒸発の制限）により、この不一致は解消した。
+  \item 膜厚が壁まで下がっていない初期条件で計算を停止させる固定端のチェックが、リスタート時にも
+    行われていた。そのため、計算自身の物理に従って端が変化した膜を拒否していた。壁に押し付けられて
+    乾燥した膜で、壁での膜厚が最も厚い部分の 10分の 1を超えていた例である（シード 1206）。このチェックは
+    初期条件だけを対象とすべきものであり、現在、リスタート時にはその行は警告となる
+    （\cref{sec:ref-bcout:boundary}）。
+  \item 一つのステップで膜のかなりの部分が蒸発する\val{"CZ"}の膜で、溶質が
+    $10^{-10}$だけ変化していた（シード 1054と 2105。当時の性質の許容値は
+    $10^{-11}$）。ステップでは、線形ソルバーの残差を変化量の一様なシフトとして溶質に
+    戻す（\cref{sec:disc:cz-conservative}）。このシフトは表面項が取り去る溶媒も
+    動かしてしまうため、従来の大きさでは残差の 4分の 1が溶質に残っていた。
+    また、各側が自身のゴーストセルから流束を作る\val{"Periodic"}の継ぎ目では、
+    変化量のゴーストセルはソルバーの残差の精度でしか元の値のコピーになっておらず、
+    シフトにはこの差が反映されていなかった。修正後は、500シード中 147個の閉じた\val{"CZ"}の
+    膜で、リミッター付きのスキームも含めて溶質が$2.4\times10^{-14}$まで保存される。
+    性質の要求値は$10^{-13}$である。
+  \item 遠心力項と\val{"Periodic"}の辺の組み合わせを受け付けていた。遠心力項の
+    腕の長さは継ぎ目をまたぐと領域の長さだけ跳ぶので、この問題は周期問題ではなく、
+    継ぎ目で液体が生成または消失する。現在は、製造解の場合を除いてこの組み合わせを拒否する
+    （\file{tools/input\_guards.py}の\code{periodic\_centrifugal}）。
+  \item 鉛直一様モデルの濃度に有界でない対流スキーム
+    （KK、UTOPIA、Central4、QUICK。クーラン数 1を超えた場合のKorenとvan Leer）を用いると、
+    鋭い前線で$c = 1$を超えるオーバーシュートが生じ、確定した状態を 1で上限処理する際に
+    超過分の溶質が切り捨てられていた。$c = 0.99$から 0.3への前線が
+    100セルの周期領域を一周すると、UTOPIAで溶質の\SI{0.72}{\percent}
+    （$\Delta x^{0.7}$でしか減少しない）、Central4で\SI{3.0}{\percent}が失われ、乾燥する
+    前線ではUTOPIAで\SI{0.23}{\percent}が失われた。修正後は、1を超えた溶質を余裕のある
+    隣接セルへ移し（\cref{sec:disc:convection}）、丸め誤差まで保存する。また、係数が
+    参照する作業用の場を上限処理していたため、Korenとvan Leerのリミッターが反復値
+    とは異なる値で凍結され、移流が流束形式でなくなっていた。クーラン数
+    1.5で一周すると、溶質が 1～\SI{2}{\percent}生成された。修正後は、リミッターを
+    解いたままの反復値で凍結する。溶質はニュートン反復の許容誤差
+    （$5\times10^{-9}$）まで保存され、リミッターがその解で落ち着いた状態でステップを
+    完了すれば丸め誤差まで保存される（\cref{sec:disc:wm-conservative}）。
+    \code{conc\_overshoot}と\code{conc\_overshoot\_koren}
+    （\cref{sec:verification:analytic}）で両方を確認する。同梱ケースでオーバーシュート
+    するものはない。
+  \item \val{"FreshInlet"}や\val{"Outlet"}を通る収支は、スキームの誤差の範囲で
+    しか合っていなかった。\file{History.dat}は辺を通過した量を、ステップが運んだ
+    セル界面流束からではなく、各ステップ後の場の速度とセル界面値から数えていた
+    （シード 1000--1099で\code{ResinVolErr}が最大$1.1\times10^{-2}$。シード 1033の、
+    流入口から壁に向かって供給される 2次元の膜）。修正後は、ステップ自身のセル界面
+    流束から数え（\cref{sec:output:history}）、開いた領域でも体積と溶質は閉じた
+    領域と同様に保存される（同じシードで$4\times10^{-15}$。\code{inlet\_outlet}、
+    \code{solute\_balance}）。
+\end{itemize}
+
+AddressSanitizerのもとでさらに 100シードを実行したところ、次の問題が見つかった。時間刻み制御を無効にした
+場合（\key{Numerics.\allowbreak TimeStepControl.\allowbreak Enable} $=$
+\val{false}）、ニュートン反復が失敗した鉛直一様のステップが、失敗した反復の
+残した状態、すなわち出発点の膜のまま採用され、計算が正常に終了していた。
+この例でのニュートン反復の失敗は、膜に対して刻みが長すぎるために、線形求解が許容誤差に一度も達しなかったものである。
+鏡映した計算では、代わりに発散した（シード 3094）。修正後は、このような
+ステップでは理由を示して計算を停止する。固定刻みには、再試行に用いる短い刻みが
+ないからである（\file{tools/input\_guards.py}の\code{wm\_fixed\_unsolved}）。
+
+濃度の求解も、刻み制御の有無によらず同じ扱いになっていたことが判明した。
+鉛直一様モデルや\val{"CZ"}の濃度の線形求解が許容誤差に達しなくても、警告を
+出すだけで解が採用されていた。\val{"CZ"}の膜厚の求解も、固定刻みでは同様であった。
+修正後は、濃度の求解が失敗するとステップを失敗させる。刻み制御のもとではステップを
+縮めて解き直し、\val{"CZ"}では出発時の濃度から解き直す。固定刻みでは
+計算を停止し、失敗した求解を示す。\file{tools/input\_guards.py}では、固定刻みで
+各モデルの濃度ソルバーに許容誤差$10^{-30}$、反復 1回を与える
+（\code{wm\_conc\_fixed\_unsolved}、\code{cz\_conc\_fixed\_unsolved}。濃度の求解を
+示して拒否される）。刻み制御のもとでは、ケース本来のソルバーなら縮小なしに解ける最初の
+ステップを用い、最初のステップでは達しないが縮小後なら達する許容誤差
+（$10^{-8}$と$10^{-10}$）と、ILU前処理なしの反復 1回または 2回を与える
+（\code{wm\_conc\_cut}、\code{cz\_conc\_cut}。ステップの縮小が十回と八回起こり、
+計算は正常に終了する）。濃度の求解が失敗する同梱ケースはない。28ケースすべてで、
+修正の前後でビット単位で同じ場ファイルが得られる。
+
+\code{proptest}のチェックは、これらに合わせて厳しくした。閉じた領域では、場ファイル
+から測った\val{"CZ"}の溶質が$10^{-13}$まで保存され、一様な
+\val{"CZ"}の濃度が$10^{-12}$まで一様に保たれる必要がある。
+\code{ctest}では、20個の小さなシードと、回帰リストの十五個（誤りを見つけたシードと、
+乾燥する周期的な膜の 1282）を\code{proptest}として数秒で実行する（1035と 1206はリスタートの
+連鎖付き）。\code{--seed N --count M}でさらに多くのシードを実行でき、
+\code{--only SEED --keep}で一つのシードを再現できる。
+
+\file{tools/input\_guards.py}では、一つの列の濃度を 1.25または$-0.25$
+（片側だけ$[0, 1]$の外）にした場ファイルから各モデルをリスタートし、計算が最初の
+ステップで発散として停止することも確認する（\code{cz\_conc\_above}、
+\code{cz\_conc\_below}、\code{wm\_conc\_below}。鉛直一様モデルは毎ステップ後に 1を
+超えた分を周囲のセルへ移すので、下側の確認だけを行う）。両モデルとも、求解後に 0未満の
+セルを周囲のセルから補う。また鉛直一様のステップでは、それ自体で列の値が範囲内へ混ざり戻る。そのため
+発散判定では、場の最小の$c$に加えて、ステップ開始時と求解時（補う前）の最小の
+$c$も用いる（発見された問題：リスタートした鉛直一様の計算が停止せず継続していた。修正済み）。
+一つの列で\SI{1}{\micro\metre}だけゼロを下回る膜厚を読み込んだ鉛直一様の膜も、
+膜厚が負になったとして同様に停止する必要がある（\code{wm\_film\_below}）。
+膜に対して長すぎる固定刻みの計算は、以前はこの判定で停止していたが、現在はニュートン
+修正量が収束から遠く離れて停滞するため、それより早く停止する（\code{wm\_diverges}、
+\cref{sec:convergence:stagnation}）。格子の大きさの上限
+$(N_x+4)(N_y+4)(N_z+4) \le 5\times10^{7}$は、上限の前後の値について、何も実行しない
+\code{--check-input}で確認する。\file{.inp}ファイルで閉じ引用符のない文字列は、
+ファイルの残り全体を値として取り込み、それ以降のキーは、必須のものを除いて
+すべて既定値のままになっていた。現在は、キーと行を示して拒否する（\code{inp\_unterminated}）。
+
+\section{コンパイラと最適化}
+\label{sec:verification:compilers}
+
+同梱のケース（300ステップで打ち切り）と\code{ctest}を、GCC 13と
+Clang 18で、\code{-O0}、\code{-O2}、\code{-O3}により実行した。
+\code{-fno-strict-aliasing}の有無、未初期化のローカル変数をパターンで埋めた場合と
+ゼロで埋めた場合、ヒープメモリを撹乱した場合（\env{MALLOC\_PERTURB\_}）、
+検査付き標準ライブラリ（\code{-D\_GLIBCXX\_DEBUG}）も試した。どの場合もビット単位で
+同じ場ファイルが得られ、GCCとClangの結果も互いに一致する。RHEL 9のシステムコンパイラである
+GCC 11でもビルドでき、\code{ctest}に合格する（これにより、\code{<cstddef>}を
+インクルードせずに\code{size\_t}を使うヘッダが見つかった。新しいコンパイラでは
+問題にならなかったものである。修正済み）。積和演算の融合（\code{-march=native}、または
+arm64のビルド全般）とEigenのベクトル幅の違いにより、通常のケースでは$h$がその最大値の約
+$10^{-12}$だけ変わる。接触線のケースでは、差はニュートン修正量が停滞する下限の
+大きさになり、数千ステップで$10^{-8}$に達しうる。平衡での速度は残差なので、数パーセント
+異なることがある。ソルバー自身のコードはどの命令セットでも同じビットを与え、異なるのは
+線形ソルバーのコードだけである。\code{-ffast-math}では、すべてのケースが正常に
+実行されるが、三つの単体テストが失敗する。また
+\code{-funsafe-math-optimizations}では分離圧のべき乗が精度の低い形に書き換えられ、
+その影響は$N_x = 4000$で現れる。これらのオプションを付けてビルドしてはならない。この比較により、次の二点が見つかった。
+セル界面補間の二つの経路が異なる形で融合されるため、
+\code{-ffp-contract=fast}では厳密等価を確かめる単体テストが失敗すること（修正：微分の計算で値自身の
+計算結果を返す）。入力から読んだNaNに対する\code{(int)}が未定義動作であること。
+MSVCのOpenMP 2.0が受け付けない構文（符号なしのループ添字、\code{collapse}、
+配列やmin/maxのリダクション、\code{simd}）やその他の非標準構文を走査したが、
+何も見つからなかった。\code{-Wall -Wextra -Wpedantic
+-Wvla}を付けたGCCでも警告は出ない。
+
+\section{メモリ、スレッド、浮動小数点}
+\label{sec:verification:sanitizers}
+
+これまでのチェックでは、次のような誤りには気づけない。配列の終端を越えて読んだ値が、たまたまもっともらしい場合。
+スレッド間の競合が、たまたま同じ結果に落ち着く場合。時間刻み制御の再試行によって
+NaNが黙って消える場合。これらは別に探す。実施した確認とリリース前に見つかった
+問題を\cref{tab:sanitizers}に示す。この種の誤りは、答えを調べるテストから見える
+答えを何も変えない（\cref{sec:notverified:mutation}）。そのためCIでは、プッシュのたびに
+AddressSanitizerとUndefinedBehaviorSanitizerを有効にしてビルドし、短時間で終わる
+ソルバーのテストを実行する。
+
+\begin{yzntable}{メモリ、スレッド、浮動小数点の確認\label{tab:sanitizers}}{@{}L{0.24\textwidth} L{0.44\textwidth} L{0.24\textwidth}@{}}
+\textsf{\bfseries ツール} & \textsf{\bfseries 対象} & \textsf{\bfseries 発見}\\ \midrule
+ASanとUBSan（GCC、アサーション有効） & 単体テスト、すべてのテストツール（\code{mms}全体と\code{proptest}の追加 100シードを含む）、\file{cases/}の全ケースを各対流スキームで 20ステップ & 下記参照 \\
+Valgrind memcheck & 単体テスト、\file{cases/}の全ケースとスキームの変種を各三ステップ、\val{"CZ"}の連成パス、\file{field*.state}の有無でのリスタート、溶媒の限界に達した乾燥する膜 & エラーなし、リークなし \\
+TSan（Clang、LLVMのOpenMPのArcherツール付き） & 単体テスト、両モデルの 1次元・ 2次元計算を各対流スキームで、\val{"CZ"}の連成パス、閉じた壁、溶媒の限界までの蒸発、リスタート、2～4スレッド & 競合なし \\
+invalid、divide-by-zero、overflowに対する\code{feenableexcept} & \file{cases/}の全ケースを各スキームで、テストツールのすべての実行 & 下記参照 \\
+clang-tidy（\code{bugprone}、\code{clang-analyzer}、\code{performance}）、\code{-Wshadow -Wconversion -Wduplicated-cond -Wnull-dereference}付きのGCC & すべてのソースファイル & 欠陥なし \\
+カバレッジ（gcovr） & スイート全体と全ケース & 行の\SI{90}{\percent}。下記参照 \\
+\end{yzntable}
+
+これらの確認は、対流スキームと\val{"CZ"}の連成反復を追加する前に最初に実施し、
+追加後に繰り返した。一回目には、浮動小数点トラップが三か所で発生した。一つ目は、初期膜の形を
+作るシグモイドが端から遠い位置で\code{exp}をオーバーフローさせるもので、正しい極限値
+0を返すので無害である。二つ目は、EigenのBiCGSTABが\file{stress\_wetting}のいくつかの
+線形系で破綻して報告するもので、ニュートン反復が刻みを縮めて対処する。
+三つ目が問題であった。再試行したステップでは、直前に棄却した試行（膜厚が
+$10^{76}$に達していた）から更新の陽的な半分を組み立てていたため、直ちに失敗し、
+ステップが無駄に再び縮められていた。これは誤りであり（\cref{sec:verification:equivalence}、
+\code{wm\_retry}）、修正済みである。すべてのケースで、棄却されたステップはすべて
+誤った膜から再試行されており、結果が約$10^{-7}$ずれていた。
+
+二回目には、トラップが二か所で発生したが、いずれも無害であった。一つは再びシグモイドで、もう一つは
+膜厚がゼロとなる固定壁での壁面の毛管速度である。後者は 0/0であるが、どこかで読まれる
+前に境界条件で上書きされる。単独でテストしたところ、van Leerのリミッターに誤りが
+あった。$2ab/(a+b)$とその微分を積から計算していたため、差が約$10^{-162}$未満では
+アンダーフローして$0/0$となり、$10^{154}$を超えるとオーバーフローしていた。修正後は比
+$a/(a+b)$と$b/(a+b)$を用いる。この修正によるvan Leerの結果の変化は、最後の数ビットだけで
+あった。一回目以降に追加したコードのカバレッジ（その行の\SI{97}{\percent}）から、
+\val{"CZ"}の連成パスを上限の八回まで回すテストがないことが判明したため、
+\file{tools/features.py}に\code{coupling\_cz}を追加した。場ファイルは、すべての
+スキームと連成パスについて、1、2、4スレッドでビット単位で一致する。
+
+三回目は、\val{"CZ"}の濃度の保存形、両モデルの壁面、溶媒量による蒸発の制限、時計、
+リスタートの状態ファイルを実装した後に実施した。UBSanにより、二つの単体テストが、フラグを一度も
+設定していない\code{Input}をコピーしていることが見つかった。これは未定義動作である
+（テスト内のみ。修正済み）。トラップは、これまでと同様に初期形状のシグモイドと
+固定壁面での 0/0の速度で発生し、2次元でも発生した。さらに、入力チェックでの意図的なオーバーフロー
+（オーバーフローを試験する粘度指数、リスタートファイル中の 3000桁の数）と、時間刻み
+制御が後に棄却したステップの試行、発散として停止する計算でも発生した。
+受理されたステップで発生したことはない。追加の 100個の\code{proptest}シードにより、
+\cref{sec:verification:fuzzing}で述べた固定刻みの誤りが見つかった。この回に追加した行の
+\SI{95}{\percent}がカバーされている。カバーされていないのは主に、破損した
+リスタートファイルと拒否のメッセージ、および書き出し後に編集された場ファイルの処理である。
+後者のために、\file{tools/features.py}に\code{restart\_edited\_*}を追加した。
+場ファイルは、Korenとvan Leerを用いた 2次元の鉛直一様のケースと、マランゴニの
+連成パス、閉じた壁、蒸発を含む 2次元の\val{"CZ"}について、1、2、4スレッドで
+ビット単位で一致する。
+
+四回目は、$A\cdot\varphi$をセル界面ごとに計算する形にし、境界行を厳密に満たすようにした
+（\cref{sec:time:apply}）後に実施した。TSanは 2スレッドと 4スレッドで競合を検出せず
+（Korenとvan Leerを用いた 2次元の鉛直一様の計算、\val{"Pinning"}と
+\val{"Symmetry"}の辺と重力をもつ閉じた箱、2次元の\val{"CZ"}）、Valgrindと
+サニタイザーも何も検出しなかった。AddressSanitizerのもとでの追加の 100個の
+\code{proptest}シードでも違反は見つからなかった。トラップは、初期形状のシグモイドと、
+境界条件で上書きされる固定壁面での 0/0の速度（毛管圧によるものに加え鉛直重力によるもの）
+で発生した。境界行の単体テストにより、次の問題が見つかった。互いに相手のゴーストセルを参照する
+\val{"Outlet"}や\val{"FreshInlet"}の二つの行が、求解が残した誤差の 9分の 1だけ
+ずれたまま残り、1次元の固定端の濃度の行ではその 729倍ずれていた。
+修正後は、互いに参照し合う行の組をまとめて解く。この修正で結果が変わる同梱ケースはない。
+このコードの行の\SI{99}{\percent}がカバーされている。場ファイルは、Korenとvan Leerを
+用いた 2次元の鉛直一様のケース、2次元の\val{"CZ"}、固定端の 2次元の箱について、
+1、2、4スレッドでビット単位で一致する。
+
+五回目はリリース前の最後の回で、本マニュアルで説明する形式の入力ファイルを用いて
+実施した。AddressSanitizerとUndefinedBehaviorSanitizerのもとで、単体テスト、
+\code{input\_guards}、\code{error\_paths}、\code{restart\_roundtrip}、
+\code{features}と、\code{equivalence}と\code{analytic}のチェック各九項目を実行した。
+Valgrindで\file{tutorial\_1d}と\file{leveling\_2d\_reg}を 20ステップ、Archer付きの
+TSanで単体テストを 2スレッドと 4スレッドで実行し、両モデルの 2次元計算をどちらのバックエンドでも
+実行した。三つのファザーをそれぞれ十分間、計 6.2百万個の入力で実行した。
+AddressSanitizerにより、\file{History.dat}が終わりのないデバイスである計算
+（\code{error\_paths}での\file{/dev/full}）で、再開のためにそれを丸ごと
+読み込もうとし、書き込めないことを報告する前に利用可能なメモリをすべて使い切って
+しまうことが判明した。修正後は通常のファイルだけを読み込む。他には何も見つからなかった。
+
+これらの確認を繰り返す手順は次のとおりである。
+\code{-DCMAKE\_CXX\_FLAGS="-fsanitize=address,undefined"}と
+\code{-DYUZEN\_PREFER\_LIBOMP=OFF}でビルドを構成し（LLVMの\file{libomp}は
+スレッド構造をプロセスの終了まで保持し、LeakSanitizerはこれをリークとして報告する）、
+そのビルドで\code{ctest}を実行する。\key{Numerics.MaxSteps}を小さく設定して
+\code{valgrind --error-exitcode=77 build/bin/yuzen case.toml}を実行する。
+\code{libomp}に対して\code{clang++
+-fsanitize=thread}でビルドし、\env{OMP\_TOOL\_LIBRARIES}を\file{libarcher.so}に
+設定して実行する。Archerがないと、TSanはOpenMPランタイム自身の同期を競合として報告する。
+トラップについては、各スレッドで（\code{pthread\_create}を介して）
+\code{feenableexcept}を呼び、トラップ箇所を記録してから計算を継続させる小さな
+\code{LD\_PRELOAD}ライブラリがあれば十分である。
+
+\section{長時間計算と大規模格子}
+\label{sec:verification:long}
+
+これまでのチェックは、それぞれ数秒から数分で終わる。長い計算でなければ答えられない問いが二つある。
+\file{History.dat}の収支は、数十万ステップにわたって丸め誤差程度に保たれるのか、それとも
+ドリフトするのか。また、メモリはステップ数とともに増えるのか。両方の答えを\Cref{tab:longruns}に示す。
+同梱のケースを本来よりはるかに長く、シングルスレッドで実行した結果である。
+\code{VolErr}と\code{ResinVolErr}は、計算の全行にわたる最大値である。
+常駐メモリは、終了時でも計算の 4分の 1の時点より増えていない。
+
+\begin{yzntable}{長時間計算：収支とメモリ\label{tab:longruns}}{@{}L{0.30\textwidth} r r L{0.13\textwidth} L{0.13\textwidth} r@{}}
+\textsf{\bfseries 計算} & \textsf{\bfseries ステップ数} & \textsf{\bfseries $t$ [s]} & \textsf{\bfseries $|$VolErr$|$} & \textsf{\bfseries $|$ResinVolErr$|$} & \textsf{\bfseries メモリ}\\ \midrule
+\file{allphys\_1d\_reg}、$\Delta t = 10^{-4}$\,s固定 & 500{,}001 & 50   & $1.1\times10^{-14}$ & $2.3\times10^{-14}$ & 8.0\,MB \\
+\file{allphys\_1d\_reg}、適応刻み                       & 100{,}860 & 1000 & $8.6\times10^{-15}$ & $9.7\times10^{-15}$ & 7.9\,MB \\
+\file{concz\_1d\_reg}、$\Delta t = 10^{-4}$\,s固定    & 200{,}001 & 20   & $4.0\times10^{-15}$ & $5.3\times10^{-15}$ & 8.1\,MB \\
+\file{allphys\_2d\_reg}、適応刻み                       & 3{,}612   & 30   & $1.6\times10^{-14}$ & $1.8\times10^{-14}$ & 14.5\,MB \\
+\end{yzntable}
+
+適応刻みによる 1000\,sの計算では、膜は体積の\SI{43}{\percent}を失う。
+内訳は、蒸発による\SI{26}{\percent}と、1次元の側方流出による\SI{17}{\percent}である
+（\cref{sec:output:history}）。平均濃度は 0.5から 0.71に上昇する。それでも
+収支は丸め誤差の範囲で閉じる。四つの計算のいずれでも、失敗したステップはなかった。
+五つ目の計算では毎ステップ場ファイルを書き出し、その数は 30{,}001個になる。これらを
+列挙する\file{.pvd}は有効なままで、各ファイルの時刻も互いに区別されたままである。
+このときの費用は\cref{sec:output:vtk}に示す。
+
+テストスイートのどのケースよりもはるかに大きい三つの格子をそれぞれ数ステップ実行し、
+一ステップに必要なメモリを測った。ピーク常駐メモリは次のとおりであった。
+\begin{itemize}
+  \item 鉛直一様の 2次元、$1024^{2}$セル（\file{scaling/bench2d\_n1024}）：
+    \val{"eigen"}で\SI{3.8}{\giga\byte}、\val{"amgcl"}で
+    \SI{3.2}{\giga\byte}。
+  \item 鉛直一様の 1次元、$N_x = 10^{6}$：\SI{2.0}{\giga\byte}。
+  \item \val{"CZ"}の 2次元、$200 \times 200 \times 20$（\file{concz\_2d}）：
+    \SI{1.6}{\giga\byte}。
+\end{itemize}
+セルあたりに換算すると、2次元で約\SI{3.7}{\kilo\byte}、1次元で\SI{2.0}{\kilo\byte}、
+\val{"CZ"}で$N_x N_y N_z$のセルあたり\SI{2.1}{\kilo\byte}である。これらの計算で
+測ったのはメモリだけである。このような格子で線形ソルバーが同じように収束するか、
+長時間計算で丸め誤差がどう蓄積するかは測っていない
+（\cref{ch:notverified}）。
+
+\code{python3 tools/long\_runs.py --exe build/bin/yuzen --workdir runs/long}で、
+八つの計算すべてを 1コアで約一時間かけて再実行できる。表とともに、計算の 4分の 1の時点と終了時の
+常駐メモリも出力する。
+
+\section{本章の数値の再現方法}
+\label{sec:verification:reproduce}
+
+以下のコマンドはすべてリポジトリのルートで実行する。
+
+\subsection{テストスイート}
+
+\cref{sec:verification:suite,sec:verification:grid,%
+sec:verification:linalg,sec:verification:velocity,sec:verification:bcio}と、
+\cref{sec:verification:disjoining}の較正および平衡液滴のテストに対応する。
+
+\begin{shell}
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j
+ctest --test-dir build                        # all seventeen entries
+./build/bin/yuzen_tests                       # case and assertion counts
+./build/bin/yuzen_tests -sf="*test_grid.cpp"  # the per-file breakdown
+YUZEN_DBG_EQ=1 ./build/bin/yuzen_tests -sf="*test_disjoining.cpp"
+\end{shell}
+
+最後の行では、\cref{sec:verification:disjoining}で述べたテスト内部の残差速度
+（42.996、10.801、2.7116）が出力される。ファイル全体ではなくこのケースだけを
+実行するには、\code{-tc="*residual velocity on the equilibrium shape*"}を
+指定する。
+
+\subsection{スレッド数とバックエンド}
+
+\cref{sec:verification:linalg,sec:verification:backends}の数値は次のコマンドで再現できる。
+
+\begin{shell}
+./tools/run_case.sh cases/leveling_1d_reg.toml runs/reg_th1 1
+./tools/run_case.sh cases/leveling_1d_reg.toml runs/reg_th2 2
+python3 tools/compare.py runs/reg_th1 runs/reg_th2            # => 0.000e+00
+
+./tools/run_case.sh cases/allphys_2d_reg.toml runs/2d_th1 1
+./tools/run_case.sh cases/allphys_2d_reg.toml runs/2d_th2 2
+python3 tools/compare.py runs/2d_th1 runs/2d_th2
+\end{shell}
+
+以下ではすべて\file{tools/run\_case.sh}を用いる
+（\cref{sec:env:tools}）。
+
+\Cref{tab:wholesolver}は\val{"eigen"}を用いた結果である。AMGCL付きのビルドでは、
+2次元の\file{allphys\_2d\_reg}で\val{"auto"}が\val{"amgcl"}に解決されるため、
+二組目の比較は下位ビットで異なりうる（\cref{sec:verification:amgclthreads}）。
+表を再現するには、下記のように両方の\key{Backend}キーに\val{"eigen"}を指定するか、
+\code{-DYUZEN\_WITH\_AMGCL=OFF}で構成する。
+
+バックエンドを変えるには、
+\key{Numerics.HeightEquation.\allowbreak LinearSolver.Backend}と
+\key{Numerics.ConcEquation.\allowbreak LinearSolver.Backend}に\val{"eigen"}または
+\val{"amgcl"}を指定し、同じコマンドを実行する。\textbf{両方のキーを明示的に指定する必要が
+ある}。\file{cases/}以下のケースはどれも\key{Backend}を設定していないので、
+指定しなければ各方程式は既定値\val{"auto"}となり、それぞれ別々に解決される。
+BiCGStabの総反復回数は、\file{CalcInfo.dat}の\code{BCG\_iter}列の和である。
+
+\val{"amgcl"}を使うには、AMGCLを組み込んだバイナリが必要である。上記のビルドでは
+\code{YUZEN\_WITH\_AMGCL}は既定値\val{ON}のままだが、ヘッダが見つからず
+取得もできなかった場合は黙って無効になる（\cref{sec:install:options}）。
+\code{-DYUZEN\_WITH\_AMGCL=OFF}で構成した場合も同様である。どちらの場合も
+計算は警告を出して\val{"eigen"}に切り替わるため、\val{"eigen"}を二度測ることになる。そこで
+明示的に構成し、ビルド後に\file{JobInfo.txt}の\code{Solver Info}節を確認する。
+
+\begin{shell}
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DYUZEN_WITH_AMGCL=ON
+cmake --build build -j
+ctest --test-dir build                        # all seventeen on this build too
+\end{shell}
+
+\subsection{平衡液滴}
+
+ASCIIのリスタートファイルは\file{tools/make\_equilibrium\_1d.py}で作る。
+\file{cases/eq/}以下のファイルは、このコマンドの出力とバイト単位で一致する。
+\code{--sweep}を付けると、ファイルは書き出さずに見かけの接触角の表\cref{tab:apparent-angle}を出力する。
+ただし\code{--out}は必須の引数であり、sweepの分岐より
+前に解析されるので、この場合も指定する必要がある。
+\file{/dev/null}を指定すれば十分である。
+
+\begin{shell}
+python3 tools/make_equilibrium_1d.py --out /dev/null --sweep
+
+python3 tools/make_equilibrium_1d.py --out cases/eq/eq_n2000.dat \
+        --nx 2000 --xmin=-0.3e-3 --xmax=0.3e-3 \
+        --hstar 0.02 --theta 10 --hmax 1.0
+
+for n in 1000 2000 4000; do
+  ./tools/run_case.sh cases/eq/eq_n$n.toml runs/eq_n$n 1
+done
+\end{shell}
+
+各出力ディレクトリの\file{field00000.dat}の第 3列（\code{Ux}、単位
+\si{\metre\per\second}）の絶対値の最大値を、速度スケール
+$U_0 = L_0/T_0$（$T_0 = \mu L_0^{4}/(\sigma h_0^{3})$）で割ると、無次元の
+残差速度が得られる。このケースでは
+
+\[
+  L_0 = 1.749042\times10^{-3}~\si{\metre}, \quad
+  T_0 = 3.119463\times10^{4}~\si{\second}, \quad
+  U_0 = 5.606869\times10^{-8}~\si{\metre\per\second} .
+\]
+
+である。スケールは、どの計算でも実行ログに出力される
+（\cref{sec:output:running}）。
+
+時間発展には\file{cases/eq/eq\_run.toml}を用いる。既定の定常状態判定が開始直後に
+作動してしまうので、\code{[Numerics]}テーブルに\key{SteadyStateCriterion} $=$
+\val{-1}を加えて判定を無効にする。\key{EndTime}を\val{0.0102}に設定すると、
+$t = 0, 2.5\times10^{-3}, \dots, 1.0\times10^{-2}$の五つの
+\file{field*.dat}と、終了時刻の六つ目が得られる。見かけの接触角は、下記の
+\code{fit\_cap}で測る。
+
+\subsection{濡れ広がり}
+
+\begin{shell}
+./tools/run_case.sh cases/eq/spread_n500.toml runs/spread 2
+python3 tools/measure_spreading.py runs/spread/spread_n500 --dt-out 1e-3 --stride 5
+\end{shell}
+
+\code{--dt-out}は、入力の\key{Output.FieldData.TimeInterval}と一致させる必要が
+ある。\code{--stride 5}を指定すると 5ファイルごとに一つを用いる。
+$U = \mathrm{d}R/\mathrm{d}t$を差分で求める間隔が広がるので、$\Ca$のノイズが減る。
+
+\begin{note}[相関係数はストライドに依存する]
+  \cref{sec:verification:spreading}の数値は\code{--stride 5}によるものである。
+  相関係数は\code{--stride 1}で 0.984、\code{--stride 5}で 0.998、
+  \code{--stride 10}で 0.999となる。物理だけでなく差分のとり方にも依存するので、
+  引用する際はストライドも併記されたい。
+\end{note}
+
+\cref{tab:spreadend}の比較では、\key{EndTime}を\val{8.0}に延ばし、計算自身の
+定常状態判定で停止させる（$N_x = 500$で$t = \SI{2.23}{\second}$、
+$N_x = 2000$で$t = \SI{2.24}{\second}$）。最後の\file{field*.dat}から頂部高さを
+読み取り、\code{make\_equilibrium\_1d.py --theta 10 --hmax <crest height/h0>}で同じ
+頂部高さの平衡液滴を構成し、両方を\file{measure\_spreading.py}の\code{fit\_cap()}で
+処理する。
+
+\begin{plain}
+import sys; sys.path.insert(0, "tools")
+from measure_spreading import fit_cap
+R, theta, hmax = fit_cap("runs/spread/spread_n500/field02232.dat", 1.0)
+\end{plain}
+
+\subsection{連成の費用}
+
+\file{cases/eq/spread\_n500.toml}をコピーし、次のように設定する。
+
+\begin{itemize}
+  \item \key{Physics.ConcField.EnableConvection}と\key{EnableDiffusion}を
+    \val{true}にする。
+  \item \key{Physics.SolutoCapillarity.Enable}を\val{true}にする。
+  \item \key{Physics.Evaporation.Enable}を\val{true}にし、
+    \key{Physics.Evaporation.Coef}を順に\val{1e-7}、\val{1e-6}、\val{1e-5}とする。
+  \item \key{Physics.DisjoiningPressure.Enable}を\val{true}と
+    \val{false}の両方で試す。
+  \item \key{Numerics.EndTime}を\val{0.1}にする。
+\end{itemize}
+
+\begin{shell}
+YUZEN_DEBUG_RESIDUAL=1 ./build/bin/yuzen case.toml 2> resid.txt
+\end{shell}
+
+\file{resid.txt}の\code{[resid] <iteration> <thickness correction> <concentration
+correction>}の行を、反復番号が 0になるたびに区切って時間ステップごとに分け、濃度の修正量が膜厚の
+修正量を上回った行の割合を数える。\cref{tab:couplingstress}の\file{stress\_*}
+ケースは、入力ファイルをそのまま用いる。

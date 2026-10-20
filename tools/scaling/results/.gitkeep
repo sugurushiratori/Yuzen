@@ -1,0 +1,2 @@
+# Where measurement results (scaling-<host>.tsv) are kept.
+# tools/scaling/scaling.sh writes here. For the format, see ../README.md.

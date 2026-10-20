@@ -1,0 +1,339 @@
+% ch-ref-boundary-output.tex -- reference: the Boundary and Output blocks
+\chapter{Boundary conditions and output}
+\label{ch:ref-bcout}
+
+Two blocks are documented here. \key{Boundary} decides what happens at the
+edges of the domain, which is one of the choices that most strongly changes the
+answer; \key{Output} decides what is written to disk and how often, which
+decides whether you can tell what happened. Both are required and both appear
+exactly once.
+
+\section{\key{Boundary}}
+\label{sec:ref-bcout:boundary}
+
+\key{Boundary} carries no keys of its own. It contains one sub-block per
+domain edge, each with exactly one key, \key{Type}. \key{XminBC} and
+\key{XmaxBC} are required; \key{YminBC} and \key{YmaxBC} are optional and are
+only meaningful when \key{Grid.Dimension} is \val{"xyh"}.
+
+\begin{keytable}{The four sub-blocks of \key{Boundary}, each with the single key \key{Type}\label{tab:boundary-keys}}\key{XminBC.Type} & string & \val{"Symmetry"} & Condition on the $x=\mathrm{Xmin}$ edge: \val{"Symmetry"}, \val{"Periodic"}, \val{"Pinning"}, \val{"FreshInlet"} or \val{"Outlet"}. The block is required. \\
+\key{XmaxBC.Type} & string & \val{"Symmetry"} & Condition on the $x=\mathrm{Xmax}$ edge, same set of values. The block is required. \\
+\key{YminBC.Type} & string & \val{"Symmetry"} & Condition on the $y=\mathrm{Ymin}$ edge, same set of values. The block is optional and is ignored in 1-D. \\
+\key{YmaxBC.Type} & string & \val{"Symmetry"} & Condition on the $y=\mathrm{Ymax}$ edge, same set of values. The block is optional and is ignored in 1-D. \\
+\end{keytable}
+
+\begin{note}[Two conditions per edge, because the equation is fourth order]
+  The height equation contains a fourth spatial derivative, so each boundary
+  needs \emph{two} conditions, not one. That is why you choose a named type
+  rather than writing a value: each name stands for a pair of conditions, and
+  the ghost layer is two cells deep so that the pair can be imposed. The
+  concentration equation is second order and takes one condition from the same
+  name.
+\end{note}
+
+\subsection{What each type means}
+
+\paragraph{\val{"Symmetry"}} A plane of symmetry: no flux crosses the
+boundary, and both the shape and the concentration are mirrored through it,
+$\partial h/\partial n = 0$ and $\partial^3 h/\partial n^3 = 0$: the two ghost
+layers are the exact mirror image of the two layers inside, in 1-D as in 2-D
+(\cref{sec:time:apply}). Use it to put
+the center of a drop or a film on the boundary and halve the cost, or as a
+closed wall. It is the default. It is the wrong choice whenever liquid should
+be able to leave: a drop spreading toward a \val{"Symmetry"} edge behaves as
+if a wall stood there, and gives a different answer from \val{"Outlet"}.
+
+\paragraph{\val{"Periodic"}} The edge is joined to the opposite one; the ghost
+layers are copied across. Use it for a film on a periodically structured
+substrate, or to compute one wavelength of a pattern that continues for ever.
+It is the wrong choice when the physics has a net drift across the domain ---
+with in-plane gravity or a source, periodicity recycles what flows out of one
+side back into the other. With the centrifugal term it is refused: the arm of
+the force, the distance from the rotation axis, jumps by the length of the
+domain across the seam, so a rotating film is not periodic
+(\cref{sec:terms:centrifugal}; a run with a manufactured solution is
+exempt).
+
+\paragraph{\val{"Pinning"}} The contact line is held at the edge: the film
+thickness at the boundary is pinned to zero and the in-plane velocity there is
+zero, while the concentration takes a zero-gradient condition. Because the thickness is held at zero, \textbf{the initial film must reach
+zero at a pinned edge too}, and the solver checks it before the first step: it
+extrapolates the film from the first two cells to the wall and reports the
+value in the run log,
+\begin{plain}
+Pinning Xmax: the initial film reaches 0.204 um at the wall (2.0 % of its 9.995 um maximum) -- ok.
+\end{plain}
+and stops the run, with that line and what to do, if more than a tenth of the
+thickest film is left at the wall. A film of full thickness against a pinned
+edge is a step inside one cell, which the first steps cannot get across: the
+run would otherwise end in stagnating Newton iterations and a time step cut
+below \key{MinDt}, with nothing in the messages pointing at the wall.
+\key{Initial.\bk SurfaceShape.\bk EdgeBump} at that \key{Location} is the shape
+made for this, and it needs a small \key{PrecursorRatio}, because the film is
+never thinner than the precursor anywhere else. In 2-D every row along the edge
+is checked and the worst one is reported. The check is of the initial
+condition: a restart (\key{Restart.Enable}) continues from the film of its
+field file, whose edge may have evolved --- pushed against the wall and dried,
+the film there can pass a tenth of the thickest --- and is taken as it is, the
+line written as a warning when it is past that limit
+(\cref{sec:ref-numerics:restart}). It represents a
+liquid edge arrested by a step, an edge bead or a contamination line, and it
+lets you model a film whose edge does not move \emph{without} paying for a
+resolved contact line. It is the wrong choice if the question is how fast the
+edge moves --- for that you need the disjoining pressure and a mesh that
+resolves the transition region (\cref{sec:terms:disjoining}). It is also the
+type that \key{Initial.SurfaceShape.EdgeBump} requires at its own
+\key{Location}.
+
+\paragraph{\val{"FreshInlet"}} An inflow boundary for liquid of constant
+composition: the concentration at the edge is held at its initial value, the
+thickness at the edge face is taken from the current film, and
+$\partial^3 h/\partial n^3 = 0$. Use it at the upstream end of a coating. The
+composition of what flows in is prescribed; how much flows in is decided by
+the film.
+
+\begin{note}[\val{"FreshInlet"} has no keys, so the inlet state comes from \key{Initial}]
+  There is no key anywhere in the file for the inlet thickness or the inlet
+  concentration. The prescribed values are the average of the two innermost
+  points at that edge --- taken from the \emph{current} field for the height
+  equation, and from the field snapshot saved when the boundary condition was
+  built (\code{\_field\_ini}) for the concentration equation. The inlet
+  therefore follows from your \key{Initial} block, and the concentration side
+  in particular is frozen at its initial value for the whole run. To change
+  what flows in, change the initial profile near that edge.
+\end{note}
+
+\paragraph{\val{"Outlet"}} Free outflow: $\partial^2 h/\partial n^2 = 0$ and
+$\partial^3 h/\partial n^3 = 0$, so liquid leaves without the boundary imposing
+a shape on it. Use it where the domain was simply cut for cost and you have no
+information about what lies beyond. The volume that leaves, and the solute
+with it, are summed from the face fluxes of each step and reported in
+\file{History.dat} (\code{OutflowedVol}, \code{OutflowedResin}; what comes
+in through a \val{"FreshInlet"} counts there negatively), so that
+\code{VolErr} and \code{ResinVolErr} stay at rounding
+(\cref{sec:output:history}); that is how you check that an outlet is doing
+what you think. It is the wrong choice where a real wall or a real symmetry
+plane exists, because it will let liquid drain away that ought to have piled
+up.
+
+\subsection{Combinations and edge cases}
+
+Set \val{"Periodic"} on \emph{both} edges of a pair or on neither: a single
+periodic edge is not a periodic domain. The input consistency check
+(\code{CheckParameters::Check}) refuses a one-sided \val{"Periodic"}, in either
+direction and in 1-D as well as 2-D, before anything is built, with the message
+\code{Periodic must be set on both edges of a pair or on neither}. It refuses
+a \val{"Periodic"} edge with the centrifugal term as well (a rotating film is
+not periodic; \code{a rotating film is not periodic} in the message), unless
+\key{Numerics.ManufacturedSolution} is on.
+
+The \val{"CZ"} model implements two kinds of edge only, \val{"Symmetry"} and
+\val{"Periodic"}. The consistency check refuses \val{"Pinning"},
+\val{"FreshInlet"} and \val{"Outlet"} for \val{"CZ"}, naming the edge.
+
+In two dimensions the corners are handled for every pair of adjacent types
+except \val{"Pinning"} combined with \val{"FreshInlet"} or with \val{"Outlet"}.
+Those four corner cases --- both types in either order --- are \emph{not
+implemented, and they abort the run}: the message \code{not yet implemented}
+goes to \file{FatalErrors.txt} and to standard error, and nothing is written to
+\file{Warnings.txt} (\file{model/\bk BoundaryCondition.cpp}). If you need a
+pinned edge next to an inlet or an outlet, you will have to implement that
+corner (\cref{sec:extending:other}).
+
+\begin{warn}[The substrate is mirrored at a wall]
+  Whatever you specify for the film and the concentration, the
+  \key{Substrate} shape is continued into the ghost layers as its mirror image
+  at every edge except a \val{"Periodic"} one, where it is continued from the
+  other end of the domain. A substrate topography that is not symmetric about
+  a wall --- a plane tilted by \key{FlatPlane}, or a bump cut in half by the
+  domain edge --- is therefore met in the ghost layer by its mirror image, not
+  by its own continuation. Place a wall where the substrate is flat, or where
+  its slope is genuinely zero, whenever you can.
+\end{warn}
+
+\section{\key{Output}}
+\label{sec:ref-bcout:output}
+
+\key{Output} decides what is written into the result directory named by
+\key{JobName}, and how often. It has two keys of its own; \key{FieldData},
+\key{GeneralHistory} and \key{CalcInfo} are required sub-blocks, and
+\key{ProbeList} is optional.
+
+\begin{keytable}{Keys of \key{Output}\label{tab:output-keys}}\key{Overwrite} & bool & \val{false} & Allow the run to proceed when the result directory already exists, replacing the files it writes again (\cref{sec:output:dir}). When false, an existing directory aborts the run before anything is written. \\
+\key{Dimensioned} & bool & \val{true} & Write results in dimensional units instead of the solver's non-dimensional ones. Time is in \si{\second} and velocities in \si{\metre\per\second} everywhere; the length units differ between writers, see below. It also decides how a restart file is interpreted; see \cref{sec:ref-numerics:restart}. \\
+\end{keytable}
+
+\begin{warn}[\key{Dimensioned} does not put every file in the same length unit]
+  Heights are in \si{\micro\metre} and in-plane coordinates in
+  \si{\milli\metre} in everything that reports a position: \file{field*.dat},
+  \file{field*.vts} and \file{ProbeNN.dat}. \file{History.dat} is the
+  exception and takes the raw scales, so its lengths are in \si{\metre} and
+  its volumes in \si{\metre\cubed} (in 1-D, per meter of width,
+  \si{\metre\cubed\per\metre}); its volumes would otherwise have to be
+  in a mixed \si{\milli\metre\squared\micro\metre}, which is worse than the
+  difference between two files.
+
+  Every one of these files states its units in its header, so there is no need
+  to remember the table: read the first line. Do check it before comparing a
+  number taken from one file with a number taken from another.
+\end{warn}
+
+\subsection{What gets written}
+
+\begin{description}
+  \item[\file{field00000.vts}, \dots] The full field as a binary VTK
+    structured grid. Beside it sits \file{<JobName>.pvd}, the time-series
+    index that makes ParaView treat the sequence as one animation. Controlled
+    by \key{FieldData.VTKFile}.
+  \item[\file{field00000.dat}, \dots] The same field as tab-separated ASCII.
+    This is also the ASCII restart format, so any field dump can be used to
+    continue a run, and it is hand-editable, which is how an analytically
+    constructed profile is injected. Controlled by
+    \key{FieldData.NeutralFile}.
+  \item[\file{History.dat}] Integral quantities and extrema over time:
+    the columns after the time are listed in full in
+    \cref{tab:history-columns}. This is the first file to look at after a run.
+  \item[\file{CalcInfo.dat}] Solver diagnostics, one row per output interval: Newton iterations and
+    residual, linear-solver iterations and residual, the time step, and the
+    relative change rate that the steady-state test uses. Look here when a run
+    is slow or stops early.
+  \item[\file{Energy.dat}] With \key{Output.Energy}, the free energy of
+    the film, its dissipation and their balance, with every row of
+    \file{History.dat} (\cref{sec:output:energy}).
+  \item[\file{ProbeNN.dat}] One time series per probe, if any probe was
+    declared, with \code{NN} a zero-padded two-digit index counting from
+    \code{00} in input-file order (\cref{sec:output:probes}).
+  \item[\file{JobInfo.txt}, \file{Warnings.txt}, \file{FatalErrors.txt}] The
+    text files. \file{JobInfo.txt} holds the program, machine and timing
+    information and a few figures of the run (the largest Courant numbers,
+    the solute moved past $c = 1$ and into cells below $c = 0$, \cref{sec:output:jobinfo}); what the solver built from your input --- the scales and
+    the dimensionless groups it derived --- and how the run progressed go to
+    standard output and to no file at all (\cref{sec:output:running}).
+    \file{Warnings.txt} holds every warning the run raised and
+    \file{FatalErrors.txt} the reason it aborted, the latter duplicated to
+    standard error. Neither carries a banner, so each is empty exactly when
+    nothing was raised; see \cref{sec:output:warnings}.
+\end{description}
+
+\subsection{How the intervals interact}
+\label{sec:output:intervals}
+
+All four \key{TimeInterval} keys are in \textbf{seconds} and are divided by the
+time scale $T_0$ internally. Each of them also acts as a cap on the time step:
+no step is longer than the interval, so no output is skipped, and each output
+is written at the step whose time is nearest the scheduled one. The smallest interval in the file is
+therefore an upper bound on $\Delta t$ for the whole run, alongside the bound
+from \key{Numerics.TimeStepControl.MaxDtFactor}
+(\cref{sec:ref-numerics:tsc}). Setting a very short history interval on a case
+with an adaptive step is thus not free: it can hold the step below what the
+physics requires.
+
+\key{Numerics.InitialDt} is clamped down to the smallest output interval if it
+is larger, so a first step longer than the first output never happens.
+
+\textbf{The final state is always written}, whatever the intervals say. Each
+kind of output is written before the step that follows it, so the state the run
+finishes on --- the one at \key{EndTime}, which is the answer the run was asked
+for --- would otherwise survive only when an interval happened to divide the
+end time exactly. It is written once more when the loop ends, and only if that
+time is not already in the file, so a schedule that does land on the end does
+not produce it twice. A run stopped by a divergence is the exception: what it
+holds is not a solution, so nothing further is written. The time stamps in the
+\file{.pvd} are the times actually reached, not the scheduled ones, which is
+why they carry the last few digits of the step history rather than round
+numbers.
+
+\subsection{\key{Output.FieldData}}
+
+\begin{keytable}{Keys of \key{Output.FieldData}\label{tab:output-fielddata-keys}}\key{TimeInterval} & double & \val{0.01} & Interval between full field dumps, in seconds, positive. Also an upper bound on $\Delta t$. Not to be given with \key{Times} or a \key{LogSchedule}. \\
+\key{NeutralFile} & bool & \val{true} & Write the ASCII neutral \file{.dat} field files, which double as the ASCII restart format. \\
+\key{VTKFile} & bool & \val{true} & Write the binary \file{.vts} files and maintain the \file{.pvd} index for ParaView. \\
+\key{WritePotential} & bool & \val{false} & Write the driving potential $\varphi$ as one more column \code{PHI} of \file{field*.dat} and one more array \code{Potential} of the \file{.vts} (\cref{sec:output:potential}). Well-mixed model only. \\
+\key{Times} & array & \val{[]} & The times to write the field at instead of every \key{TimeInterval}, in seconds: ascending, positive. Those after \key{Numerics.EndTime} are dropped; at least one must remain, and an empty list is refused. \\
+\key{ExactTimes} & bool & \val{false} & With \key{Times}: land a step on each listed time (\cref{sec:ref-output:listed}). Refused without \key{Times}. \\
+\end{keytable}
+
+\subsubsection{Output at listed times}
+\label{sec:ref-output:listed}
+
+A field written every \key{TimeInterval} holds the time step to that interval
+for the whole run, so an output schedule that must resolve both the first
+microseconds and the last seconds of a run --- a film levelling over seven
+decades of time, say --- would hold every step to the shortest interval.
+\key{Times}, or the sub-block \key{LogSchedule} below, lists the times
+instead, and \textbf{a listed time caps only the step that would pass it}:
+\begin{description}
+  \item[\key{ExactTimes} \val{false}] the field is written at the step closest
+    to each listed time, as with an interval, and the step is held to the gap
+    between the two listed times it falls between --- as an interval holds it
+    to the interval, but a gap that widens lets it lengthen. A step that
+    passes several listed times writes once.
+  \item[\key{ExactTimes} \val{true}] a step that would pass the next listed
+    time is shortened to land on it, to rounding, and the field is written
+    there. The step after it is the one the run was on before the
+    shortening: a listed time is not a reason for the step control to start
+    again from a short step. The shortened step is the step taken all the
+    same --- the error estimate of the next step differences over it --- and
+    when the step control asks for less than it, or the step was retried
+    shorter, the run goes on from what the step control asks for. A
+    remainder below $10^{-9}$ of the time is rounding and is not stepped to.
+\end{description}
+The state at the start is written first and the final state last, as with
+an interval. A run continued from a \file{field*.state} goes on with the
+listed time it was waiting for; continued from a field file alone, with the
+first listed time after the restart time. \textbf{The other outputs still cap
+the step at their intervals} (\cref{sec:output:intervals}): with listed
+times, give \key{Output.GeneralHistory}, \key{Output.CalcInfo} and
+\key{Output.ProbeList} intervals as long as the run allows.
+\file{leveling\_1d\_logout} writes 141 times over seven decades, from
+$10^{-7}$ to \SI{1}{\second}, in 403 steps; held to its shortest gap, the
+same run would take at least $10^7$.
+
+\begin{keytable}{Keys of \key{Output.FieldData.LogSchedule} (optional; instead of \key{TimeInterval} and \key{Times})\label{tab:output-logschedule-keys}}\key{Start} & double & \reqd & The first listed time, in seconds, positive. \\
+\key{End} & double & \reqd & The last, in seconds, after \key{Start}; the listed times after \key{Numerics.EndTime} are dropped. \\
+\key{PerDecade} & int & \reqd & Listed times per decade, at least 1: $\key{Start}\cdot 10^{i/\key{PerDecade}}$, $i = 0, 1, \dots$, up to \key{End}. \\
+\key{ExactTimes} & bool & \val{false} & As \key{Output.FieldData.ExactTimes}. \\
+\end{keytable}
+
+\subsection{\key{Output.GeneralHistory}}
+
+\begin{keytable}{Keys of \key{Output.GeneralHistory}\label{tab:output-history-keys}}\key{TimeInterval} & double & \val{0.1} & Interval of \file{History.dat}, in seconds, positive. Also an upper bound on $\Delta t$. \\
+\end{keytable}
+
+\subsection{\key{Output.CalcInfo}}
+
+\begin{keytable}{Keys of \key{Output.CalcInfo}\label{tab:output-calcinfo-keys}}\key{TimeInterval} & double & \val{0.1} & Interval of \file{CalcInfo.dat}, in seconds, positive. Also an upper bound on $\Delta t$. \\
+\end{keytable}
+
+\subsection{\key{Output.ProbeList}}
+
+A probe is a fixed point at which the solution is written on its own schedule,
+much more often than a full field dump can afford to be. The block is
+optional; left out, it reads as an empty one, so there are no probes and
+\key{TimeInterval} is still \val{0.1}\,s, which still caps $\Delta t$.
+
+\begin{keytable}{Keys of \key{Output.ProbeList}\label{tab:output-probelist-keys}}\key{TimeInterval} & double & \val{0.1} & Interval of the per-probe time series \file{ProbeNN.dat}, in seconds, positive. Read, and used to cap $\Delta t$, even when the list contains no probe at all. \\
+\end{keytable}
+
+\subsection{\key{Output.ProbeList.Probe}}
+
+This block is \textbf{repeatable}: write one per probe, in the order you want
+the files numbered. Write each one as an array-of-tables header,
+\code{[[Output.ProbeList.Probe]]} (\cref{sec:inputformat:repeat}).
+
+\begin{keytable}{Keys of \key{Output.ProbeList.Probe}, repeatable\label{tab:output-probe-keys}}\key{X} & double & \reqd & $x$ coordinate of the probe, in meters, any value. The nearest grid point within one cell is used; if there is none, the probe is silently dropped. \\
+\key{Y} & double & \val{0} & $y$ coordinate, in meters. Ignored by the 1-D well-mixed model. \\
+\key{Z} & double & \val{0} & Height above the substrate, in meters. Used only by the \val{"CZ"} model, which turns it into the $\zeta$ of its grid with the film thickness the probe's column starts with; the probe stays at that $\zeta$ as the film changes. \\
+\end{keytable}
+
+\begin{note}[Where a probe lands]
+  No case in \file{cases/} declares a \key{Probe}; \code{ctest} checks them
+  (\code{features}, \cref{sec:verification:features}). The header of
+  \file{ProbeNN.dat} gives the point actually used, in millimeters when the
+  output is dimensioned (and, for \val{"CZ"}, its $\zeta$).
+\end{note}
+
+\subsection{\key{Output.Energy}}
+
+\begin{keytable}{Keys of \key{Output.Energy}\label{tab:output-energy-keys}}\key{Enable} & bool & \val{false} & Write \file{Energy.dat}, the free energy of the film, its dissipation and their balance, with every row of \file{History.dat} (\cref{sec:output:energy}). Well-mixed model only; refused with \val{"CZ"}. \\
+\end{keytable}

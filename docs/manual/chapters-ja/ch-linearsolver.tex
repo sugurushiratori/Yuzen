@@ -1,0 +1,107 @@
+% ch-linearsolver.tex -- numerical method: the two linear-solver backends and their shared contract
+\chapter{線形ソルバー}
+\label{ch:linearsolver}
+
+ニュートン反復でも半陰的な求解でも、最後は疎な線形系を解くことになる（\cref{sec:time:newton}）。Yuzenはこの処理に二つの実装を備えており、どちらを使うかは入力ファイルで指定する。本章では、二つの実装の内容、測定したケースでの比較、どちらを選んでもバックエンドが満たすべき要件を述べる。キーの一覧は\cref{sec:ref-numerics:linearsolver}の表にまとめている。
+
+\section{共通インターフェースと二つのバックエンド}
+\label{sec:linsolve:backends}
+
+二つの実装は共通のインターフェース\code{ILinearSolverBackend}を実装しており、互いに交換できる。呼び出し側のコードが扱うのは\code{LinearSolver}だけであり、どのバックエンドが使われているかは知らない。バックエンドは\key{Numerics.HeightEquation.LinearSolver.Backend}と\key{Numerics.ConcEquation.LinearSolver.Backend}で別々に選ぶ。同じ計算の中で、膜厚の式と濃度の式に異なるバックエンドを用いてもよい。
+
+\begin{yzntable}{\key{Backend}の三つの値\label{tab:backends}}{@{}l L{0.30\textwidth} L{0.38\textwidth}@{}}
+\textsf{\bfseries 値} & \textsf{\bfseries 実装} &
+\textsf{\bfseries 特徴} \\ \midrule
+\val{"auto"}（既定値） & AMGCLを含むビルドで2-Dの膜を解く場合はamgcl、それ以外はeigen &
+  特に理由がなければこれを選ぶ \\
+\val{"eigen"} & Eigenの\code{BiCGSTAB}とブロック・ヤコビ\code{IncompleteLUT} &
+  Eigenだけに依存する。並列に動作し、\textbf{スレッド数によらずビット単位で一致する} \\
+\val{"amgcl"} & AMGCLの\code{bicgstab}と平滑化集約AMG、SPAI0 &
+  2-Dではほとんどの規模で最速。前処理を含めてOpenMPで並列化 \\
+\end{yzntable}
+
+\begin{note}[自前のBiCGStabを含めない理由]
+  ILU(0)を用いる自前のBiCGStabも開発中に測定したが、リリースには含めなかった。他の選択肢よりはるかに遅く（\file{leveling\_1d\_reg}では、\val{"eigen"}なら21回で済む線形反復に3676回を要した。\cref{sec:verification:backends}）、バグもあった。唯一の利点はスレッド数を変えてもビット単位で一致することだったが、この性質は\val{"eigen"}も備えている。\key{Backend}にこれ以外の値を与えると、\textbf{別の値に黙って置き換えることはせず、入力を拒否する}。パーサは\key{Backend}について\code{must be one of
+  [`auto',`eigen',`amgcl']}と報告し、計算は終了コード1で中断する（\cref{sec:ref-numerics:linearsolver}）。
+\end{note}
+
+AMGCLを含まないビルドで\val{"amgcl"}を指定してもエラーにはならない。ソルバーは警告を出し、\val{"eigen"}にフォールバックする。このとき\file{Warnings.txt}には\code{LinearSolver: Backend="amgcl" was requested,
+but this build has no AMGCL. Falling back to "eigen".}と書かれるので、\code{has no AMGCL}をgrepすれば検出できる。計算結果は有効だが、要求したバックエンドによるものではない。他の計算機の出力と比較する前に、実際に使われたバックエンドを確認する必要がある。確認は推測に頼る必要はない。\file{JobInfo.txt}の\code{\#\#\#\#\#\# Solver Info \#\#\#\#\#\#}節には、各式で確定したバックエンドを記載している（\cref{sec:output:jobinfo}）。フォールバックした場合は\val{"eigen"}と表示され、\val{"auto"}の場合も実際に選ばれたものが示される。
+
+\section{各バックエンドの処理}
+\label{sec:linsolve:what}
+
+\subsection{\val{"eigen"}：ブロック・ヤコビILUT}
+\label{sec:linsolve:eigen}
+
+\key{PreconditionType}が\val{"ILU"}のとき、行を連続したブロックに分割する。ブロックは1024行ごとに一つで、最大128個である。各対角ブロックはEigenの\code{IncompleteLUT}（フィルファクター10、ドロップ許容値$10^{-10}$）で分解する。前処理では各ブロックの因子をそのブロックの行に適用し、ブロック間の結合はBiCGStab反復で扱う。ブロックの分解と適用は並列に行う。\textbf{ブロック分割は系の大きさだけで決まり、スレッド数には依存しない}。そのため、結果は従来どおりスレッド数によらずビット単位で一致する（\cref{ch:reproducibility}）。2048行未満の系は一つのブロック、つまり行列全体のILUTになる。測定した2-Dの膜では、行列全体を一つのILUTで扱う場合に比べて、ブロック分割は4から9倍の反復を要する。それでも1スレッドで1.3から3倍速い。行列全体の分解は、ブロックごとの分解よりはるかに計算量が大きいからである。最適なスレッド数では3.7から21倍速い（\cref{sec:parallel:profile}）。各ブロックのパターン解析は一度だけ行い、パターンが変わらない限り再利用する。
+
+\subsection{\val{"amgcl"}：平滑化集約AMG}
+\label{sec:linsolve:amgcl}
+
+\val{"ILU"}のとき、AMGCLのBiCGStabには、SPAI0平滑化を用いる平滑化集約AMGで前処理をかける。前処理は求解のたびに構築し直す。未知数が3000を超える系では、階層を500まで粗くする（AMGCL自身の既定値は3000）。最も粗いレベルは直接法で逐次的に解くためである。$128^2$の膜では、階層を深くしたことで求解が2.9倍速くなった。未知数が3000以下の系はAMGCLの既定値に任せ、直接法により一回の反復で解く。この系を500まで粗くすると、2000セルの四階の1-Dの膜では一回の求解に80回のBiCGStab反復を要し、1スレッドで6.5倍遅くなった。
+
+\subsection{濃度の式}
+\label{sec:linsolve:conc}
+
+濃度の系は対角項（膜厚を時間刻みで割ったもの）が支配的である。そこで\key{PreconditionType}が\val{"ILU"}のときは、まず軽い前処理を試す。\val{"eigen"}ではヤコビ、\val{"amgcl"}ではSPAI0を用い、反復は最大300回とする。\textbf{この試行で収束しなければ、同じ初期推定から、入力で指定した前処理}（ILUTまたはAMG）\textbf{で解き直す}。軽い前処理が効かない系もある（乾いた柱を含むConcZの膜がその例である）。その場合でも、失敗する試行は求解ごとに一回ではなく、全体で数回にとどまる。失敗すると次の16回は試行を省き、失敗が続くたびに省く回数を1024まで倍増させる。試行が収束すれば16に戻す。膜厚と濃度のブロック・ヤコビILUTも同様で、300回の反復で収束しない試行は行列全体のILUTにフォールバックする。どちらの経路をたどるかは収束の有無だけで決まり、スレッド数にはよらない。打ち切った試行の反復回数も、\file{JobInfo.txt}の線形反復回数に含めて数える。
+
+\subsection{ニュートン反復各回の許容誤差}
+\label{sec:linsolve:ew}
+
+膜厚はニュートン法で解き（\cref{sec:time:newton}）、反復一回につき線形求解を一回行う。解から遠い段階では修正量を13桁まで求める必要はない。そこで\textbf{各回の許容誤差を反復の進み具合に合わせる}（Eisenstat--Walkerの選択2）。
+\[
+  \eta_k = 0.9\left(\frac{\lVert F_k\rVert}{\lVert F_{k-1}\rVert}\right)^{2},
+\]
+ここで$F$はその回の右辺（現在の推定値におけるステップの残差）である。$0.9\,\eta_{k-1}^2$が$0.1$を上回る間はこれを下限とし、値は\key{Epsilon}と$10^{-4}$の間に収める。ステップの最初の回は$10^{-4}$まで解く。\textbf{したがって、膜厚の線形ソルバーの\key{Epsilon}は、各回の許容誤差のうち最も厳しい値である}。この値に達するのは反復が収束に近づいたときであり、すべての回に適用されるわけではない。ニュートン法の収束判定（\cref{sec:convergence:tests}）は変わらない。得られる解は、各回を\key{Epsilon}まで解いた場合の解とニュートン法の許容誤差の範囲で一致する。測定したケースでは、最終的な膜の相対差は$10^{-15}$で、線形反復回数は24から38\,\%減った。
+
+以上の四つの工夫は、それぞれ\env{YUZEN\_OPT}で無効にできる（\cref{tab:envvars}）。置き換え前のアルゴリズムでの計算と比較するときに用いる。
+
+\section{バックエンドの選び方}
+\label{sec:linsolve:choosing}
+
+測定した実時間を\Cref{tab:linsolve-timing}に示す。測定条件は次のとおりである。計算機はIntel Xeon CPU Max 9480を2基（それぞれ56コア、8 NUMAノード）搭載した1ノードで、\cref{tab:cases-runtimes}のケース実行時間と同じである。コンパイラーはGCC 11、OpenMPランタイムはLLVMの\file{libomp}（既定のビルド、\cref{sec:parallel:runtime}）を用い、\code{-DYUZEN\_WITH\_AMGCL=ON}で構成した\code{Release}ビルドで計算した。スレッドはコア0から$T-1$に固定し（\env{OMP\_PROC\_BIND=close}）、3回の実行のうち最短の時間を示す。\textbf{絶対値は計算機によって変わる。読み取るべきは秒数ではなく、列どうしの比である。}この表は\file{tools/case\_runtimes.py --backends-only}で測定できる（\cref{sec:env:tools}）。
+
+\begin{yzntable}{測定した実時間（Xeon Max 9480の1ノード、1ソケットのコア数まで。\cref{sec:parallel:cap}）。\label{tab:linsolve-timing}}{@{}L{0.24\textwidth} l d d@{}}
+\textsf{\bfseries ケース} & \textsf{\bfseries スレッド数} &
+\textsf{\bfseries eigen} & \textsf{\bfseries amgcl} \\ \midrule
+1-D \file{leveling\_1d\_reg}, $N_x = 300$ & 1 & \textbf{0.58 s} & 0.64 s \\
+                                         & 2 & \textbf{0.46 s} & 0.51 s \\
+                                         & 4 & \textbf{0.38 s} & 0.44 s \\
+                                         & 8 & \textbf{0.35 s} & 0.42 s \\
+                                         & 16 & \textbf{0.36 s} & 0.42 s \\
+                                         & 28 & \textbf{0.36 s} & 0.43 s \\
+                                         & 56 & \textbf{0.37 s} & 0.44 s \\
+2-D \file{leveling\_2d\_reg}, $60\times60$ & 1 & 19.8 s & \textbf{12.0 s} \\
+                                         & 2 & 10.6 s & \textbf{7.5 s} \\
+                                         & 4 & 6.5 s & \textbf{4.8 s} \\
+                                         & 8 & 5.8 s & \textbf{3.6 s} \\
+                                         & 16 & 5.5 s & \textbf{3.1 s} \\
+                                         & 28 & 5.4 s & \textbf{2.9 s} \\
+                                         & 56 & 5.3 s & \textbf{2.8 s} \\
+\end{yzntable}
+
+\textbf{1-Dではeigenが1スレッドで\SI{10}{\percent}速く、スレッドを増やしても優位は変わらない。2-Dではamgclが1スレッドで1.6倍、56スレッドで1.9倍速い。}これらのケースは300セルと3\,600セルで、規模が小さい。1-Dではどちらも八スレッドまでに約1.6倍速くなり、それ以上は速くならない。ランタイムのホットチーム（\cref{sec:parallel:runtime}）のおかげで、スレッドを増やしても遅くはならず、56スレッドでも8スレッドとの差は\SI{6}{\percent}以内である。2-Dでは56スレッドまでにeigenが3.8倍、amgclが4.3倍速くなるが、その大部分は八スレッドまでに得られる。より大きな膜の結果は\cref{sec:parallel:scaling}に示す。
+
+2-Dケースの計算時間の内訳（\file{tools/\bk profile\_threads.py}、\cref{sec:parallel:profile}）は次のとおりである。eigenでは、1スレッドでも八スレッドでも、ブロック・ヤコビILUT前処理の構築が時間ステップループの\SI{55}{\percent}、BiCGStab反復が\SI{13}{\percent}を占める。分解は線形求解のたびにやり直す。また、ブロックが数千行になると、それ以上は仕事を分割できない。amgclでは時間が分散しており、1スレッドではAMGの構築が\SI{9}{\percent}、反復が\SI{27}{\percent}、膜厚の行列の組み立てが\SI{27}{\percent}を占める。
+
+自前のバックエンドについても、開発中に\SI{2.1}{\giga\hertz}の2コアXeonで同じ二つのケースの時間を測った。この測定から覚えておくべき点が二つある。1-Dでは1スレッドで9.3秒、2スレッドで11.5秒を要した。開発時の同じ形のケースでeigenは2.2秒と1.9秒であり、\textbf{四倍から六倍遅いうえに、二つ目のスレッドを与えるとかえって\emph{遅く}なった}。これは測定誤差ではない。このILUは逐次的に実行するしかなく（\cref{sec:repro:other}）、並列化できたのは行列・ベクトル積と縮約だけだった。この問題規模では、同期のコストがそれらの部分で節約できる時間を上回った。2-Dでは5.2秒と4.0秒で、開発時の同じ形のケースでeigenが要した12.9秒と11.4秒よりは速かった。しかしamgclには及ばなかった。いずれにせよ、この領域で選ぶべきバックエンドはamgclである。
+
+\textbf{計算間の厳密な一致が重要な場合は\val{"eigen"}を用いること。}AMGCLの内部の縮約は順序が固定されていないので、スレッド数を変えると下位のビットが変わることがある。\file{leveling\_1d\_reg}で1スレッドと4スレッドを比較すると、差は物理量で$6.089\times10^{-11}$、誤差指標（このケースでは丸め誤差に当たる列）で$9.615\times10^{-2}$であった。2スレッドの場合と、2-D（\file{allphys\_2d\_reg}）の2スレッドと4スレッドの場合は、たまたまビットが変わらなかったが、これは保証されたものではない。\val{"eigen"}では、同じ比較の差はどのスレッド数でも厳密に$0$になる（\cref{sec:verification:backends}）。この性質を支える仕組みと、それを保つ意義は\Cref{ch:reproducibility}で説明する。
+
+\begin{warn}[バックエンドを変えると丸め誤差の現れ方が変わる]
+  異なるバックエンドの結果はビット単位では一致せず、線形ソルバーの収束許容誤差の範囲で一致するだけである。回帰比較では、両側でバックエンドを固定する必要がある。また、二つの入力ファイルで\val{"auto"}が同じバックエンドに解決されたと思い込まず、各計算で実際に使われたものを\file{JobInfo.txt}の\code{Solver Info}節で確認する必要がある（\cref{sec:output:jobinfo}）。
+\end{warn}
+
+\section{共通の約束事}
+\label{sec:linsolve:contract}
+
+どのバックエンドを用いる場合も、次のことが成り立つ。
+
+\begin{itemize}
+  \item \textbf{\code{Solve()}に渡す解ベクトルは初期推定値を兼ねる。}Eigenではこれを\code{solveWithGuess}に渡す。戻り値は、収束したとき\val{0}、反復回数の上限に達したとき\val{1}、発散または破綻したとき\val{2}である。
+  \item \textbf{求解に失敗したら、その解ベクトルは破棄しなければならない。}NaNを含むベクトルを次の呼び出しに渡すと、時間刻みをいくら縮めても求解は再びNaNで失敗する。計算は\key{MinDt}まで刻みを縮め続け、時間刻みとは無関係な理由で中断する。\code{C\_NewtonKantorovich::Solve}はこのベクトルを破棄している。バックエンドを直接呼び出すコードを新たに書く場合も、同じようにしなければならない。
+  \item \textbf{対角スケーリングで解は変わらない。}\key{RowScaling}は各行をその対角要素で割るが、系の解には影響しない。スケーリングは値の写しと右辺のコピーに適用し、行列そのものは変更しない。
+  \item \textbf{前処理の名前が指すものは実装ごとに異なる。}\val{"eigen"}では\val{"ILU"}はブロック・ヤコビILUT（\cref{sec:linsolve:eigen}）を指す。\val{"amgcl"}では\val{"ILU"}はSPAI0を用いる平滑化集約AMGとなり、\val{"Jacobi"}は減衰ヤコビとなる。名前で選ぶのは同じアルゴリズムではなく、同程度の強さの前処理である。
+  \item \textbf{\env{YUZEN\_ILUT\_FILL}でEigenの\code{IncompleteLUT}のフィルファクターを上書きできる}。既定値は10である。下げると前処理は安くなるが、下げすぎると分解が破綻し、解がNaNとして返る。値を1にすると、1-Dの問題でも破綻する。
+\end{itemize}

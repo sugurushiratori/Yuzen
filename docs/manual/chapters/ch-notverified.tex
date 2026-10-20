@@ -1,0 +1,340 @@
+% ch-notverified.tex -- verification: the explicit list of what has not been checked
+\chapter{What has not been verified}
+\label{ch:notverified}
+
+A manual that lists only what has been checked invites the reader to assume
+that everything else has been checked too. That assumption is the expensive
+kind of mistake: it is made silently, it is made by exactly the people who
+trust the documentation, and it surfaces only when a result turns out to be
+wrong. So this chapter says plainly what has \textbf{not} been confirmed. None
+of the items below is a defect --- an unverified quantity may well be correct
+--- but each is a place where Yuzen offers you no evidence, and where you
+should supply your own before you rely on the answer. Where the natural first
+step toward a verification is known, it is named.
+
+\section{Physics and model}
+\label{sec:notverified:physics}
+
+\begin{itemize}
+  \item \textbf{Two-dimensional (and axisymmetric) contact lines.} Everything in
+    \cref{sec:verification:disjoining,sec:verification:spreading} is
+    one-dimensional. The 2-D disjoining-pressure kernel shares the same
+    dimension-independent body as the 1-D one, but neither the
+    equilibrium-droplet verification nor the spreading measurement has been
+    carried out for it. The natural first step is the construction of
+    \cref{sec:verification:disjoining} repeated in two dimensions: measure the
+    residual velocity on an \textbf{analytic axisymmetric equilibrium shape}
+    and check that it falls to second order under refinement.
+  \item \textbf{Marangoni flow and substrate relief are verified by the
+    manufactured solution only.} With every term on, both converge at second
+    order (\cref{sec:verification:mms}), but neither is compared with a
+    closed-form answer; the linear stability of a flat film under a
+    surface-tension gradient would be the way in for the first. In
+    \val{"CZ"} the manufactured concentration varies through the thickness
+    as well as in the plane, so the surface value (the surface tension, the
+    Marangoni stress), the profile $\mu(c(\zeta))$ and the mapping's vertical
+    advection are checked where they differ; what stays out is evaporation,
+    whose surface condition the manufactured profile does not meet.
+  \item \textbf{\val{"CZ"} is verified against the well-mixed model, not
+    against an analytic solution.} In the limit where the concentration cannot
+    affect the film height, \val{"CZ"} and \val{"WM"} solve the same problem by
+    independently written routes, and they agree to about $10^{-6}$ relative in
+    both one and two dimensions, with the volume conserved exactly
+    (\cref{sec:disc:positivity-concz}; the test is \code{concz\_vs\_wm} and
+    \code{concz\_vs\_wm\_2d}). That is a strong consistency check and it is not
+    the same thing as verification against a known answer. Its $x$--$y$
+    symmetry, its invariance under the choice of $H_0$ and $L_0$, and the
+    agreement of its 1-D and 2-D forms are checked
+    (\cref{sec:verification:equivalence}); these fix the structure of the
+    discretization, not its accuracy. Its through-thickness diffusion is
+    checked against the series solution for a slab with a constant flux at the
+    top, and falls at second order in $N_z$
+    (\cref{sec:verification:analytic}); its advection, against the
+    well-mixed model's; the profile that evaporation, diffusion with $D(c)$ and
+    the vertical advection of the $\zeta$ mapping shape together on a drying
+    flat film, against an independent solution (\code{dry\_cz}). What is not
+    checked is such a profile on a film that is not flat, where the in-plane
+    flow and the mapping act together.
+  \item \textbf{A restart without a state file is an approximation.} From a
+    field file without its state file (for example one written by hand) the
+    adaptive
+    time step, the totals of \file{History.dat}, the steady-state count and
+    the previous concentration of the \val{"CZ"} corrector start afresh, so
+    \code{EvaporatedVol}, \code{OutflowedVol} and \code{VolErr} of a
+    \file{History.dat} continued this way refer to the restart, not to
+    $t = 0$ (\cref{sec:ref-numerics:restart}).
+  \item \textbf{Contact-angle hysteresis is not treated}, and neither is the
+    regime in which the dynamic contact angle departs from Cox--Voinov.
+  \item \textbf{Navier slip is not implemented for \val{"CZ"}}, and the input
+    is refused: \val{"CZ"} solves the velocity profile across the film, which
+    would need the uniform slip velocity added to it. In the well-mixed model
+    slip is verified by the capillary decay rate
+    $\sigma(h_0^{3}/3 + \lambda h_0^{2})k^{4}/\mu$, by the manufactured
+    solution with every term, by the rest state of the equilibrium droplet and
+    by the closed boxes (\cref{sec:verification:analytic,sec:verification:mms});
+    not checked are the spreading law with slip
+    (\cref{sec:verification:spreading} is without it) and a contact line in
+    2-D. With slip the face mobility vanishes only at first order on a dry
+    side (\cref{sec:disc:positivity-slip}).
+\end{itemize}
+
+\section{Numerics}
+\label{sec:notverified:numerics}
+
+\begin{itemize}
+  \item \textbf{The order in time is measured with every term on, but not
+    for every combination of switches.} The manufactured solutions of
+    \cref{sec:verification:mms} are second order in $\Delta t$ with all the
+    terms of each model at once; a term that is second order only in
+    combination with another would not be noticed. Without the Marangoni
+    term, the concentration the \val{"CZ"} corrector uses is extrapolated
+    from the last two steps rather than solved for. In 2-D the well-mixed
+    concentration is checked at a tenth of the 1-D diffusivity, away from
+    the cell Péclet number at which the upwind dissipation cancels the
+    diffusion error. \code{ctest} checks the asymptotic second order of the
+    2-D concentration on a linear problem instead, an oblique sine carried
+    and diffused on a flat film (\code{oblique\_wm},
+    \cref{sec:verification:schemes}); the approach to it in the
+    manufactured solution with every term on, at the 1-D parameters, is not
+    part of \code{ctest}.
+  \item \textbf{The limited convection schemes are bounded only for a
+    Courant number up to one}, which Crank--Nicolson needs. The solver
+    reports a step past it but does not shorten it, and the time-step
+    control does not take it into account
+    (\cref{sec:ref-numerics:convection}). Of the shipped cases, one passes
+    it in the film-height equation: \file{nozzle\_1d\_rotating} (4.6, where
+    the film piles up against the wall and the body forces are balanced by
+    the capillary pressure). \file{stress\_all}, with a step a hundred times
+    longer, reaches 0.94; the others stay below 0.03. Koren's limiter has
+    kinks, where the Jacobian of the film-height equation is one-sided, and
+    Newton's convergence with it was checked on the cases of
+    \cref{sec:verification:schemes} only. No shipped case has a real
+    concentration front, so the benefit of a limited \key{Concentration}
+    scheme is shown by \file{tools/advection.py} alone, and in \val{"CZ"} such
+    a scheme clips the extrema the no-flux conditions put into the profile
+    through the film (\cref{tab:schemes-mms}).
+  \item \textbf{The convergence of the Marangoni coupling of \val{"CZ"} is
+    derived for a flat film only.} The film and the concentration are solved
+    again at the midpoint, with Aitken relaxation, until the midpoint
+    concentration settles (\cref{sec:time:newton}). For a flat film with a
+    stratified concentration the gain of a pass is derived, and measured to
+    within \SI{10}{\percent}; it passes 1 only where a wave of the model
+    grows faster than $2/\Delta t$ (\cref{sec:verification:czpasses}). A
+    viscosity that depends on the concentration adds a coupling of every
+    level of the film whose gain is measured on one manufactured state, not
+    derived: there the passes stop settling at a step that moves the state by
+    about a radian. A step whose passes do not settle within eight fails and
+    is cut, or stops a run at a fixed step; how often that happens in a
+    long run that is not one of those measured is not known. A film stratified
+    with $\sigma_c\,\partial c/\partial\zeta > 0$ and a weak diffusivity is
+    unstable in the model to waves a few micrometers long, which only the
+    diffusion cuts off (\cref{sec:verification:schemes}). The stratified
+    manufactured solutions are made at a diffusivity that keeps every
+    wavelength their grids resolve stable, twice as fine included, so they
+    say nothing about such a film. In a computed film of that kind, what
+    shows at the scale of a few cells is that instability, cut off by the
+    grid and the scheme, and no check says what a converged answer there
+    would be.
+    Nor has it been verified that the truncation-error estimate driving the
+    adaptive time step corresponds to the actual error, beyond
+    \code{adaptive\_dt} (\cref{sec:verification:features}).
+  \item \textbf{The \val{"amgcl"} backend is outside the test suite.} Its
+    agreement with \val{"eigen"} and the size of its difference
+    between one thread and two have both been measured
+    (\cref{sec:verification:backends,sec:verification:amgclthreads}), but that
+    is a single regression case run by hand --- not a property \code{ctest}
+    confirms on every commit. \code{ctest} passes on an AMGCL build, where the
+    2-D runs of \code{restart\_roundtrip} resolve \val{"auto"} to
+    \val{"amgcl"}, but that checks a restart, not the backend;
+    \code{equivalence} sets \val{"eigen"} explicitly. The claim of
+    \cref{sec:verification:linalg} --- that bit-identity across thread counts
+    is \emph{asserted by a test} --- is about \val{"eigen"} alone, and
+    \val{"amgcl"} can never join it: it is not bit-reproducible by
+    construction.
+  \item \textbf{\val{"FreshInlet"} and \val{"Outlet"} are checked against
+    each other, not against a known inflow.} The values an inlet imposes and
+    its behavior on every edge are checked against a mirrored or transposed
+    run and against 1-D (\cref{sec:verification:bcio,tab:equivalence}), and
+    the volume and solute balances through them, to rounding, against the
+    face fluxes the steps put through them (\cref{sec:verification:analytic});
+    there is no comparison with a
+    problem whose inflow profile is known analytically. The inlet holds the
+    mean of the two points either side of its face of the initial field,
+    which differs from its cubic interpolation by $O(\Delta x^2)$ where the
+    initial profile is not linear. \val{"CZ"} refuses \val{"FreshInlet"}.
+\end{itemize}
+
+\section{What the test suite would not notice}
+\label{sec:notverified:mutation}
+
+The question the checks above answer is whether the code is right; the
+question here is whether the checks would notice if it were not. To answer it,
+108 single changes were made to the physics sources one at a time --- a sign
+flipped, an index moved by one, a factor of one half changed, an \code{+=}
+made an \code{=}, a loop bound moved --- and \code{ctest} was run on each. At
+first 52 were caught. The Jacobian test, the manufactured solutions with
+every term on, the checks of the nozzle, the evaporation cap, the inlet and
+outlet and the drying profile, and \file{tools/features.py} were written to
+close what the other 56 showed, and they catch 14 of them (three of which
+were in code since rewritten). The tests of the inlet's values
+(\cref{sec:verification:bcio}) and the \val{"CZ"} manufactured solution with a
+concentration varying in the plane catch six more, and the checks of the
+restart from a \file{.vts} without the thickness and substrate, of the binary restart's marker search, of the
+evaporation cap's threshold and of the \val{"negPow"} rim four more: 24 in all.
+Four of the five inlet changes alter only corner ghost values that no equation
+of the well-mixed model reads, and the marker search is one no restart can
+observe, so only unit tests see those. Of the 32 that remain, none is
+behavior left untested:
+
+\begin{itemize}
+  \item 13 move a loop or an index one past the end of an array. A release
+    build survives them with a plausible value; a sanitizer build is what
+    catches them, and CI runs one (\cref{sec:verification:sanitizers}).
+  \item 11 change nothing that could be tested: a loop that now also visits,
+    or skips, a ghost site no one reads; a fallback that is never taken; an
+    \code{assert}, which a release build removes; code no model calls.
+  \item 2 change only the size of the error, not its order: the upwind side of
+    the third-order interpolation at one face (the vertical advection in
+    \val{"CZ"}, the centrifugal term in 2-D). The scheme stays second order
+    either way; nothing short of a comparison with a reference at one
+    resolution to a few percent would tell.
+  \item 6 are in messages, counters and output: the note that the initial
+    step exceeds the maximum, the Newton-iteration total, the pinning check's
+    report, the steady-state span, the corner velocity of the field file, an
+    unused conversion.
+\end{itemize}
+
+The last four to be covered turned up one fault: past \key{NegPowRmax} the
+blend of the \val{"negPow"} profile was not held constant but oscillated, with a
+period of four blend widths, down to 0.75 of its value at the rim
+(\cref{sec:verification:analytic}).
+
+Because those tests were written against that very sample, its score says
+little about faults not yet seen. A second sample was therefore drawn from the
+source as it stood once those tests were in, with the same kinds of change and none of the first
+108: 100 uniformly at random (seed 20260930) from the 3\,344 possible changes
+in the model and numerics sources, the restart, the field metadata and the
+convection settings, and 25 (seed 20261001) from the 312 in the rest of the
+input and output code. Nothing was written for this sample until it had been
+run. The tool skips lines that hold a string literal or an error message, so
+most of the parsing of keys is outside both samples.
+
+\begin{itemize}
+  \item Of the first 100, \code{ctest} caught 68. Nineteen of the rest cannot
+    change any result --- a test on a ghost site after the test for the
+    interior, code no model calls, an \code{assert}, a term that cancels
+    exactly --- so 68 of 81 (\SI{84}{\percent}) were caught, and with the
+    sanitizer build of CI 72 of 81 (\SI{89}{\percent}). Weighted by the size
+    of the two strata, \SI{80}{\percent} and \SI{85}{\percent}.
+  \item Of the 25 from the output code, \code{ctest} caught 7, or 10 of 22
+    with the sanitizer. What it missed was the result files: wrong offsets in
+    the header of a \file{.vts}, which ParaView follows and a restart does
+    not; a velocity or a point height written from the wrong place; the
+    \code{Uz} column of a \val{"CZ"} field file; and the range checks of the
+    manufactured solution.
+\end{itemize}
+
+The checks then added --- the \file{.vts} read through its header and
+compared with the field file of the same instant (\code{restart\_roundtrip}),
+the range checks (\code{input\_guards}), the probe positions in \val{"CZ"}
+(\code{features}), a stratified \val{"CZ"} film with the Koren scheme
+(\code{mms}), the 2-D symmetries under a strong rotation
+(\code{equivalence}) --- catch 20 of the mutants that had survived, which
+brings the first sample to 73 of 81 (77 with the sanitizer) and the second to
+22 of 22. They found one fault: the probe file of a 1-D well-mixed run named a
+point one cell short of the one its values were taken at. Of the first
+sample, what remains is one change below the resolution of the tests (a
+Newton stop one iteration early at the floor of the linear solver), three
+that alter only the ghost corners or ghost column of an output file, and the
+four out-of-range accesses the sanitizer catches.
+
+A third sample was drawn after much of the code had been rewritten --- the
+wall faces of the upwinded fluxes, the conservative \val{"CZ"} concentration
+and its walls, the clock, the solvent limit, the stricter reading of the
+input, the restart state --- with the same kinds of change and none of the
+234 drawn before: 100 (seed 20261004) of the 3\,815 possible changes in the
+files of the second sample's first 100, the restart state now among them,
+and 25 (seed 20261005) of the 309 in the rest of the input and output code.
+The whole of \code{ctest} was run on each, and each that survived once more
+in the sanitizer build of CI.
+
+\begin{itemize}
+  \item Of the 100, \code{ctest} caught 74; four of them by running past a
+    time limit, and ten, all in the generated terms of the manufactured
+    solution, by \code{mms\_source\_current}. Seventeen cannot change a
+    result --- a ghost value no equation reads, an \code{assert}, a test that
+    differs only at exact equality, code no model calls --- so 74 of 83
+    (\SI{89}{\percent}) were caught, and 76 with the sanitizer
+    (\SI{92}{\percent}). Of the other seven, two change the result only at
+    rounding or in the constant of the error (the in-plane diffusion at a
+    \val{"CZ"} wall, the ghost level in the depth mean of $1/\mu$), two only
+    the Courant warning, and three were behavior no test reached.
+  \item Of the 25 from the input and output code, \code{ctest} caught 20;
+    two cannot change anything (code nothing calls), so 20 of 23
+    (\SI{87}{\percent}). The sanitizer adds none. The other three were a
+    velocity in the outermost ghost layer of a \val{"CZ"} \file{.vts}, the
+    limit on the size of the grid, and the reading of a \file{.inp} string
+    that runs to the end of the file. Weighted by the size of
+    the two strata, \SI{89}{\percent}, and \SI{91}{\percent} with the
+    sanitizer.
+\end{itemize}
+
+The checks then added --- the 1-D and 2-D well-mixed runs compared with the
+Koren scheme for the concentration and the nozzle transposed on long thin
+cells (\code{equivalence}), a concentration read from a field file outside
+$[0, 1]$ on one side only, the limit on the size of the grid and an
+unterminated \file{.inp} string (\code{input\_guards}), and the area of a 2-D
+nozzle (\code{analytic}) --- catch four of the survivors, which brings the
+sample to 77 of 83 (79 with the sanitizer) and 21 of 23. They found two
+faults, both corrected: a 2-D nozzle on cells more than 3.9 times longer than
+wide left out cells it partly covered, and supplied \SI{81}{\percent} of its
+rate on cells 11 times longer than wide
+(\cref{sec:verification:analytic}); and a \file{.inp} string without its
+closing quote took the rest of the file as its value. The change that led to
+the second alters, on the corrected reader, nothing.
+
+A fourth sample was drawn from the code changed after the third: the
+\val{"CZ"} coupling passes that do not settle, the solute moved from above
+$c = 1$ and into cells below $c = 0$, the conservative well-mixed solute
+balance and its open edges, the Newton correction that stagnates, the 64-bit
+step count. It took 30 (seed 20261006) of the 511 possible changes on the
+lines changed since the third, none of them drawn before, and ran the whole
+of \code{ctest} on each.
+
+\begin{itemize}
+  \item \code{ctest} caught 16, one by running past a time limit. Ten cannot
+    change a result: six differ only at exact equality or in a case no input
+    reaches, and four move a loop or an index onto ghost cells or slots that
+    nothing reads, which the sanitizer does not report either. So 16 of 20
+    (\SI{80}{\percent}) were caught, and 17 with the sanitizer
+    (\SI{85}{\percent}), which catches a loop run past the end in the fill
+    of a \val{"CZ"} column below $c = 0$.
+  \item Of the other three, two were behavior no test reached: in 2-D the
+    columns beside that column read in $y$ from the wrong side, and every
+    step counted as one that moved solute. The third changes only the debug
+    print of the coupling passes.
+\end{itemize}
+
+The check then added, a \val{"CZ"} column next to a wall restarted below
+$c = 0$ against its transpose (\code{cz2d\_deficit\_transpose} in
+\code{equivalence}), catches both, which brings the sample to 19 of 20. It
+found no fault.
+
+\section{Performance and scale}
+\label{sec:notverified:scale}
+
+\begin{itemize}
+  \item \textbf{Wall-clock time and parallel scaling are not measured in
+    \cref{ch:verification}.} The backend comparison there is agreement of
+    values and of iteration counts, and nothing else.\footnote{The indicative
+    solve times of \cref{tab:linsolve-timing} are given in
+    \cref{sec:linsolve:choosing} to help you choose a backend. They are not a
+    verification measurement and carry none of the reproducibility guarantees
+    of \cref{ch:verification}.}
+  \item \textbf{The meshes used in the verification reach $N_x = 4000$ in one
+    dimension and $N_x = N_y = 120$ in two.} Larger grids ($N_x = 10^{6}$,
+    $1024^{2}$, $200^{2} \times 20$) were run for a few steps to measure their
+    memory (\cref{sec:verification:long}). Behavior on them over a long run ---
+    the convergence of the linear solver, the accumulation of rounding error
+    --- has not been measured.
+\end{itemize}

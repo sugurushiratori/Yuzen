@@ -1,0 +1,171 @@
+% app-revisions.tex -- the release history, and the rule for keeping it
+\chapter{改訂履歴}
+\label{ch:revisions}
+
+この付録には、すべてのリリースについて変更点を記録する。数値が動いた変更については、どのケースで
+どれだけ動いたかも記す。重要なのはこの後者である。結果が変わったと書きながら変化の大きさを書かない
+項目は、項目として役に立たない。読者が自分の仕事に影響があるかどうかを判断できないからである。
+この一覧は、\cref{sec:policy:results}の約束を守るために設けている。リリースは新しい順に並べる。
+\textbf{最初の公開リリースはバージョン 1.0 であり}、番号はここから始まる。同じ項目はリポジトリ最上位の
+\file{CHANGELOG.md}にも記録しており、そのバージョンごとの節が GitHub 上の各リリースの本文になる。
+
+\section{バージョン 1.0}
+\label{sec:rev:1-0}
+
+\textbf{リリース日：}\code{v1.0.0}タグの日付。本マニュアルはこのタグからビルドし、同じリリースに
+添付する。したがって、本マニュアルが記述する対象は、本マニュアル自身をビルドしたリリースである。
+日付はリポジトリのリリースページで確認できる。
+
+最初の公開リリースであり、内容は以下のとおりである。
+
+\begin{note}[入力ファイルと読み取り側で合わせるべき二つの名前]
+  入力ファイルには\key{SolverName}~$=$~\val{"Yuzen-1.0"}と書く必要がある。ほかの値は黙って
+  受け入れられることはなく、範囲エラーとして拒否される。また、VTK 出力は要素
+  \code{<YuzenData ...>}で始まる。これらのファイルを解析するスクリプトは、この要素で照合するのが望ましい。
+\end{note}
+
+\subsection*{ソルバー}
+
+\begin{itemize}
+  \item \textbf{三つのモデルを実装しており}、\key{Physics.ConcField.Model}と\key{Grid.Dimension}
+    に応じてファクトリー\code{MakeSolverModel}が選ぶ。一次元の鉛直一様モデル、二次元の
+    鉛直一様モデル、膜厚方向の濃度分布を解像する\val{"CZ"}の三つである（\cref{ch:concentration}）。
+  \item 流束への寄与六つ（毛管圧、分離圧、鉛直方向の重力、面内の重力、遠心力、溶質による
+    毛管力すなわち溶質マランゴニ）に加え、蒸発と移動する湧き出しを扱う（\cref{ch:terms}）。各項は
+    独立に有効・無効を切り替えられ、項が無効のときは対応する無次元数がちょうど零になる。
+  \item 二つの発展方程式は、いずれもクランク・ニコルソン法で時間発展させる。膜厚の方程式は、
+    ニュートン・カントロビッチ法の外側反復で陰的な解に収束させる。収束判定には膜厚と濃度の修正量の
+    大きい方を用いるため、収束した状態は両者を完全陰的に連成させた解になる
+    （\cref{sec:time:coupling}）。時間刻みは必要に応じて適応的にできる。
+  \item 対流スキームは入力で選ぶ（\key{Numerics.Convection}、\cref{sec:ref-numerics:convection}）。
+    膜厚の風上化流束には Koren リミッター付きのスキームが既定であり、セル界面の膜厚を
+    隣接セルの値の間に収める。濃度の既定は UTOPIA である。ほかに KK、van Leer、四次精度中心差分なども
+    選べる（\cref{sec:verification:schemes}）。
+  \item 線形ソルバーのバックエンドは二つあり、\code{ILinearSolverBackend}を介して切り替えられる
+    （\cref{ch:linearsolver}）。
+  \item \textbf{スレッド数に対する不変性はテストスイートで検査しており}、主張にとどまらない。
+    \code{ctest}は同じバイナリを別々の三つのプロセスで、環境の設定どおりのスレッド数、単一スレッド、
+    四スレッドで実行し、縮約と線形ソルバーの結果を\code{==}で比較する
+    （\cref{sec:verification:linalg}）。\val{"amgcl"}バックエンドは例外であり、そのことを文書に明記している
+    （\cref{sec:linsolve:choosing}）。
+  \item \textbf{一つのソケット内では、スレッドを増やしても計算は遅くならない}。GCC でビルドした場合、
+    LLVM の\code{libomp}がインストールされていればそれをリンクする。線形求解は規模に応じた数の
+    スレッドを使う（\env{YUZEN\_GRAIN}）。一つの計算で使うコアは、最大で一つのソケット分までである
+    （\cref{sec:parallel:runtime,sec:parallel:cap}）。
+  \item \textbf{分離圧の較正は閉じた形で検証している}。36 通りのパラメーターの組合せすべてで、
+    係数$\Dpn$は解析的な表式と相対誤差$10^{-14}$以内で一致し、そこから求めた平衡接触角は$10^{-12}$以内で
+    一致する（\cref{sec:verification:disjoining}）。毛管圧と分離圧を合わせた離散化は、解析的な
+    平衡液滴に対して次数 1.94 で収束する。
+\end{itemize}
+
+\subsection*{入力と出力}
+
+\begin{itemize}
+  \item 入力は TOML ファイルである（\cref{ch:inputformat}）。ブロック構造の\file{.inp}ファイルも
+    読み込めて同じ木構造になるが、その形式はここでは規定しない（\cref{sec:inputformat:legacy}）。
+    \key{SolverName}は\val{"Yuzen-1.0"}でなければならない。この値で指定するのは\code{MAJOR.MINOR}だけで
+    ある（\cref{sec:policy:scheme}）。
+  \item 結果ディレクトリには、入力ファイルをそのまま写したもの、\file{JobInfo.txt}、
+    \file{Warnings.txt}、\file{FatalErrors.txt}、VTK とタブ区切りテキストの場の出力、
+    \file{History.dat}、\file{CalcInfo.dat}、プローブのファイルを置く
+    （\cref{sec:output:dir}）。実行ログは標準出力にだけ出し、ファイルには書かない
+    （\cref{sec:output:running}）。\file{field*.dat}は ASCII のリスタート形式を兼ねる。
+    \file{History.dat}と\file{CalcInfo.dat}の先頭には、列名を示すヘッダー行がある。
+  \item 場の出力は、\key{TimeInterval}ごと、または指定した時刻（\key{Times}、あるいは対数間隔の
+    \key{LogSchedule}）に書き出す。いずれの場合も制限を受けるのはその時刻をまたぐ時間刻みだけであり、
+    \key{ExactTimes}を指定するとその時刻にちょうど合わせる（\cref{sec:ref-output:listed}）。
+  \item \key{WritePotential}を指定すると、鉛直一様モデルの場の出力に駆動ポテンシャル$\varphi$が加わる
+    （\cref{sec:output:potential}）。
+  \item 毛管圧、分離圧、鉛直方向の重力は、正のセル界面移動度を一つ共有する。そのため、スキームの散逸は
+    平方和となり、定常な膜は離散自由エネルギーの最小点になる（\cref{sec:disc:positivity-one}）。
+  \item \key{Output.Energy}を指定すると\file{Energy.dat}を書き出す。内容は膜の自由エネルギー、
+    スキームの散逸、両者の収支（$\Delta t$について二次）である（\cref{sec:output:energy}）。
+  \item \key{Physics.Slip}は、鉛直一様モデルで基板に Navier のすべり長さを与える。移動度は
+    $h^3/3 + \lambda h^2$、マランゴニ項は$h^2/2 + \lambda h$となり、これに合わせた正のセル界面移動度を
+    構成する（\cref{sec:ref-physics:slip,sec:disc:positivity-slip}）。このブロックがなければ、
+    数値はすべて従来どおりである（同梱のすべてのケースで\code{compare.py}が 0）。
+  \item パーサーが読まない項目（綴りを誤ったキー、別のテーブルに書いたキー、綴りを誤った
+    テーブル）があると、その完全なパスと意図したと思われる名前を示して計算を止める
+    （\cref{sec:inputformat:unknown}）。\code{yuzen --check-input}を使えば、計算を実行せずに
+    この検査とほかの検査を行える。
+  \item 省略した任意のブロックは空のブロックとして読む。\key{Physics}のサブブロックが
+    なければその項は無効であり、\key{Physics.ConcField}がなければ
+    \key{Model}~$=$~\val{"None"}とみなす（\cref{sec:inputformat:defaults}）。
+    \key{Physics.DisjoiningPressure}を書いた場合も、その中の\key{ExponentN}と\key{ExponentM}は
+    既定値$(3,2)$をとる。\key{Grid.Xmax}~$>$~\key{Grid.Xmin}であること、
+    \key{ChangeFactor}が$(0:1)$内にあること、\key{KeepSteps}、両方の線形ソルバーの\key{MaxIterations}、
+    \key{SubRegions}が 1 以上であることを、マニュアルの記載どおりに検査する。
+  \item \key{Numerics.MaxSteps}に達すると計算を止める。このときの表示は
+    \code{Time reached to the EndTime.}ではなく\code{Step count reached Numerics.MaxSteps.}である
+    （\cref{sec:ref-numerics:numerics}）。既定値は\val{0}（制限なし）である。64 ビットで
+    数えるため、計算で到達しうる時間刻み数はすべて表現できる。
+  \item \key{Grid.Nx}、\key{Ny}、\key{Nz}はそれぞれ百万セルまで指定でき、合計
+    $(\mathrm{Nx}+4)(\mathrm{Ny}+4)(\mathrm{Nz}+4)$の上限は$5\times10^{7}$である。この上限により、
+    格子の線形インデックスが\code{int}の範囲に収まる。1 次元の計算でも、大型の計算機を
+    埋めるほどの規模にできる（\cref{sec:parallel:kit}）。
+  \item \file{JobInfo.txt}に\code{\#\#\#\#\#\# Performance
+    \#\#\#\#\#\#}節を設けた。時間刻みループだけの実時間、実行した時間刻み数、ニュートン反復と
+    線形反復の合計回数を記録する。\code{Elapsed Time}は格子の構築や初期出力を含むプロセス全体の
+    時間であり、大きな格子でのスケーリング測定には使えない。
+\end{itemize}
+
+\subsection*{文書}
+
+\begin{itemize}
+  \item 本マニュアル。ソルバーの正式な記述であり、短い付属文書として\file{docs/theory.md}、
+    \file{docs/numerics.md}、\file{docs/validation.md}がある（\cref{sec:extending:submitting}）。
+  \item \cref{ch:verification}には、すべての主張の根拠を\emph{その強さとともに}記録した。
+    そこに載せた数値には、どれも再現用のコマンドを添えている。
+  \item \file{tools/scaling/}は共有メモリでのスケーリング測定キットであり、計算あたりの仕事量を
+    固定したケースの生成、中断・再開できる掃引スクリプト、集計スクリプトからなる（\cref{sec:parallel:kit}）。
+    \cref{tab:scaling}のスケーリングの数値は一台の計算機で測ったものであり、ほかの計算機には
+    当てはまらない。読者が自分の計算機での数値を得られるよう、このキットを用意した。
+\end{itemize}
+
+\subsection*{既知の不足}
+
+\begin{itemize}
+  \item 確認していない事項は\cref{ch:notverified}にすべて挙げた。この一覧はリリースへの弁明ではなく、
+    リリースの一部である。主な項目は次のとおりである。接触線モデルの検証は 1 次元に限られる。
+    時間の精度次数はすべての項を有効にして測定したが、スイッチのあらゆる組合せについて測ったわけではない。
+    \val{"amgcl"}バックエンドは、\val{"eigen"}との一致やスレッド数による差は測定しているものの
+    （\cref{sec:verification:backends,sec:verification:amgclthreads}）、スイートのどのテストでも
+    使っていない。\val{"FreshInlet"}と\val{"Outlet"}は、互いの整合性とそこを通る収支は検査したが、
+    既知の流入量との比較は行っていない。
+\end{itemize}
+
+\section{この一覧の維持}
+\label{sec:rev:keeping}
+
+この節は保守担当者向けである。項目の書き方は自由ではなく、少なくとも次の内容を含める。
+
+\begin{itemize}
+  \item 省略しない\textbf{バージョン}（\code{MAJOR.MINOR.PATCH}）。
+  \item \textbf{リリース日}。
+  \item \textbf{利用者から見える変更ごとに一行}。リポジトリの外から誰にも観測できない変更は
+    ここに含めない。
+  \item 数値出力が変わった変更については、\textbf{測定したケースと差の大きさ}。定性的な表現ではなく
+    数値で書く。「\file{allphys\_1d\_reg}、\code{maxH}が相対で$3.2\times10^{-4}$動いた」は
+    項目として成り立つが、「結果がわずかに変わる」は成り立たない。
+\end{itemize}
+
+各行の先頭には変更の種類（\code{fix}、\code{add}、\code{change}、\code{doc}）を付け、
+入力ファイルへの影響の有無を同じ行に書く。キーの名前を変えたり削除したりした場合は、新旧両方の綴りを
+ここに記す。古い綴りで入力ファイルが止まった利用者が、新しい綴りを見つけられるようにするためである。
+既定値を変えた場合は新旧両方の値を記す。パーサーにはこの変更を利用者に知らせる手段がないからである
+（\cref{sec:policy:compat}）。
+
+こうすれば、書式に曖昧さがなくなる。
+
+\begin{plain}
+1.0.1  2026-10-03
+  fix: the evaporation cap was applied after the source term instead of before
+       it, so a cell under the nozzle could lose more than half its thickness
+       in one step.  allphys_1d_reg: History.dat Volume 1.1e-5, field maxH
+       3.2e-4 (both relative).  Input files unaffected.
+  doc: numerics.md, the section on the evaporation cap.
+\end{plain}
+
+何も変わらなかったリリースでも、同じ場所に同じくらいはっきりとそう書く。
+\code{no case changed; compare.py reads 0.000e+00 throughout}。
+この一文は読者にとってほかの項目と同じだけの価値があるが、最も書き忘れやすい一文でもある。

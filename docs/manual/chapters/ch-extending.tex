@@ -1,0 +1,581 @@
+% ch-extending.tex -- how to add physics to Yuzen, as a worked procedure
+\chapter{Extending the model}
+\label{ch:extending}
+
+This chapter is for a reader who wants Yuzen to solve something it does not
+solve yet. It is written as a procedure: decide what kind of extension you
+have, then follow the numbered steps for that kind, then test it. It does not
+tour the architecture --- \cref{ch:layout} says where everything lives --- and
+it does not re-derive the numerical method, which is
+\cref{ch:discretization,ch:timeintegration}.
+
+Two chapters are prerequisites rather than further reading.
+\Cref{ch:reproducibility} states the four things in the code that keep results
+bit-identical across thread counts; three of them constrain how you add a term,
+and one of them --- the registration order --- is a step of the procedure below.
+\Cref{sec:time:form,sec:time:jacobian} give the form every equation is cast
+into and the rule for how much Jacobian a term needs. Everything here builds on
+those and cites them rather than repeating them.
+
+\section{Before you write any code}
+\label{sec:extending:decide}
+
+Three questions decide how much work you are in for. Answer them in this
+order, because they are in descending order of cost.
+
+\begin{description}
+  \item[Does the effect enter as a flux contribution?] That is, does it add a
+    term to $\Qvec$ in \cref{eq:flux} --- something proportional to a mobility
+    times a gradient, or to a mobility times a body force? Then it is a
+    \emph{physics term}, it belongs in the matrix $A$, and the main path of
+    this chapter (\cref{sec:extending:term}) applies. This is the most work of
+    the three: a kernel implementing seven members and its face flux, a dimensionless group, an
+    input block, a velocity field and a test.
+  \item[Is it a source or a sink in the height equation?] Something that adds
+    or removes liquid without transporting it --- a second evaporation
+    mechanism, a deposition rate, a chemical loss. It joins evaporation and the
+    supply term in the vector $B$, assembled at the end of
+    \code{WellMixed\_HeightEquationBase::SetMatrixA()}, and that is a handful
+    of lines rather than a class. But read the warning of
+    \cref{sec:time:form} before you choose this route: \textbf{only what goes
+    into $A$ receives the $\theta$ weighting}, so a term placed in $B$ and
+    evaluated at the old state alone is effectively backward Euler, and the
+    time accuracy of the scheme drops to first order for that term. Average it
+    over the step as the evaporation is, or it is cheap to write and expensive
+    to justify.
+  \item[Is it a change to the concentration equation or to a material
+    property?] A new concentration dependence for the viscosity, the surface
+    tension or the diffusivity; a different evaporation law; a new shape
+    function. \textbf{This is the cheapest of the three by a wide margin}: it
+    is one class or one branch, one or two input keys, and no matrix
+    assembly, no Jacobian and no registration order to respect.
+    \Cref{sec:extending:other} covers these.
+\end{description}
+
+If your effect is a pressure --- anything that can be written as
+$\Qvec = M(H,C)\,\nabla p$ --- it is the first kind, and the disjoining
+pressure is the worked example to copy. If it is a body force, uniform or not,
+it is still the first kind, and in-plane gravity and the centrifugal term are
+the examples.
+
+\section{Adding a physics term, step by step}
+\label{sec:extending:term}
+
+\begin{enumerate}
+
+\item \textbf{Write the dimensionless form and identify the group.}
+
+Start on paper, not in the editor. Put the new contribution into the flux in
+the same shape as the existing ones (\cref{ch:terms}), non-dimensionalize it
+with the scales of \cref{sec:governing:scales}, and read off the single
+dimensionless group that multiplies it. Every existing term has exactly one:
+$\As$ for capillary pressure, $\Bo$ for vertical gravity, $\Spn$ for the
+centrifugal term, $\Dpn$ for the disjoining pressure. If your term needs two
+groups, one of them is probably a property ratio that belongs in
+\file{FluidProperty.*} instead.
+
+Decide the sign here as well. The governing equation is written
+$\partial H/\partial T = -\nabla\cdot\Qvec$, so expanding the divergence fixes
+the sign the coefficient must carry; vertical gravity ends up with
+$-\Bo/3$ and the disjoining pressure with $+\Dpn/3$. That sign lives in
+\code{\_Magnitude} and nowhere else, which is what lets the mixed velocity be a
+plain sum (\cref{sec:verification:velocity}).
+
+\item \textbf{Add the group to \code{NonDimensionalNumbers}.}
+
+In \file{yuzen/src/model/NonDimensionalNumbers.h} add the member and its
+accessor alongside \code{Bo()}, \code{Sp()} and \code{Dp()}; in
+\file{NonDimensionalNumbers.cpp} compute it inside \code{Build()} from the
+dimensional input, and add a line for it to \code{ToString()} so that it
+appears with the others in the run log on standard output
+(\cref{sec:output:running}).
+
+\textbf{The group must be exactly zero when the term is disabled.} The existing
+code does this in one of two ways, and either is fine. $\Dpn$ is set to
+\val{0} first and computed only inside \code{if(inp.Physics.\bk
+DisjoiningPressure.\bk Enable)}; $\Bo$, $\Pgx$, $\Pgy$, $\Spn$ and $\Ma$ are
+computed unconditionally and then forced to zero at the end of \code{Build()}
+when their \key{Enable} key is false.
+
+Why this matters is worth stating plainly, because it is the whole basis of the
+claim that adding a term changes nothing. A disabled term costs nothing: its
+\code{SetMatrixA} is never called at all, because
+\code{WellMixed\_HeightEquationBase} skips any term whose \code{Enabled()} is
+false. And a disabled term can change nothing even if it were called, because
+\code{\_Magnitude} is built from a group that is exactly \val{0}. Together with
+the appending rule of step 5, that is what makes every case without your term
+\textbf{bit-identical} before and after your change
+(\cref{sec:repro:order}).
+
+\item \textbf{Add the input block and its keys.}
+
+Two files. In \file{yuzen/src/IO/Input.h}, add a nested class inside
+\code{I\_Physics} with one member per key, mirroring
+\code{I\_DisjoiningPressure}. In \file{yuzen/src/IO/Input.cpp}, add the block
+to \code{ReadPhysics()} following the pattern the other blocks use:
+
+\begin{itemize}
+  \item ask for \code{getBlockSize} inside a \code{try}\,/\,\code{catch(const
+    BlockNotFound\&)} and treat a missing block as \code{bnum = 0};
+  \item call \code{Error} if \code{bnum > 1}, since a physics block may not
+    repeat;
+  \item read each key with \code{getin("Name", member, default)}, where
+    \textbf{omitting the third argument makes the key required};
+  \item give the \code{else} branch --- the one taken when the block is absent
+    entirely --- an explicit value for every member, as the
+    \key{DisjoiningPressure} block does. If you leave it out, the members keep
+    whatever the constructor left there;
+  \item check ranges with \code{CheckRange} and string-valued keys against a
+    candidate list with \code{CheckCandidates}, calling \code{Error} on
+    failure. A check that spans several blocks does not belong here; it belongs
+    in \file{yuzen/src/IO/CheckParameters.cpp}.
+\end{itemize}
+
+\begin{warn}[The default in the \code{else} branch is what your users will get]
+  A misspelled block or key stops the run (\cref{sec:inputformat:unknown}), but
+  a block that is simply left out is not an error: a user who never writes
+  your block gets the values of the \code{else} branch in silence, with no
+  warning anywhere. Choose them so that the silent outcome is the term
+  switched \emph{off}, as it is for every other \key{Physics} sub-block.
+\end{warn}
+
+Then document the keys in \cref{ch:ref-physics} in the same change, with the
+type, the default and the units.
+
+\item \textbf{Write the kernel.}
+
+One header in \file{yuzen/src/model/well\_mixed/}, a template on the traits
+class, deriving from \code{PhysicsTermBase<T>}
+(\file{PhysicsTermBase.h}). Templating on the traits is what lets one body
+serve both dimensions: everything that differs between 1-D and 2-D --- the
+number of directions, the stencil, the spacing, the site-to-row map, the two
+direction orderings --- is reached through \code{T}
+(\file{GridTraits.h}), so the kernel never mentions a dimension.
+
+If your term is a body force whose driving field has no gradient in it, do not
+write the seven members at all: derive from \code{BodyForceKernel<T>} and
+supply only \code{Drive}, \code{DriveFace}, \code{Weight}, \code{Mag},
+\code{SideOutflow}, \code{VelocityField} and \code{VelocitySign}.
+\file{CentrifugalKernel.h} is 155 lines including the license header, and the
+only thing specific to the centrifugal force in it is that the driving field is
+the distance from the rotation axis. If your term is a mobility times the
+gradient of something, copy the skeleton of \file{VerticalGravityKernel.h}
+instead, and implement the seven members of \cref{sec:extending:contract}
+and its face flux (\code{FaceFlux}, after them; \code{BodyForceKernel}
+provides it for a body force).
+
+Four more places have to learn about the class. Add a \code{typedef} to
+\textbf{both} \code{WM1D\_Traits} and \code{WM2D\_Traits} in
+\file{WellMixedTraits.h}; add a member of that type to
+\code{WellMixed\_HeightEquationBase} in \file{HeightEquationBase.h}; call its
+\code{Build} in \code{WellMixed\_HeightEquationBase::Build}, next to the
+others. And if the term produces a velocity --- it does, unless it is a pure
+sink --- add a field for it to \code{Velocity\_WM1D} and
+\code{Velocity\_WM2D} in \file{model/LubFields.h}, add it to the sum in
+\code{Cal\_MixedVelocity()} in \file{LubFields.cpp}, and add a
+\code{SetVelocityBC} line for it in
+\code{WellMixed\_HeightEquationBase::CalVelocity()}.
+
+\begin{warn}[The mixed velocity is a plain sum and must stay one]
+  Add your field as one more \code{+} in \code{Cal\_MixedVelocity()}. Do not
+  write the composition as a chain of differences: the signs are already
+  correct inside each term's \code{\_Magnitude}, and a difference chain flips
+  the sign of every term added after it. That is a defect this code has had,
+  and \file{yuzen/tests/test\_mixed\_velocity.cpp} exists to stop it coming back
+  (\cref{sec:verification:velocity}).
+\end{warn}
+
+\item \textbf{Register it at the end of \code{RegisterPhysics()}.}
+
+\code{WellMixed\_HeightEquationBase::RegisterPhysics()} in
+\file{HeightEquationBase.h} pushes the terms into \code{\_physics} in a fixed
+order, and that order is the order of the \code{+=} operations into the matrix,
+which is the column insertion order of the CRS rows, which fixes the rounding
+of every sum taken over a row. \textbf{Append your
+\code{\_physics.push\_back(\&\_YourTerm)} after the last line; do not insert
+it, and do not tidy the list into alphabetical order.} Appending is what makes
+the existing results bit-identical, and \cref{sec:repro:order} is the argument.
+
+\item \textbf{Add the source file to \file{CMakeLists.txt}, if there is one.}
+
+A kernel that is a header-only template needs no entry: none of the seven
+kernel headers appears in \file{CMakeLists.txt}. If your term has a
+dimension-specific \file{.cpp} --- as the capillary pressure term does, with
+\file{LaplacePressure\_1D.cpp} and \file{LaplacePressure\_2D.cpp} --- add it to
+\code{YUZEN\_CORE\_SRC} in the top-level \file{CMakeLists.txt}. A new test file
+goes into \code{YUZEN\_TEST\_SRC} in \file{yuzen/tests/CMakeLists.txt}.
+
+\item \textbf{Write the test.}
+
+\Cref{sec:extending:testing} says what a good one looks like. Write it before
+you run a case, because a term that is merely plausible on a picture is a term
+that is wrong in a way you will find in six months.
+
+\end{enumerate}
+
+\section{What the seven members must do}
+\label{sec:extending:contract}
+
+The contract is declared in
+\file{yuzen/src/model/\bk well\_mixed/\bk PhysicsTermBase.h}. Four members are
+public and three are protected; all seven are pure virtual, so the compiler
+will not let you forget one.
+
+The distinction that runs through the whole contract is between
+\textbf{coefficients that depend only on the mesh and the scheme}, which are
+built once in \code{Build()} and held in the arrays \code{C(d)} and
+\code{CV(a)}, and \textbf{quantities that depend on the field}, which are
+recomputed from scratch on every call because the field changes at every outer
+iteration. Putting a field-dependent quantity in the first group is a bug that
+shows up as a Newton iteration that will not converge; putting a mesh-only
+coefficient in the second group is merely slow.
+
+\begin{description}
+
+  \item[\code{Build(inp\_phys, g, nonDim, bc)}] Called once, from
+    \code{WellMixed\_HeightEquationBase::Build}, before anything is solved. It
+    is handed the \key{Physics} block of the input, the grid, the set of
+    dimensionless numbers and the boundary condition. It must store those
+    pointers, set \code{\_enabled} from your \key{Enable} key, set
+    \code{\_Magnitude} to the coefficient of the whole term \emph{with its
+    sign} --- the group over 3 for a term carrying the mobility $H^{3}/3$, and
+    $\As\,\Ma/2$ for solutal capillarity, which carries $H^{2}/2$ --- call
+    \code{T::SetExtent} to record the grid extent, and finish by calling
+    \code{SetLinearCoef()}. It must not read the field: at this point the
+    initial condition is not in it. This is also the only opportunity to read
+    the input, so anything from the input file that the term needs must be
+    copied into a member here.
+
+  \item[\code{SetLinearCoef()}] Protected; called from \code{Build()} and from
+    nowhere else. It fills \code{C(d)[s]}, the difference coefficient of
+    stencil point \code{s} for direction \code{d}, and \code{CV(a)[s]}, its
+    counterpart for the velocity along axis \code{a}. These depend on the mesh
+    spacing \code{T::Spacing} and on the scheme, and on nothing else.
+    \textbf{It must not look at the field}, which is what makes it safe to
+    call once.
+
+  \item[\code{SetMatrixA(crsA, field)}] Called on every outer iteration
+    (\cref{sec:time:newton}), with \code{field} the current Newton guess, not
+    the committed field. It must \textbf{return immediately if
+    \code{!\_enabled}}, skip every row for which \code{crsA.IsBC(irow)} is
+    true, and \textbf{add} its contribution with \code{+=} --- through
+    \code{crsA.Diag(irow)} for the diagonal and \code{crsA(irow, col)}
+    otherwise. It must never assign, never clear the matrix, and never write to
+    $B$: the clearing is done for it, and $B$ is assembled afterwards by the
+    height equation. The sum over directions within a row is taken in
+    \textbf{axis order}, \code{T::Dir(d)} (\cref{sec:repro:directions}).
+
+  \item[\code{SetJacobiMatrix(crsJ, field)}] Called once every
+    \key{JacobianUpdateInterval} iterations (\cref{sec:time:jacobian}),
+    after $A$ has already been copied into the Jacobian; your term adds its own
+    derivative $\partial(A\varphi)/\partial\varphi$ on top. The same rules
+    apply --- return when disabled, skip boundary rows, add rather than assign
+    --- with one difference that matters: the sums that land on the
+    \textbf{diagonal} are taken in \textbf{stencil order},
+    \code{T::StencilDir(k)}, not in axis order. \textbf{This member is the one
+    that is allowed to be approximate}; see \cref{sec:extending:jacobian}.
+
+  \item[\code{NonlinearTerm(site, tedge, field)}] Protected. The
+    field-dependent factor on a face --- for almost every term the mobility
+    $H^{3}/\hat\mu(C)$, averaged across the face, with the viscosity evaluated
+    at the mean concentration of the two cells. \code{tedge} selects the face;
+    the value \code{T::DirCenter()} (\code{OO}) means the cell itself rather
+    than a face. It is recomputed on every call and must be a pure function of
+    the field: no caching, no state.
+
+  \item[\code{NonlinearJacobi(site, tedge, adj, field)}] Protected. The
+    derivative of \code{NonlinearTerm} with respect to the height at one
+    stencil point, \code{adj} saying which point. It is the second member that
+    may be approximate, and dropping a piece of it costs iterations and not
+    accuracy.
+
+  \item[\code{CalVelocity(field)}] Called from
+    \code{WellMixed\_HeightEquationBase::CalVelocity()}, once at the start of
+    the run and once per step, for the state the step ends on. It writes the velocity
+    \emph{this term alone} produces into \emph{its own} field --- the flux
+    through a face, divided by \code{T::FaceHeight} --- and leaves every site
+    for which \code{T::InsideForVelocity} is false alone. \textbf{It must not
+    touch the mixed velocity and must not accumulate into another term's
+    field.} That is precisely why the order of the terms does not matter here,
+    unlike in \code{SetMatrixA} (\cref{sec:repro:order}). The mixed velocity is
+    formed afterwards, as the plain sum of the individual fields; it is what
+    the output reports, and what the Courant check is formed from. (What
+    crosses an open edge is counted from the face fluxes, \code{FaceFlux}
+    below.)
+
+\end{description}
+
+Two more members carry the term's flux to the well-mixed concentration. They
+are not pure virtual --- \code{PhysicsTermBase} returns 0 for both --- so
+\textbf{the compiler will not remind you of them}, and a term that leaves them
+out moves the film without moving the solute with it.
+
+\begin{description}
+  \item[\code{FaceFlux(site, d, field)}] The volume flux of the term through
+    face \code{d} of the cell, in the state \code{field}, exactly as its
+    entries of $A$ carry it: along the axis of the face, per unit cell measure
+    (divided by the spacing across the face), so that the row of the cell takes
+    $\sum_d (\pm)$\code{FaceFlux} --- minus for the low faces, plus for the
+    high ones --- which is its $A h$ to rounding. It must return 0 when the term
+    is disabled, and 0 through a wall face where $A$ has no flux. The
+    film-height equation forms each face's flux once from these
+    (\code{FaceVolumeFluxes}), the concentration equation carries the
+    solute with exactly that flux (\cref{sec:disc:wm-conservative}), and
+    \file{History.dat} counts what crosses an open edge from it
+    (\code{EdgeFluxRate}, \cref{sec:output:history}).
+  \item[\code{SideRate(site, field)}] A volume sink of the cell that is not a
+    flux through a face --- $A h$ of a diagonal term, such as the sideways
+    outflow of the 1-D centrifugal term. The solute leaves with it at the
+    concentration of the cell. Most terms have none.
+\end{description}
+
+The face fluxes are checked against $A h$ in \file{test\_jacobian.cpp}:
+every term and every face interpolation, 1-D and 2-D, must agree with the
+product of its entries to rounding, and the two cells that share a face must
+see the same flux. Add your term to that list as you add it to the Jacobian's.
+
+\section{How much Jacobian your term needs}
+\label{sec:extending:jacobian}
+
+The governing principle is \cref{sec:time:jacobian} in one sentence: an
+approximate Jacobian changes the \emph{rate} of convergence and not the fixed
+point, because what fixes the converged answer is the residual of
+\cref{eq:nk-update} and not the matrix multiplying the correction.
+
+The practical rule is to get it exactly right anyway, because it can be
+checked exactly. \file{yuzen/tests/test\_jacobian.cpp}
+(\cref{sec:verification:jacobian}) builds each term on a film, a substrate and
+a concentration that all vary, and compares $J v$ with a central difference of
+$A(h)h$ for a rough direction $v$; the two agree to $10^{-10}$ for every term
+of the model. Add your term to its list: a Jacobian that leaves something out
+shows up as the size of what it leaves out. The three faults it found were in
+the vertical gravity, the disjoining pressure and the 1-D centrifugal
+outflow, and they cost the disjoining-pressure cases 30--55 \% of their
+Newton iterations.
+
+Two things are easy to get wrong. The Jacobian starts as a copy of $A$, so a
+term whose $A$ is not linear in $h$ --- the disjoining pressure writes
+$\hat\Pi(h)$ into the matrix as $(\hat\Pi/h)\,h$ --- must add the derivative
+\emph{less} what $A$ already holds. And the derivative of a face mobility
+with respect to the cell itself is taken at the cell, not at the neighbor.
+
+If you do use an approximate Jacobian, it changes the rate of convergence and
+not the answer: watch the \code{NK\_iter} column of \file{CalcInfo.dat}
+(\cref{sec:output:calcinfo}); the existing cases run between 3 and 6
+(\cref{sec:verification:coupling}).
+
+
+
+\section{The rules you must not break}
+\label{sec:extending:rules}
+
+\begin{warn}[Four rules, and one acceptance criterion]
+  Each of these is argued in \cref{ch:reproducibility}; they are collected here
+  because they are all constraints on the change you are about to make.
+
+  \begin{itemize}
+    \item \textbf{Append to \code{RegisterPhysics()}; never insert.} The order
+      of that list is the column insertion order of the matrix and therefore
+      the order of the floating-point additions (\cref{sec:repro:order}).
+    \item \textbf{Do not touch the reduction scheme of \code{Vector}.} The
+      fixed-block partial sums are what make an inner product independent of
+      the thread count (\cref{sec:repro:reduction}).
+    \item \textbf{Do not sort a CRS row into ascending column order.} Entries
+      are stored in insertion order with the diagonal first, and libraries that
+      need sorted indices are handed the sorted mirror
+      (\cref{sec:repro:crs}).
+    \item \textbf{Do not unify the two direction orderings.} \code{T::Dir(d)}
+      is axis order and \code{T::StencilDir(k)} is stencil order; they are used
+      deliberately in different places, and in 1-D they coincide, so the
+      damage appears only when somebody runs a 2-D case
+      (\cref{sec:repro:directions}).
+  \end{itemize}
+
+  \textbf{The acceptance criterion for a change that is meant to add a term
+  without altering existing results is bit-identity.} Run the shipped cases
+  before and after, with the term disabled, and compare with
+  \file{tools/compare.py}: every column must read \code{0.000e+00}. Not ``small
+  differences'', not ``differences at the level of the linear-solver tolerance''.
+  Zero. If it is not zero, you have inserted rather than appended, or changed
+  something that was already being summed.
+\end{warn}
+
+\section{Testing a new term}
+\label{sec:extending:testing}
+
+The repository has two tests worth studying before you write yours, and they
+illustrate two different kinds of claim.
+\file{yuzen/tests/test\_disjoining.cpp} checks a physical term against
+mathematics that exists independently of the code.
+\file{yuzen/tests/test\_mixed\_velocity.cpp} checks a composition rule with
+values chosen so that any error identifies itself. Between them they suggest
+three things to aim for, in descending order of strength
+(\cref{sec:verification:policy}).
+
+\begin{description}
+
+  \item[A state the term must leave alone.] The cheapest strong test there is.
+    For the disjoining pressure it is a uniform precursor film $H = \Hstar$,
+    where $\Pihat(\Hstar) = 0$ identically, so the term must produce no
+    velocity whatsoever. Find the analogous state for your term --- a uniform
+    film for anything driven by a gradient, zero rotation rate for anything
+    driven by rotation --- and require the contribution to be below
+    $10^{-12}$. Copy one detail from that test: it \textbf{dirties the velocity
+    field first}, filling it with 1.0 before calling \code{CalVelocity}, so
+    that writing a zero is distinguished from never writing at all. A term that
+    silently does nothing passes the naive version of this test perfectly.
+
+  \item[A state with a closed-form answer.] Stronger, and usually available for
+    a new term in some limit even when it is not available in general. The
+    disjoining-pressure calibration is checked this way, with no numerics at
+    all: the equilibrium first integral gives the far-field slope in closed
+    form, and the code must agree with it to $10^{-14}$ relative over 36
+    parameter combinations (\cref{sec:verification:disjoining}). Sweep
+    parameters rather than testing one set: an algebraic slip in a single
+    factor survives one combination and does not survive a grid of them.
+
+  \item[A refinement study.] Put an analytic state on the mesh, measure what
+    the discretization leaves behind, and check that it falls at the order you
+    intended when the mesh is refined. This is the test that catches a wrong
+    coefficient, a wrong sign or a wrong stencil, all of which can survive a
+    comparison on a single mesh. \Cref{tab:eqresidual} is the model: three
+    meshes, the residual velocity falling by a factor of about four each time.
+    Assert the ratio within a band rather than the order to two digits, as that
+    test does --- a wrong term puts the ratio near 1, not near 3.5.
+
+\end{description}
+
+\begin{tip}[Add the term to the manufactured solution]
+  \file{tools/mms\_generate.py} derives the manufactured sources from the
+  governing equations with SymPy (\cref{sec:verification:mms}). Add the new
+  flux to $\mathbf{Q}$ there, regenerate \file{ManufacturedSourceTerms.inc},
+  add the parameters to \code{MmsParams} and to
+  \code{C\_ManufacturedSource::Build}, and switch the term on in the
+  \code{wm\_all} cases of \file{tools/mms.py}, tuned to move $h_t$ by about
+  as much as the others. If it converges at second order there with
+  everything else on, it is consistent with the equation it claims to
+  discretize, in space and in time.
+\end{tip}
+
+\begin{warn}[Do not let a regression test be the only test]
+  A test that runs the new term once and records what came out is
+  \textbf{the weakest option of the four in \cref{sec:verification:policy}}. It
+  says nothing at all about whether the behavior is right; it says only that
+  it has not changed since the day you wrote it down --- including, if you
+  wrote it down on a bad day, that it is reliably wrong. Regression tests are
+  worth having, and the input-parsing and output-format tests in this
+  repository are exactly that, but a new physical term whose only test is a
+  regression test has not been verified in any useful sense.
+\end{warn}
+
+Finally, make sure the test does not depend on the thread count. Everything in
+\file{yuzen/tests/} is run three times by \code{ctest} --- at the environment's
+own thread count, at \env{OMP\_NUM\_THREADS=1} and at
+\env{OMP\_NUM\_THREADS=4} --- so a test that compares against a value computed
+by a reduction will fail in one of the three unless the invariance really
+holds. That is the point of running it three times.
+
+\section{Smaller extensions}
+\label{sec:extending:other}
+
+\subsection{A new shape function}
+
+Shapes are used for both the initial free surface and the substrate profile.
+Add the class to \file{yuzen/src/\bk commonFunctions/\bk ShapeFunctions.cpp}
+and its header, following \code{C\_RectBump} or \code{C\_EllipseBump}: a
+\code{Build} that stores the parameters together with the \key{Order} and the
+create type, and an \code{operator()(px, py)} that returns the height at a
+point. Then add the repeated input block in \file{IO/Input.cpp} and
+\file{Input.h} --- shape blocks may appear any number of times, so they are
+read with \code{getBlockSize} into a vector --- and add the loop that
+constructs your class to \code{C\_GenerateShape::Build} in
+\file{commonFunctions/GenerateShape.cpp}, pushing an entry onto
+\code{\_shapeOrder} so that the shape takes part in the \key{Order} sorting.
+Nothing else changes: the shape machinery does not touch the matrix.
+
+\subsection{A new boundary condition}
+
+Boundary conditions live in \file{yuzen/src/model/\bk BoundaryCondition.h} and
+\file{.cpp}. The height equation is fourth order, so each boundary needs two
+conditions, and they are imposed by writing the condition itself into the two
+ghost rows of the matrix rather than by modifying the interior equations
+(\cref{sec:disc:ghost}). Add your type to the \code{tBoundaryCondition} enum,
+write the rows for each of the three fields \code{Height},
+\code{HeightJacobi} and \code{Conc}, and add the string to the candidate list
+in \file{IO/Input.cpp}.
+
+\begin{warn}[Two of the existing conditions are verified only for structure]
+  \val{"FreshInlet"} and \val{"Outlet"} have been checked for the structure of
+  the matrix they produce --- indices in range, one equation per ghost row ---
+  and \textbf{not} against any problem whose inflow or outflow is known
+  analytically (\cref{sec:notverified:numerics}). Do not treat them as
+  worked examples of a correct inflow condition. If you need one that is right,
+  you will have to verify it yourself, and \cref{ch:notverified} is where the
+  result of that work belongs.
+\end{warn}
+
+\subsection{A new concentration dependence for a material property}
+
+\file{yuzen/src/model/FluidProperty.h} and \file{.cpp} hold the three forms
+that exist: \code{ConstantProperty}, \code{ConcLinearProperty} (used for the
+surface tension) and \code{ConcExponentProperty} (used for the viscosity and
+the diffusivity). Each is built from a reference concentration, a reference
+value and one parameter, and each returns 1 at the reference concentration ---
+these are ratios, not \si{\pascal\second}. Add a class in the same shape, hold
+it as a member of \code{NonDimensionalNumbers}, build it in that class's
+\code{Build()}, and add the input key that selects which form is used. Nothing
+downstream needs to change: the physics terms ask for
+\code{\_NonDim->Viscosity(c)} and do not know which form answered.
+
+\subsection{A new linear-solver backend}
+
+Implement \code{ILinearSolverBackend} --- \code{Name}, \code{Build} and
+\code{Solve} --- in \file{yuzen/src/\bk numerics/\bk LinearSolverBackend.cpp},
+inside the anonymous namespace where \code{EigenBackend} and
+\code{AmgclBackend} already live, and add a branch to
+\code{MakeLinearSolverBackend()}. \textbf{Keep the new library's headers and
+its \code{\#ifdef} inside that \file{.cpp}}, exactly as the AMGCL backend does:
+that is why \file{LinearSolverBackend.h} says nothing about whether AMGCL was
+built, and why a build without it needs no conditional compilation anywhere
+else. Respect the contract of \cref{sec:linsolve:contract} --- in particular,
+the solution vector is also the initial guess, and the matrix and right-hand
+side must be restored before returning.
+
+Then answer one question in the documentation, because users will ask it:
+\textbf{is your backend deterministic under a change of thread count?} Run the
+same problem at one, two and four threads and compare the solution, the
+iteration count and the residual with \code{==}, as
+\file{yuzen/tests/test\_linear\_solver.cpp} does. \val{"eigen"} is bit-identical;
+\val{"amgcl"} is not, because its internal reductions are
+non-deterministic (\cref{sec:linsolve:choosing}). Either answer is acceptable
+for a backend --- the answer being unknown is not.
+
+\section{Contributing a change back}
+\label{sec:extending:submitting}
+
+Keep this short and mechanical. Before you offer the change:
+
+\begin{enumerate}
+  \item Build and run the test suite, \code{ctest --test-dir build}. All three
+    thread-count entries must pass.
+  \item Run the shipped cases (\cref{ch:cases}), before and after your change.
+  \item Compare the two with \file{tools/compare.py}, fixing the backend and
+    the thread count across the comparison so that you are measuring your
+    change and not the rounding of a different linear solver.
+  \item \textbf{State in the change description whether the numbers moved, and
+    why.} ``No case changed; \file{compare.py} reads \code{0.000e+00}
+    throughout'' is the expected statement for a new term or a refactoring. If
+    something did move, say which case, by how much, and which of the three
+    situations of \cref{sec:policy:results} it is.
+  \item Update this manual in the same change, and the shorter companion
+    documents \file{docs/theory.md}, \file{docs/numerics.md} and
+    \file{docs/validation.md} where they touch the same point. \textbf{The
+    manual is the authoritative description}; a change that lands in the code
+    and not in the manual leaves the two out of step. If the change alters a key or a default, update
+    \cref{ch:ref-physics} or \cref{ch:ref-numerics} as well; if it alters a
+    number, update \cref{ch:verification}, and if it adds something that is
+    \emph{not} verified, say so in \cref{ch:notverified} rather than leaving
+    the omission to be inferred.
+  \item Add an entry to \cref{ch:revisions}, in the form
+    \cref{sec:rev:keeping} specifies.
+\end{enumerate}

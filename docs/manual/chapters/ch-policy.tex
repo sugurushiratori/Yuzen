@@ -1,0 +1,261 @@
+% ch-policy.tex -- what a version number promises, and what may change between versions
+\chapter{Versions and updates}
+\label{ch:policy}
+
+Yuzen is at version 1.0. This chapter says what the version number means, what
+you may rely on between one release and the next, and --- the part that matters
+most in a solver --- what happens when a change moves a number. It is a
+statement of policy rather than a description of machinery, so where the code
+enforces something the text says so, and where it does not, it says that too.
+
+\textbf{Version 1.0 is the first public release} (\cref{ch:revisions}).
+
+\section{The version number}
+\label{sec:policy:scheme}
+
+The version is \code{MAJOR.MINOR.PATCH}, defined by three macros in
+\file{yuzen/src/Version.h} and formatted by \code{C\_Yuzen::Version()}. Each
+level is a promise to you.
+
+\begin{description}
+
+  \item[PATCH] Bug fixes and documentation. \textbf{Existing input files keep
+    working, unchanged.} Numerical results may change \emph{only} where the
+    previous behavior was wrong, and any such change is listed in
+    \cref{ch:revisions} together with the size of the difference and the case
+    it was measured on. A patch release that moves a number without saying so
+    is a defect in the release, not a permissible one.
+
+  \item[MINOR] New features: new input keys, new allowed values for an existing
+    key, new physics terms, new output columns. \textbf{Existing input files
+    keep working} --- a key that gains a new allowed value, or an optional key
+    that did not exist before, breaks nothing, because an absent key takes its
+    default. Results of existing cases do not change, for the reason set out in
+    \cref{sec:repro:order}: a new term is appended to the registration list and
+    is disabled by default, so a case that does not use it is bit-identical.
+
+  \item[MAJOR] A change that can invalidate existing input files or existing
+    results: a key whose meaning changes, a default that changes, a
+    discretization that is replaced. A major release is where such a change is
+    allowed to happen, and where you should expect to re-run anything you care
+    about.
+
+\end{description}
+
+Then there is the rule the code actually implements.
+\code{C\_Yuzen::VersionSeries()} returns \code{MAJOR.MINOR} only, and
+\code{Input::ReadRoot()} in \file{yuzen/src/IO/Input.cpp} checks
+\key{SolverName} against a list of accepted series. So \key{SolverName} in an input file names
+\code{MAJOR.MINOR} and never the patch level: at version 1.0.0 the list holds
+the single entry \val{"Yuzen-1.0"}, and anything else ends the run with
+\code{Invalid value. SolverName must be one of [...]}, the list itself printed in
+the message.
+
+\textbf{A patch release therefore never requires editing an input file}, which
+is the point of the rule.
+
+\begin{note}[How a minor release keeps older input files working]
+  The check is against a \emph{list} of accepted series, built in
+  \code{Input::ReadRoot()}, which at 1.0 holds the single entry
+  \val{"Yuzen-1.0"}. A minor release that does not change how any key is
+  interpreted \textbf{adds} its new series to that list and leaves the old
+  entries in place, so input files written for 1.0 keep running on 1.1
+  untouched. The list is pruned only when the interpretation of a key really
+  has changed --- a renamed key, a changed default, a changed meaning. Dropping
+  a series is therefore a deliberate act, it makes older input files fail
+  loudly rather than silently produce a different answer, and every such
+  removal is recorded in \cref{ch:revisions}.
+\end{note}
+
+The version alone does not identify a build. \file{JobInfo.txt} records the
+version, the build date and the compiler, alongside the versions of the input
+reader, grid and utility layers (\cref{sec:output:jobinfo}). A result directory
+thus records which binary produced it \emph{within} one patch level as well as
+across patch levels --- which is what makes a difference between two runs
+traceable when both of them claim to be 1.0.0.
+
+\section{What ``results may change'' means, and how it is bounded}
+\label{sec:policy:results}
+
+This is the section that matters. A solver whose numbers quietly drift between
+releases is not usable for anything that has to be defended later, so the
+commitment is this:
+
+\begin{quote}
+  \textbf{Within a major version, any change that alters numerical output is
+  treated as a change of behavior. It is documented with a quantified
+  difference --- the case it was measured on and how large the difference was
+  --- and not merely mentioned.}
+\end{quote}
+
+That commitment is workable only because the repository already distinguishes
+three situations, and keeps them apart deliberately.
+
+\begin{description}
+
+  \item[A refactoring, which must be bit-identical.] Restructuring that is not
+    meant to change anything. The requirement is not ``small differences''; it is
+    that \file{tools/compare.py} reads \code{0.000e+00} in every column of
+    every compared case. This is achievable, rather than aspirational, because
+    the solver is written to make it so --- the deterministic reductions, the
+    CRS storage order, the registration order and the two direction orderings
+    of \cref{ch:reproducibility} exist for exactly this reason, and the
+    restructurings that produced the current code were all validated that way
+    (\cref{sec:layout:workflow}).
+
+  \item[A bug fix, which changes results because the old numbers were wrong.]
+    Here the difference is the point, not an accident. The entry in
+    \cref{ch:revisions} says what was wrong, which cases move, and by how much;
+    if the old behavior was wrong only under a condition, the entry says which
+    condition, so that you can tell whether your own results are affected. A
+    bug fix of this kind is a PATCH release.
+
+  \item[A deliberate change of method.] A different discretization, a different
+    default, a different convergence test. These change results everywhere and
+    are not bug fixes. They require at least a MINOR bump --- a MAJOR one if an
+    existing input file would mean something different afterwards --- and an
+    entry in \cref{ch:revisions} that quantifies the change on a named case.
+
+\end{description}
+
+The instrument is \file{tools/compare.py} in all three cases. It compares
+\file{History.dat} and the final \file{field*.dat} column by column, normalizes
+each column's largest difference by that column's own scale, and holds the four
+solver-diagnostic columns --- \code{NK\_iter}, \code{NK\_resid},
+\code{BCG\_iter}, \code{BCG\_resid} --- out of the pass/fail decision while
+still reporting them. That last detail matters when you read a comparison: an
+iteration count that moved while every physical column reads \code{0.000e+00}
+is a change in how the answer was reached, not in the answer.
+
+\begin{warn}[Compare like with like]
+  A comparison across two linear-solver backends, or between a build with AMGCL
+  and one without, cannot show bit-identity and is not evidence of anything:
+  the backends agree only to the linear-solver tolerance
+  (\cref{sec:linsolve:choosing}), and \val{"amgcl"} is not even reproducible
+  under a change of thread count. Fix the backend and the thread count on both
+  sides.
+\end{warn}
+
+\section{Input-file compatibility}
+\label{sec:policy:compat}
+
+\textbf{What is guaranteed.} An input file written for 1.0 runs on any 1.0.x,
+and every key in it keeps the meaning this manual gives it. This covers a
+block-structured \file{.inp} file as well as a TOML one, since the two produce the same
+tree (\cref{sec:inputformat:legacy}). New optional keys may appear at 1.1; leaving them out
+will continue to give you the behavior you have now.
+
+\textbf{What is not guaranteed, and why it needs care.} A key that is renamed
+or removed cannot go unnoticed: an entry the solver does not read stops the
+run, naming it (\cref{sec:inputformat:unknown}), so an input file that uses an
+old spelling fails loudly rather than running with that key at its default.
+What no check can catch is a key that keeps its name and changes its default
+or its meaning; the same goes for what a block left out of the file stands for
+(\cref{sec:inputformat:defaults}).
+
+\begin{warn}[A changed default is not diagnosed, so it is listed instead]
+  Because the parser cannot warn you about it, the policy carries the burden
+  instead: \textbf{a release that renames or removes a key, or changes a
+  default, lists it in \cref{ch:revisions}}, with the old and the new
+  spelling, or the old and the new value. Reading that list is the only
+  defense against a changed default, so read it before running a case you
+  cannot afford to re-verify on a new release.
+\end{warn}
+
+Keep the copy of the input file that every result directory contains
+(\cref{sec:output:dir}). It is a verbatim copy of what produced that run, which
+makes it the reference when you need to establish, later and under a newer
+version, what a result was actually computed from.
+
+\section{Output-format stability}
+\label{sec:policy:outputs}
+
+\file{field*.dat} is not only an output file: it is also the ASCII restart
+format (\cref{sec:output:field}). Its column layout is therefore \textbf{fixed
+within a major version} --- a restart file written by 1.0.0 is read by 1.0.x
+and by 1.1, and the columns mean the same things. That is also why it is
+written with 18 significant digits whatever \key{Output.Dimensioned} says.
+
+\file{History.dat} and \file{CalcInfo.dat} are diagnostics, and the policy for
+them is looser: \textbf{they may gain columns at the end in a minor release.}
+Both files begin with a header line naming every column, so
+
+\begin{quote}
+  \textbf{read them by header name, never by column position.}
+\end{quote}
+
+A script that indexes \file{History.dat} by number will keep working until the
+day a column is added and then quietly report the wrong quantity. A script that
+looks the name up will not. Columns are not renamed and not reordered within a
+major version; only appended.
+
+\section{What is maintained and what is not}
+\label{sec:policy:support}
+
+Short and honest.
+
+\begin{description}
+  \item[Maintained.] The three models --- well-mixed in one dimension,
+    well-mixed in two, and the through-thickness concentration model
+    \val{"CZ"} (\cref{ch:concentration}) --- the shipped cases of
+    \cref{ch:cases}, and the test suite of \cref{sec:verification:suite}. These
+    are built, run and checked; a change that breaks one of them is a broken
+    change.
+  \item[Not promises.] Everything in \cref{ch:notverified}. Those items are
+    known gaps in the evidence, listed so that you do not assume otherwise.
+    They are not undertakings to close them, and an unverified quantity is not
+    thereby a wrong one --- it is one for which Yuzen offers you nothing, and
+    where you should supply your own evidence.
+  \item[Not offered, and why.] An in-house BiCGStab backend with ILU(0),
+    measured during development and left out of the release. In 1-D it was
+    four to six times slower than \val{"eigen"}
+    (\cref{sec:linsolve:choosing}), it needed 3676 linear iterations on
+    \file{leveling\_1d\_reg} where \val{"eigen"} needs 21
+    (\cref{sec:verification:backends}), and it had defects of its own; and
+    \val{"eigen"} gives everything it offered, including bit-identity under
+    a change of thread count
+    (\cref{ch:reproducibility,sec:verification:linalg}). If you are choosing
+    a backend for production work,
+    \cref{sec:linsolve:choosing} is the section to read.
+\end{description}
+
+\section{Reporting a problem}
+\label{sec:policy:reporting}
+
+A report is actionable when somebody else can reproduce what you saw. Five
+things make that possible, and they are all things you already have.
+
+\begin{enumerate}
+  \item \textbf{The version and the build date}, copied from
+    \file{JobInfo.txt} in the result directory. ``1.0'' is not enough; the build
+    date and the compiler distinguish two binaries at the same patch level.
+  \item \textbf{The input file} --- the copy in the result directory, not the
+    one in your working tree, which you may have edited since
+    (\cref{sec:output:dir}).
+  \item \textbf{The termination message}, the line near the end of the run
+    log that says why the run ended (\cref{tab:termination}). The log goes to standard output and to no file,
+    so it survives only if you redirected it (\cref{sec:output:running}). A
+    run that stopped on \code{Steady state.} and a run that stopped on
+    \code{Dry out.} are different reports.
+  \item \textbf{Whether \file{Warnings.txt} and \file{FatalErrors.txt} have
+    content}. Neither file carries a banner, so each is empty exactly when
+    nothing was raised, and anything in either is a real message
+    (\cref{sec:output:warnings}). A fatal error is written to
+    \file{FatalErrors.txt} \emph{and} to standard error. The one abort that
+    leaves no file is an input the solver rejects, which happens before the
+    result directory exists; then the message is on standard error only.
+  \item \textbf{The smallest case that still shows it.} Coarsen the mesh,
+    shorten the end time, and switch off the physics terms one at a time until
+    the behavior disappears; the term whose removal makes it go away is a
+    large part of the report. A case that takes ten seconds gets looked at.
+\end{enumerate}
+
+\begin{note}[A thread-count difference is always a bug]
+  If a case gives different results at different thread counts on the
+  \val{"eigen"} backend, that is a defect by definition
+  --- thread invariance is one of the claims the test suite asserts
+  (\cref{ch:reproducibility,sec:verification:linalg}) --- and it is worth
+  reporting as such, with the two \file{compare.py} outputs attached. The one
+  case where it is expected rather than wrong is \val{"amgcl"}, whose internal
+  reductions are non-deterministic (\cref{sec:linsolve:choosing}).
+\end{note}

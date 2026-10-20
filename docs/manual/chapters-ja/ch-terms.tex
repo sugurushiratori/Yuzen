@@ -1,0 +1,174 @@
+% ch-terms.tex -- theory: the individual physics terms of the flux
+\chapter{物理項}
+\label{ch:terms}
+
+\Cref{eq:flux}は六つの流束寄与をまとめた式であり、\cref{eq:height}にはさらに蒸発と供給源が加わる。各項は\key{Physics}の下に専用のサブブロックと\key{Enable}キーを持ち、一つずつ有効・無効を切り替えられる。本章では各項を順に取り上げ、項の意味、膜への作用、その項が支配的なときに現れる挙動、制御するキーを述べる。キーは名前だけを挙げる。型、既定値、範囲は\cref{ch:ref-physics}の表にまとめたので、ここでは繰り返さない。
+
+\section{毛管圧（ラプラス圧）}
+\label{sec:terms:laplace}
+
+\begin{equation}\label{eq:q-cap}
+  \Qvec_{\mathrm{cap}}
+    = \frac{\hat{\sigma}(C)\,H^{3}}{3\hat{\mu}(C)}\,\nabla\nabla^{2}(H+S).
+\end{equation}
+
+表面張力が自由表面を平らにしようとする作用を表す。「レベリング」と呼ばれる現象のほぼすべて、すなわち粗い塗膜がひとりでに平滑になること、液滴が球冠形状へ緩和すること、凹凸のある基板のくぼみに液が集まることは、この項による。通常はほぼすべての計算で有効にしておく。
+
+押さえておくべき点が二つある。第一に、\textbf{膜厚の式が四階になるのはこの項のためである}。$\nabla\nabla^{2}$は発散の内側で$H$に三階の微分として作用するので、\cref{eq:height}は空間四階の微分を含む。そのため各境界に二つの条件が必要となり（\cref{sec:conc:boundaries}）、線形系も現在の形になる（\cref{ch:linearsolver}）。第二に、曲率は膜厚$H$ではなく自由表面$H+S$で測る。基板形状が問題に入るのは、この経路を通じてである。
+
+この項の移動度は$\hat{\mu}(C)$だけでなく$\hat{\sigma}(C)$も含む。そのため、膜が乾燥して表面張力が変わると、レベリングの速さも変わる。
+
+キーは\key{Physics.LaplacePressure.Enable}だけである（\cref{sec:ref-physics:laplace}）。
+
+\section{分離圧}
+\label{sec:terms:disjoining}
+
+\begin{equation}\label{eq:q-dis}
+  \Qvec_{\mathrm{dis}} = \Dpn\,\frac{H^{3}}{3\hat{\mu}}\,\nabla\Pihat(H),
+  \qquad
+  \Pihat = (\Hstar/H)^{n} - (\Hstar/H)^{m},
+  \qquad n > m > 1.
+\end{equation}
+
+膜がごく薄くなると、基板と自由表面の間に相互作用が働き始める。この相互作用を圧力として表したものが分離圧である。部分濡れ、すなわち有限の接触角と移動できる接触線は、この項によってモデルに入る。$\Pihat$の第一項は斥力で、膜を厚く保とうとする。第二項は引力である。両者は$H = \Hstar$で打ち消し合って$\Pihat = 0$となり、この膜厚の膜が液滴の外側に前駆膜として残る。
+
+典型的な形は、薄い前駆膜の上に有限の広がりの液滴が載り、間を遷移領域がつなぐものである。遷移領域の幅は$\Hstar$と接触角で決まる。係数$\Dpn$を指定の接触角に合わせて較正する方法と、遷移領域の実際の幅は、\cref{ch:wetting}で扱う。
+
+\key{Physics.DisjoiningPressure}ブロックのキーは\key{Enable}、\key{ContactAngle}、\key{ExponentN}、\key{ExponentM}の四つである。前駆膜の厚さは\key{Initial.SurfaceShape.PrecursorRatio}で与える（\cref{sec:ref-physics:disjoining}）。\key{PrecursorRatio}を\val{0}のままこの項を有効にすると、$\Hstar$が定まらず計算は終了する。
+
+\begin{warn}[モデルの中で最も硬い項]
+  $\Pihat \sim H^{-n}$は非常に強い非線形性を持つ。慣用の指数$(n,m) = (3,2)$では、膜厚が半分になると斥力側の分岐は8倍になる。この組は\key{ExponentN}と\key{ExponentM}の既定値である（\cref{sec:ref-physics:disjoining}）。
+  式中のほかの項で、$H$のわずかな変化にこれほど急峻に応答するものはない。この項を有効にした場合、ニュートン反復、線形系の条件数、許容される時間刻みはいずれもこの項で決まると考えてよい。
+\end{warn}
+
+\section{鉛直重力と基板形状}
+\label{sec:terms:vgravity}
+
+\begin{equation}\label{eq:q-vg}
+  \Qvec_{\mathrm{vg}} = -\frac{\Bo}{3}\,\frac{H^{3}}{\hat{\mu}}\,\nabla(H+S).
+\end{equation}
+
+基板に垂直な重力を表す。静水圧によって、液は自由表面の高い部分から低い部分へ流れる。そのため水平な基板上では凸部を平らにし、毛管圧と同じ向きに働く。膜をレベリングするのはこの二つの項である。両者の違いは微分の階数、つまり効く長さスケールにある。毛管圧がほとんど感じない長波長の凹凸も、重力はレベリングする。
+
+キーは\key{Physics.VerticalGravity.Enable}と\key{Physics.\bk VerticalGravity.\bk Acceleration}で、後者の単位は\si{\metre\per\second\squared}である（\cref{sec:ref-physics:vgravity}）。角度$\alpha$だけ傾いた基板を扱う場合は、ここに$g\cos\alpha$を与え、面内成分は\cref{sec:terms:hgravity}の項で与える。
+
+\subsection*{基板形状}
+
+基板形状$S(x,y)$は\key{Substrate}ブロックで作る。\key{RectBump}、\key{EllipseBump}、\key{PeriodicWave}、\key{FlatPlane}、\key{MexicanHat}、\key{SmoothConvex}の各ブロックをいくつでも並べられ、\key{Order}の昇順に適用して一つの形状に合成する（\cref{sec:ref-domain:substrate}）。基板は動かず、時間変化もしない。
+
+$S$は$H+S$の形でしか式に入らず、それも\cref{eq:q-cap,eq:q-vg}に限られる。\textbf{毛管圧も鉛直重力も無効のときは、基板形状はまったく影響しない}。読み込まれ、構築され、出力にも書き出されるが、どの項からも参照されない。手間をかけて作った基板形状がなぜ効かないのか、半日悩むことになる典型的な原因である。
+
+\section{面内重力}
+\label{sec:terms:hgravity}
+
+\begin{equation}\label{eq:q-hg}
+  \Qvec_{\mathrm{hg}} = \frac{\Pvec}{3}\,\frac{H^{3}}{\hat{\mu}}.
+\end{equation}
+
+傾いた基板を流れ下る流れを表す。鉛直重力との違いは、駆動場が位置によらない一定のベクトルで、勾配を一切含まない点にある。このとき流束は$H^{3}$に比例するだけなので、\textbf{膜の厚い部分ほど速く流れる}。厚い領域が薄い領域に追いつき、先端に前線ができる。この前線の急峻化がこの項に特有の挙動であり、斜面を流れ下る実際の塗膜で見られるフィンガリング不安定の起源となる。
+
+キーは\key{Physics.HorizontalGravity.Enable}と\key{Physics.\bk HorizontalGravity.\bk Acceleration}で、後者は\si{\metre\per\second\squared}単位の組$(g_x, g_y)$である（\cref{sec:ref-physics:hgravity}）。$\alpha$だけ傾いた基板では面内成分$g\sin\alpha$を与える。$30^\circ$なら\num{4.903}である。符号で下り方向を指定する。
+
+\section{遠心力}
+\label{sec:terms:centrifugal}
+
+\begin{equation}\label{eq:q-cf}
+  \Qvec_{\mathrm{cf}} = \frac{\Spn}{3}\,\frac{H^{3}}{\hat{\mu}}\,r\,\er.
+\end{equation}
+
+基板が回転すると、膜は外向きに振り飛ばされる。スピンコーティングの主な駆動力である。駆動場は回転軸からの距離$r$に比例するので、面内重力と異なり一様ではない。効果は中心で弱く、外縁で最も強い。スピンコートした膜が中央から薄くなっていくという特有の経過は、これによって生じる。
+
+キーは\key{Physics.Centrifugal.Enable}、\si{\radian\per\second}単位の\key{Physics.Centrifugal.RotationRate}、回転中心の座標をメートル単位で与える\key{Physics.Centrifugal.RotationAxis}である（\cref{sec:ref-physics:centrifugal}）。
+
+\begin{note}[1次元のスピンコーティング計算での$y$方向の扱い]
+  \val{"xh"}の計算には、液が振り飛ばされる先の$y$方向がない。それでも液は本来その方向へ振り飛ばされる。ソルバーはこれを考慮し、解かない$y$方向から出ていくはずの量を損失として扱う。損失は$\partial_y[\tfrac13\mathrm{Sp}\,H^3(y-y_0)/\hat\mu] = \tfrac13\mathrm{Sp}\,H^3/\hat\mu$で、その位置で$y$方向に一様な膜の直線$y = y_0$に相当する。したがって1次元のスピンコーティング計算は2次元計算の断面ではなく、両側が壁でも全体積は減少する。両モデルともこの扱いをとり、\val{"CZ"}では横方向の発散を鉛直速度にも反映する。この経路で出ていく量は\file{History.dat}に流出として計上する（\code{OutflowedVol}、\code{OutflowedResin}）ので、\code{VolErr}の収支は合う（\cref{sec:output:history}）。
+\end{note}
+
+回転する膜は周期的ではない。アームの長さ$r$は領域内で増加し、周期境界の継ぎ目では領域長だけ跳ぶので、そこで液が生じたり失われたりする。そのため、ソルバーは遠心力項と\val{"Periodic"}境界の組み合わせを受け付けない（\cref{sec:ref-bcout:boundary}）。領域の外まで続く帯状の膜を扱うには、両端を\val{"Outlet"}とする。唯一の例外は製造解を用いる計算（\key{Numerics.ManufacturedSolution}）で、この場合の供給項は各セルのアーム長に合わせて作る。\file{tools/mms.py}の周期領域では、すべての項を同時に含めている。
+
+\section{溶質マランゴニ効果}
+\label{sec:terms:marangoni}
+
+\begin{equation}\label{eq:q-sc}
+  \Qvec_{\mathrm{sc}} = \frac{\As\,\Ma}{2}\,\frac{H^{2}}{\hat{\mu}}\,\nabla C.
+\end{equation}
+
+表面張力が濃度に依存するために生じる表面応力である。乾燥の速い場所では濃度が上がり、それに伴って表面張力が変わる。こうしてできた勾配が、自由表面に沿って液を引きずる。塗膜の乾燥むらや流れすじは、多くの場合この効果から始まる。
+
+$H$のべき指数に注目されたい。\textbf{この項は$H^{3}$ではなく$H^{2}$に比例する。厚さ全体に働く体積力ではなく、表面に加わるせん断だからである。}一定の体積力を放物線分布にわたって積分すると$H^{3}/3$、表面トラクションへの応答を積分すると$H^{2}/2$となる。その結果、膜が薄くなるほどマランゴニ流は相対的に重要になる。濃度勾配が最も強くなるのも、ちょうどこの時期である。
+
+キーは\key{Physics.SolutoCapillarity.Enable}と\key{Fluid.SurfaceTension.Coef}である。後者は$\mathrm{d}\sigma/\mathrm{d}c$で、単位は単位濃度あたりの\si{\newton\per\metre}である（\cref{sec:ref-physics:soluto}）。\key{Coef}の符号で、液が引かれる向きが決まる。\key{Enable = false}とすると$\Ma = 0$に固定され、この項がなくなると同時に、ほかのすべての箇所でも表面張力の濃度依存性がなくなる（\cref{sec:conc:properties}）。
+
+\section{基板でのナビエすべり}
+\label{sec:terms:slip}
+
+すべりは独立した項ではなく、すべての移動度を変更するものである。すべり長さ$\lambda$を与えると、基板での速度はゼロではなく$\lambda\,\partial u/\partial z$となる。放物線分布に一様なすべり速度が加わり、膜厚方向に積分した流束は次のようになる。
+%
+\begin{equation}\label{eq:q-slip}
+  \Qvec = -\frac{1}{\mu}\Big(\frac{h^{3}}{3} + \lambda h^{2}\Big)\nabla p
+          + \frac{1}{\mu}\Big(\frac{h^{2}}{2} + \lambda h\Big)\nabla\sigma .
+\end{equation}
+%
+無次元の式では$\Lambda = \lambda/h_0$として、\cref{eq:q-cap,eq:q-dis,eq:q-vg,eq:q-hg,eq:q-cf}の$H^{3}/3$は$H^{3}/3 + \Lambda H^{2}$に、\cref{eq:q-sc}の$H^{2}$は$H^{2} + 2\Lambda H$に置き換わる。すべりなしの部分に対する追加分の比は$3\Lambda/H$対1で、膜が薄くなるほど大きくなる。そのため、すべりが最も効くのは接触線である。接触線では応力の特異性を緩和し、前駆膜が別の仕組みで果たすのと同じ役割を担う。駆動ポテンシャルは変えないので、平衡状態もすべて変わらない。キーは\cref{sec:ref-physics:slip}に示す。使えるのは鉛直一様モデルに限る。
+
+\section{蒸発}
+\label{sec:terms:evaporation}
+
+蒸発は流束への寄与ではない。除去するのは溶媒だけなので、膜厚の式には入るが、溶質の収支には入らない。
+
+\begin{yzntable}{蒸発速度が入る箇所\label{tab:evap-terms}}{@{}l L{0.5\textwidth}@{}}
+\textsf{\bfseries 式} & \textsf{\bfseries 蒸発項} \\ \midrule
+膜厚、\cref{eq:height} & $-\Ev\,\hat{E}(H,C)$ \\
+溶質$HC$、\cref{eq:conc} & なし \\
+濃度$C$、\cref{eq:conc-adv}の形 & $+\Ev\,\hat{E}(H,C)\,C/H$ \\
+\end{yzntable}
+
+膜は薄くなり、残った溶質は濃縮される。$C$で書くと濃縮の項は$H$で割られるので、薄い領域ほど速く濃縮する。\cref{eq:conc-adv}について述べたことと同じである。
+
+蒸発速度は、互いに独立な三つの因子と一つの補正の積で表す。
+
+\begin{equation}\label{eq:evap-factor}
+  \hat{E} = \mathrm{Coef}\cdot f_{\mathrm{conc}}(C)\cdot
+            f_{\mathrm{space}}(X)\cdot f_h(H).
+\end{equation}
+
+\begin{description}
+  \item[濃度、$f_{\mathrm{conc}}$] \key{ConcFunc}で選ぶ。
+    \val{"Raoult"}はラウールの法則で、蒸発速度は溶媒のモル分率に比例する。モル分率は\key{Fluid.MolarMass}のモル質量比$\Mr$から求める。\val{"PowerN"}は$(1 - C - \mathrm{ConcR})^{\mathrm{PowerN}}$で、負にならないよう下限をゼロとする。
+  \item[位置、$f_{\mathrm{space}}$] \key{SpatialFunc}で選ぶ。
+    \val{"uniform"}は面内のどこでも同じ値をとる。\val{"negPow"}は、格子座標の原点を中心とする半径$R = \mathrm{NegPowRmax}$の円形プールについて、縁までの距離のべきで与える。
+    \begin{equation}\label{eq:evap-negpow}
+      f_{\mathrm{space}} = \min\!\Bigl(k\,\bigl(1 - r/R'\bigr)^{-n},\ 10\Bigr),
+      \qquad k = \tfrac{1}{2}(1-n)(2-n),\quad R' = 1.001\,R,
+    \end{equation}
+    ここで$r = \sqrt{x^2+y^2}$、$n = \mathrm{NegPowExponent} < 1$である。$k$は円板$r < R'$上の平均を1にする係数で、そのためには$n < 1$が必要となる。$0 < n < 1$では蒸発速度は縁に向かって発散し、10で頭打ちとなる。$n = 0$なら一様、$n < 0$なら縁で蒸発速度がゼロまで下がる。$R$の手前の最後の5セルでは、曲線の値と傾きを引き継いで$R$で水平になる四分の一周期の余弦に滑らかにつなぐ。$R$より外側では蒸発速度は一定である。
+  \item[前駆膜補正、$f_h$] 前駆膜からの蒸発を抑える補正である。\key{PrecursorRatio}がゼロより大きいときに限り適用し、膜厚に対して線形に立ち上がる。\textbf{$H = \Hstar$でゼロ、$H = 20\Hstar$で1となる。}$\Hstar$未満でもゼロなので、前駆膜より薄い膜は蒸発せず、溶媒を取り込むこともない。前駆膜が乾ききって消えるのを防ぐための補正であり、接触線を含む計算では常に有効となる。
+\end{description}
+
+どのステップでも、膜が持つ以上の溶媒は除去しない。$h/(2\Delta t)$による上限に加えて、ステップの始めと終わりの両方で、両方の式に$E\Delta t \le h(1-c)$を課す。そのため膜は$c = 1$に向かって乾燥するが、$c = 1$を超えることはなく（蒸発速度が$c$によらない場合、各ステップの後に残りの溶媒の三分の一が残る）、溶質が除去されることもない。ラウールの法則では$c$を$[0, 1]$の範囲に収めて用いる。
+
+\key{Physics.Evaporation.Coef}は速度の次元\si{\metre\per\second}を持ち、$\Ev$と$\Pen$の両方を決める。この値を変えると、乾燥速度だけでなく拡散との釣り合いも変わる。乾燥完了とみなして計算を止める条件は、\key{EndConcType}（\val{"mean"}、\val{"max"}、\val{"min"}のいずれか）と\key{EndConcValue}で設定する。これらのキーはすべて\cref{sec:ref-physics:evaporation}の表にまとめてある。
+
+\section{供給源（ノズル）}
+\label{sec:terms:source}
+
+\cref{eq:height}に加わる供給項$\hat{S}$である。回転するアームの先端に付けたノズルから膜の上に液を吐出するモデルで、静止した吐出と移動する吐出の両方を扱える。キーは\key{Physics.Source}にある（\cref{sec:ref-physics:source}）。
+
+\begin{description}
+  \item[供給範囲] \key{Radius}はノズル口の半径（メートル）である。各セルへの供給は、この円（1次元では区間）がセルを覆う割合に比例する。\key{SubRegions}はこの割合を求めるときのセルあたりの分割数で、大きくするほど、ノズルの移動に伴う供給の変化が滑らかになる。各小区画は、中心が供給範囲の内側にあるときに計上する。
+  \item[供給速度] \key{InletRate}は定常状態での供給量で、膜厚の増加速度として\si{\metre\per\second}の次元で与える。\key{TimeConstant}は立ち上がりの時定数$\tau$（秒）で、供給速度は$1 - e^{-t/\tau}$に比例して増加する。
+  \item[アーム] \key{ArmCenter}は回転軸の位置（メートル）、\key{ArmLength}はアームの長さ（メートル）、\key{RotationRate}はアームの角速度（\si{\radian\per\second}）、\key{StartAngle}は初期角度（ラジアン）である。
+    \key{ArmLength = 0}とすると、ノズルは動かない。\key{RampTime}と\key{PlateauTime}は、回転速度の立ち上がり時間と、一定値を保つ時間である。回転速度は$\omega f(t)$で表す。$f$は$T_s$の間に0から1まで線形に増加し、$T_m$の間1を保ち、次の$T_s$の間に0まで戻る。アームの角度は$\theta = \theta_0 + \omega\int_0^t f\,dt'$なので、アームは$\theta_0 + \omega(T_s + T_m)$で止まり、以後その位置にとどまる。
+\end{description}
+
+\paragraph{供給する液の濃度}
+\key{ConcType}は、着地した液が溶質の収支\cref{eq:conc-dim}に持ち込む量を$c_S\,S$の形で指定する（鉛直一様モデルの場合。\val{"CZ"}はノズルを一切扱わない。\cref{sec:ref-physics:disjoining}を参照）。
+\begin{description}
+  \item[\val{"local"}（既定値）] 液は着地点の濃度をそのままとる。つまり$c_S = c$である。膜は厚くなるが$c$は変わらず、\key{Conc}は使わない。
+  \item[\val{"supplied"}] 液の濃度は\key{Conc}（$[0:1]$の質量分率）、つまり$c_S = \key{Conc}$である。鉛直一様モデルがすべての液に仮定するとおり、液は着地した列の厚さ全体に混合される。そのため列の膜厚が$S$だけ増える間に、列の溶質$hc$は$S\,c_S$だけ増える。流れのない膜では
+    \begin{equation}\label{eq:source-mixing}
+      c(t) = \frac{h_0 c_0 + c_S\int_0^t S\,dt'}{h_0 + \int_0^t S\,dt'},
+    \end{equation}
+    となる。したがってノズル直下の膜は、薄ければすぐに、厚ければゆっくりと$c_S$に近づく。一般には、濃度は$S/h$の速さで$c_S$に引き寄せられる（\cref{eq:conc-adv}）。
+\end{description}
+液とともに入った溶質は、モードに応じた濃度で\file{History.dat}の\code{SuppliedResin}に計上する（\cref{sec:output:history}）。

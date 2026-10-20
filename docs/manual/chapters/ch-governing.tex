@@ -1,0 +1,331 @@
+% ch-governing.tex -- theory: the long-wave equations, their scaling and their limits
+\chapter{The governing equations}
+\label{ch:governing}
+
+This chapter states what Yuzen actually solves: one evolution equation for the
+film thickness, one transport equation for the solute, the approximation that
+reduces the Navier--Stokes equations to them, and the scaling that turns them
+into the dimensionless form the solver works in. Read it if you want to know
+what a given input key does to the mathematics, or where the model stops being
+trustworthy. The individual flux terms are taken one at a time in
+\cref{ch:terms}; the keys themselves are in \cref{ch:ref-physics,ch:ref-domain}.
+
+\section{The long-wave approximation}
+\label{sec:governing:longwave}
+
+When the film thickness $h$ is small compared with the representative in-plane
+length $L$, the Navier--Stokes equations collapse into a single evolution
+equation for $h(x,y,t)$. This is the long-wave --- or lubrication ---
+approximation, and it is the equation Yuzen solves. Four assumptions go into
+it, and each of them buys something and costs something.
+
+\begin{itemize}
+  \item \textbf{The aspect ratio is small}, $\varepsilon = h_0/L_0 \ll 1$. This
+    is what allows the cross-film coordinate to be eliminated altogether: you
+    solve a problem in one or two dimensions instead of two or three, and the
+    unknown is a surface rather than a volume. The cost is that every
+    conclusion is an expansion in $\varepsilon$, so nothing the model says
+    about a feature as short as the film is thick can be believed.
+  \item \textbf{Inertia is negligible.} The velocity profile across the film is
+    then exactly parabolic, with no slip at the substrate (or a Navier slip
+    length, \key{Physics.Slip}: \cref{sec:terms:slip}) and a shear stress at
+    the free surface set solely by the surface-tension gradient. This is what
+    makes the depth-integrated flux $\Qvec$ an explicit algebraic function of
+    $h$ and the driving pressures, with no momentum equation left to solve. The
+    cost is that fast rotation and low-viscosity films, where the profile
+    departs from the parabola, are outside the model.
+  \item \textbf{The pressure is uniform across the film.} Capillary pressure,
+    gravity and disjoining pressure all enter one single pressure. This is what
+    lets every physical effect be added as one more term in the same bracket,
+    and it is why switching a term off is a matter of zeroing a coefficient
+    rather than changing the equation. The cost is that no effect with
+    structure through the thickness --- a pressure that varies with depth ---
+    can be represented at all.
+  \item \textbf{The interface slope is small}, so the curvature may be
+    linearized to $\nabla^2 h$; that is, the denominator of the exact mean
+    curvature $\nabla\cdot\bigl(\nabla h/\sqrt{1+|\nabla h|^2}\bigr)$ is set to
+    1. This is what keeps the capillary term linear in the highest derivative
+    and the whole equation tractable. The cost is a direct error wherever the
+    surface is steep, which is exactly where a contact line is; see
+    \cref{sec:governing:breakdown}.
+\end{itemize}
+
+\section{The dimensional equations}
+\label{sec:governing:dimensional}
+
+In dimensional variables the film thickness obeys
+
+\begin{equation}\label{eq:height-dim}
+  \frac{\partial h}{\partial t} = -\nabla\cdot\Qvec \;-\; E(h,c) \;+\; S(x,t),
+\end{equation}
+
+where $\Qvec$ is the flux integrated across the thickness, $E$ is the rate at
+which evaporation removes thickness, and $S$ is liquid supplied from a nozzle.
+The flux collects six contributions:
+
+\begin{equation}\label{eq:flux-dim}
+  \begin{aligned}
+    \Qvec = {}& \frac{\sigma h^{3}}{3\mu}\,\nabla\nabla^{2}(h+s)
+      && \text{capillary pressure} \\
+      &{}- \frac{\rho g_z h^{3}}{3\mu}\,\nabla(h+s)
+      && \text{vertical gravity} \\
+      &{}+ \frac{h^{3}}{3\mu}\,\nabla\Pi(h)
+      && \text{disjoining pressure} \\
+      &{}+ \frac{h^{2}}{2\mu}\,\nabla\sigma
+      && \text{Marangoni stress} \\
+      &{}+ \frac{\rho g_\parallel h^{3}}{3\mu}
+      && \text{in-plane gravity} \\
+      &{}+ \frac{\rho \omega^{2} h^{3}}{3\mu}\,r\,\er
+      && \text{centrifugal force.}
+  \end{aligned}
+\end{equation}
+
+Here $h$ is the film thickness and $s(x,y)$ is the height of the substrate, so
+the free surface sits at $h+s$. The distinction matters and it is not
+cosmetic. \textbf{Capillary pressure and vertical gravity are driven by the
+shape of the free surface $h+s$}, because both are consequences of where the
+liquid surface is in space; \textbf{disjoining pressure is a function of the
+film thickness $h$ alone}, because it describes an interaction between the
+substrate and the free surface whose strength depends only on how far apart
+they are. One practical consequence is that a substrate shape does nothing
+unless at least one of the first two terms is enabled
+(\cref{sec:terms:vgravity}).
+
+Both $\mu = \mu(c)$ and $\sigma = \sigma(c)$ depend on the solute
+concentration (\cref{sec:conc:properties}), which is what couples
+\cref{eq:height-dim} to the transport equation below.
+
+\begin{note}[The velocity Yuzen writes out is not a new unknown]
+  Nothing in \cref{eq:height-dim,eq:flux-dim} solves for a velocity. The
+  in-plane velocity in the field output is the quantity $\Qvec/h$ --- the
+  depth-averaged velocity implied by the flux, summed over the active terms.
+  The \file{.vts} files of the well-mixed models also report it term by term,
+  one array per contribution in \cref{eq:flux-dim} except the disjoining
+  pressure (\cref{sec:output:vtk}). That decomposition is the most direct way
+  to see which physical effect is actually moving the liquid at a given place
+  and time.
+\end{note}
+
+\section{Solute transport}
+\label{sec:governing:concentration}
+
+The solute (resin) concentration $c$ is a mass fraction, so $c = 1$ means
+completely dry. In the well-mixed model it is taken to be uniform across the
+thickness, and what is conserved is the solute held in a column of the film,
+$hc$:
+
+\begin{equation}\label{eq:conc-dim}
+  \frac{\partial (hc)}{\partial t} + \nabla\cdot\bigl(c\,\Qvec\bigr)
+    = \nabla\cdot\bigl(D(c)\,h\,\nabla c\bigr) \;+\; c_S\,S .
+\end{equation}
+
+The solute is carried by the same flux $\Qvec$ that moves the liquid in
+\cref{eq:height-dim}, spreads by diffusion along the film, and arrives with the
+liquid a nozzle supplies. $c_S$ is the concentration that liquid arrives at,
+chosen by \key{Physics.Source.ConcType} (\cref{sec:terms:source}): $c_S = c$,
+the concentration already present where it lands (\val{"local"}, the
+default), or $c_S = \key{Physics.Source.Conc}$ (\val{"supplied"}), mixed
+through the thickness of the column it lands on. \textbf{Evaporation does not appear}: it removes
+solvent and leaves the solute behind. This is the equation Yuzen evolves ---
+the unknown it advances is the solute $hc$ of each cell, with the film $h$ of
+the same step --- so the solute of a closed film is conserved to rounding and a
+uniform $c$ stays uniform whatever the film does, unless liquid of another
+concentration is supplied (\cref{sec:disc:wm-conservative}).
+
+Subtracting $c$ times \cref{eq:height-dim} gives the same law for $c$ itself,
+with $\uvec = \Qvec/h$ the mixed velocity of all the enabled terms:
+%
+\begin{equation}\label{eq:conc-adv}
+  \frac{\partial c}{\partial t} + \uvec\cdot\nabla c
+    = \frac{1}{h}\,\nabla\cdot\bigl(D(c)\,h\,\nabla c\bigr)
+      \;+\; \frac{E c}{h} \;+\; \frac{S\,(c_S - c)}{h}.
+\end{equation}
+
+It is the clearer form to read, and its evaporation term is the one that makes drying
+interesting. Evaporation removes
+solvent but not solute, so whatever is left behind becomes more concentrated;
+the rate at which it does so is the thickness lost per unit time, $E$, divided
+by the thickness that is there to dilute it, $h$. \textbf{Because it is divided
+by $h$, concentration rises fastest where the film is thinnest.} That is the
+mechanism behind edge effects in a drying coating, and it is also why a
+contact-line calculation needs the precursor-film correction of
+\cref{sec:terms:evaporation}: without it, the thinnest region in the domain
+would dry out first and fastest. The last term is the nozzle's, and it is 0
+when the liquid arrives at the local concentration; liquid supplied at
+another $c_S$ pulls $c$ toward $c_S$ at the rate $S/h$, so a thin film under
+the nozzle takes on the supplied concentration quickly and a thick one slowly.
+
+If you need the distribution of concentration through the thickness rather than
+a depth average, use the \val{"CZ"} model instead (\cref{sec:conc:cz}).
+
+\section{Where the assumptions break down}
+\label{sec:governing:breakdown}
+
+\paragraph{Large slope.} Two separate errors appear together. The linearized
+curvature loses accuracy, and so does the small-angle substitution
+$1-\cos\thetae \approx \thetae^{2}/2$ used to calibrate the disjoining pressure
+(\cref{sec:wetting:dp}). The second error is easy to quantify exactly:
+
+\begin{yzntable}{Error of $1-\cos\thetae \approx \thetae^{2}/2$\label{tab:cos-error}}{@{}d d@{}}
+\textsf{\bfseries $\thetae$ [deg]} & \textsf{\bfseries error} \\ \midrule
+10 & 0.3 \% \\
+20 & 1.0 \% \\
+30 & 2.3 \% \\
+45 & 5.3 \% \\
+90 & 23 \% \\
+\end{yzntable}
+
+\key{Physics.DisjoiningPressure.ContactAngle} accepts anything in $[0:90]$
+degrees, but if you intend to use the angle quantitatively, keep it small.
+
+\paragraph{Inertia.} At high rotation rates, or in a low-viscosity film, the
+velocity profile departs from the parabola the derivation assumes. Nothing in
+the solver detects this; the equations remain perfectly well behaved and simply
+describe a different problem from the one you have.
+
+\paragraph{In-plane lengths approaching the film thickness.} The
+neighborhood of a contact line is by construction a region of large slope and
+short in-plane length --- the two things the approximation is least able to
+handle. The disjoining pressure is the device that lets the long-wave equation
+be carried into that region at all, and \cref{ch:wetting} is about what it can
+and cannot deliver there.
+
+All of this is concentrated in one number. The assumption that the film is thin
+appears in the dimensionless group
+
+\[
+  \As = \left(\frac{L_0}{h_0}\right)^{2},
+\]
+
+and a configuration in which $\As$ falls toward order 1 is outside the range
+of the approximation altogether.
+
+\section{Scales}
+\label{sec:governing:scales}
+
+Every value in the input file is dimensional --- meters, seconds, pascal
+seconds --- but the solver works entirely in dimensionless variables. Five
+scales do the conversion.
+
+\begin{yzntable}{The scales used for non-dimensionalization\label{tab:scales}}{@{}l L{0.42\textwidth} L{0.44\textwidth}@{}}
+\textsf{\bfseries Symbol} & \textsf{\bfseries What it is} &
+\textsf{\bfseries Set by} \\ \midrule
+$L_0$ & In-plane length: the capillary length $\sqrt{\sigma_0/(\rho g)}$, with $g = \SI{9.80665}{\metre\per\second\squared}$ & \key{LengthScaleType}; with \val{"custom"}, $L_0$ is taken from \key{LengthScale} instead \\
+$h_0$ & Film thickness & \key{Initial.SurfaceShape.TotalHeight} \\
+$T_0$ & Time, $\mu_0 L_0^{4}/(\sigma_0 h_0^{3})$ & follows from $\mu_0$, $\sigma_0$, $L_0$ and $h_0$ \\
+$U_0$ & Velocity, $L_0/T_0$ & follows from $L_0$ and $T_0$ \\
+$\varepsilon$ & Aspect ratio, $h_0/L_0$ & follows from $h_0$ and $L_0$ \\
+\end{yzntable}
+
+The reference properties are $\sigma_0 =$ \key{Fluid.SurfaceTension.BaseValue},
+$\rho =$ \key{Fluid.Density.Value} and $\mu_0 =$
+\key{Fluid.Viscosity.BaseValue}. Writing \key{LengthScaleType = "custom"}
+replaces the capillary length by whatever \key{LengthScale} says.
+
+The dimensionless thickness is $H = h/h_0$ and the dimensionless in-plane
+coordinate is $X = x/L_0$. It follows that
+
+\begin{equation}\label{eq:slope-conversion}
+  \text{physical slope} \;=\; \varepsilon \times \text{dimensionless slope},
+\end{equation}
+
+and \cref{eq:slope-conversion} is not a footnote: \textbf{the entire discussion
+of contact angles in \cref{ch:wetting} rests on it}. A dimensionless profile
+that rises by 1 over a unit of $X$ is a physical surface inclined at
+$\varepsilon$, not at $45^\circ$. Four of the five --- $L_0$, $h_0$, $T_0$ and
+$U_0$ --- are printed in the run log on standard output under the heading
+\code{Scaling factors} (\cref{sec:output:running}); read them rather than
+recomputing them. $\varepsilon$ is not printed, but it is $h_0/L_0$ of the two
+that are.
+
+\section{The dimensionless groups}
+\label{sec:governing:groups}
+
+Twelve dimensionless groups carry the whole of the input into the equations.
+
+\begin{yzntable}{The dimensionless groups\label{tab:groups}}{@{}l L{0.225\textwidth} L{0.22\textwidth} L{0.375\textwidth}@{}}
+\textsf{\bfseries Symbol} & \textsf{\bfseries Definition} &
+\textsf{\bfseries Meaning} & \textsf{\bfseries Set by} \\ \midrule
+$\As$   & $(L_0/h_0)^{2}$ & Inverse aspect ratio squared; the strength of capillary pressure & \key{Initial.SurfaceShape.TotalHeight} together with $L_0$ \\
+$\Bo$   & $\rho g_z L_0^{2}/\sigma_0$ & Bond number; gravity normal to the substrate & \key{Physics.\bk VerticalGravity.\bk Acceleration} \\
+$\Pgx$  & $\rho g_x L_0^{2}/(\sigma_0\varepsilon)$ & In-plane gravity along $x$; non-zero on a tilted substrate & \key{Physics.\bk HorizontalGravity.\bk Acceleration[0]} \\
+$\Pgy$  & $\rho g_y L_0^{2}/(\sigma_0\varepsilon)$ & In-plane gravity along $y$ & \key{Physics.\bk HorizontalGravity.\bk Acceleration[1]} \\
+$\Spn$  & $\rho \omega^{2} L_0^{4}/(\sigma_0 h_0)$ & Spin number; centrifugal force & \key{Physics.Centrifugal.RotationRate} \\
+$\Ma$   & $(\mathrm{d}\sigma/\mathrm{d}c)/\sigma_0$ & Marangoni number; how strongly surface tension depends on concentration & \key{Fluid.SurfaceTension.Coef} \\
+$\Dpn$  & $\displaystyle\frac{\As\,(n-1)(m-1)\,\thetae^{2}}{2\,\Hstar\,(n-m)}$ & Disjoining-pressure coefficient, fixed by the target equilibrium contact angle & \key{Physics.DisjoiningPressure.*} together with \key{PrecursorRatio} \\
+$\Hstar$ & \key{PrecursorRatio} & Dimensionless precursor thickness; the root of $\Pihat(\Hstar) = 0$ & \key{Initial.SurfaceShape.PrecursorRatio} \\
+$\Ev$   & $E_0 T_0/h_0$ & Evaporation number; how fast evaporation thins the film & \key{Physics.Evaporation.Coef} \\
+$\Pen$  & $E_0 h_0/D_0$ & P\'eclet number; evaporation against cross-film diffusion & \key{Physics.Evaporation.Coef}, \key{Fluid.Diffusivity.BaseValue} \\
+$\Df$   & $D_0 T_0/L_0^{2}$ & Diffusion number; the speed of in-plane diffusion & \key{Fluid.Diffusivity.BaseValue} \\
+$\Mr$   & $M_{\mathrm{resin}}/M_{\mathrm{solvent}}$ & Molar-mass ratio, used by Raoult's law & \key{Fluid.MolarMass.Solvent}, \key{Fluid.MolarMass.Resin} \\
+$\Lambda$ & $\lambda/h_0$ & Dimensionless slip length; mobility $H^3/3 + \Lambda H^2$ (\cref{sec:terms:slip}) & \key{Physics.Slip.Length} \\
+\end{yzntable}
+
+In these definitions $g_z$, $g_x$ and $g_y$ are the components of gravitational
+acceleration given in the input in \si{\metre\per\second\squared}, $\omega$ is
+the rotation rate in \si{\radian\per\second}, $E_0$ is the evaporation
+coefficient in \si{\metre\per\second} and $D_0$ is the reference diffusivity in
+\si{\metre\squared\per\second}.
+
+$\Bo$, $\Pgx$, $\Pgy$, $\Spn$, $\Ma$ and $\Dpn$ are \textbf{set to zero} when
+the corresponding term is disabled in the input, and the term is then not
+assembled at all (\cref{sec:repro:order}). $\Ev$, $\Pen$ and $\Df$ always carry a value, and evaporation and
+diffusion are switched on and off by separate keys instead. Note the
+side-effect of the first rule: $\Ma = 0$ removes the Marangoni stress and, at
+the same time, removes the concentration dependence of surface tension entirely
+(\cref{sec:conc:properties}).
+
+One number is worth remembering. If you leave the length scale at the capillary
+length and set \key{Acceleration = 9.80665} --- that is,
+$g = \SI{9.80665}{\metre\per\second\squared}$ --- then $\Bo = 1$ exactly, since
+the capillary length is defined as the length at which gravity and surface
+tension balance. \key{Acceleration} is therefore the key to change when you want to
+move $\Bo$.
+
+\section{The dimensionless equations}
+\label{sec:governing:nondim}
+
+With those scales and groups, \cref{eq:height-dim,eq:flux-dim} become
+
+\begin{equation}\label{eq:height}
+  \frac{\partial H}{\partial T} = -\nabla\cdot\Qvec - \Ev\,\hat{E}(H,C) + \hat{S},
+\end{equation}
+
+\begin{equation}\label{eq:flux}
+  \Qvec = \frac{H^{3}}{3\hat{\mu}}
+    \Bigl[\,\hat{\sigma}\,\nabla\nabla^{2}(H+S)
+      - \Bo\,\nabla(H+S)
+      + \Dpn\,\nabla\Pihat(H)
+      + \Pvec
+      + \Spn\,r\,\er \Bigr]
+    + \frac{\As\,\Ma}{2}\,\frac{H^{2}}{\hat{\mu}}\,\nabla C,
+\end{equation}
+
+and the solute balance \cref{eq:conc-dim} becomes
+
+\begin{equation}\label{eq:conc}
+  \frac{\partial (HC)}{\partial T} + \nabla\cdot\bigl(C\,\Qvec\bigr)
+    = \Df\,\nabla\cdot\bigl(\hat{D}(C)\,H\,\nabla C\bigr) + C_S\,\hat{S},
+\end{equation}
+
+with $C_S = c_S$ the concentration the supplied liquid arrives at ($C$ itself
+by default), and the disjoining pressure
+
+\begin{equation}\label{eq:pihat}
+  \Pihat(H) = (\Hstar/H)^{n} - (\Hstar/H)^{m}.
+\end{equation}
+
+Here $\hat{\mu}(C)$, $\hat{\sigma}(C)$ and $\hat{D}(C)$ are the viscosity,
+surface tension and diffusivity normalized to 1 at the reference concentration, and $\Pvec = (\Pgx, \Pgy)$.
+Note that $S$ without a hat is the dimensionless substrate height, while
+$\hat{S}$ with one is the dimensionless source; they are different quantities
+that unfortunately share a letter.
+
+The single most useful thing to notice in \cref{eq:flux} is what makes it
+vanish. Five of the six contributions sit inside one bracket multiplied by
+$H^{3}/3\hat{\mu}$, so $\Qvec = 0$ requires the contents of that bracket to be
+\emph{uniform in space}. That statement --- uniformity of the bracket, not
+smallness of any individual term --- is the equilibrium condition, and it is
+where \cref{ch:wetting} starts. In the discretization, thickness and
+concentration live at cell centers and velocities on cell faces
+(\cref{ch:discretization}).

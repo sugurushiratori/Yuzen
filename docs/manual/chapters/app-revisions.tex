@@ -1,0 +1,216 @@
+% app-revisions.tex -- the release history, and the rule for keeping it
+\chapter{Revision history}
+\label{ch:revisions}
+
+This appendix records every release: what changed, and --- for anything that
+moved a number --- how much it moved, on which case. That second half is the
+part with teeth. An entry that says a result changed without saying by how much
+is not an entry, because it leaves you unable to decide whether your own work
+is affected; \cref{sec:policy:results} is the commitment this list exists to
+keep. Releases are listed newest first. \textbf{Version 1.0 is the first
+public release}, and the numbering starts here. The same entries are kept in
+\file{CHANGELOG.md} at the top of the repository, whose section for a version
+is the text of that release on GitHub.
+
+\section{Version 1.0}
+\label{sec:rev:1-0}
+
+\textbf{Release date:} the date of the \code{v1.0.0} tag. This manual is built
+from the tag and attached to that release, so the release it documents is the
+one it came from; the repository's releases page carries the date.
+
+The first public release. What follows describes what it contains.
+
+\begin{note}[Two names an input file and a reader must match]
+  An input file must read \key{SolverName}~$=$~\val{"Yuzen-1.0"}; anything
+  else is rejected with a range error rather than silently accepted. And the
+  VTK output opens with the element \code{<YuzenData ...>}, which is what a
+  script parsing those files should match on.
+\end{note}
+
+\subsection*{Solver}
+
+\begin{itemize}
+  \item \textbf{Three models are implemented} and are selected by
+    \key{Physics.ConcField.Model} and \key{Grid.Dimension} through the factory
+    \code{MakeSolverModel}: well-mixed in one dimension, well-mixed in two
+    dimensions, and \val{"CZ"}, which resolves the concentration through the
+    thickness (\cref{ch:concentration}).
+  \item Six flux contributions --- capillary pressure, disjoining pressure,
+    vertical gravity, in-plane gravity, centrifugal force and solutal
+    capillarity --- together with evaporation and a moving source
+    (\cref{ch:terms}). Each is switched on and off independently, and each
+    dimensionless group is exactly zero when its term is off.
+  \item Both evolution equations are advanced with Crank--Nicolson. The
+    thickness equation is driven to the implicit solution by a
+    Newton--Kantorovich outer iteration whose convergence test is taken on the
+    larger of the thickness and concentration corrections, so the converged
+    state is the fully implicit coupled solution of the two
+    (\cref{sec:time:coupling}). The time step is optionally adaptive.
+  \item The convection schemes are chosen in the input
+    (\key{Numerics.Convection}, \cref{sec:ref-numerics:convection}): the
+    Koren-limited scheme is the default for the upwinded fluxes of the film
+    height, which keeps the face height between its neighbors, and UTOPIA
+    for the concentration; KK, van Leer, fourth-order central and others can
+    be selected (\cref{sec:verification:schemes}).
+  \item Two interchangeable linear-solver backends sit behind
+    \code{ILinearSolverBackend} (\cref{ch:linearsolver}).
+  \item \textbf{Thread invariance is asserted by the test suite}, not merely
+    claimed: \code{ctest} runs the same binary in three separate processes, at
+    the environment's own thread count, at one thread and at four, and the
+    reductions and the linear solver are compared with \code{==}
+    (\cref{sec:verification:linalg}). The \val{"amgcl"} backend is the
+    documented exception (\cref{sec:linsolve:choosing}).
+  \item \textbf{More threads do not make a run slower within a socket}: a GCC
+    build links LLVM's \code{libomp} when it is installed, and linear solves
+    take threads by their size (\env{YUZEN\_GRAIN}); a run uses at most the
+    cores of one socket (\cref{sec:parallel:runtime,sec:parallel:cap}).
+  \item \textbf{The disjoining-pressure calibration is verified in closed
+    form}: over 36 parameter combinations the coefficient $\Dpn$ agrees with
+    the analytic expression to within $10^{-14}$ relative, and the recovered
+    equilibrium contact angle to within $10^{-12}$
+    (\cref{sec:verification:disjoining}). The discretization of capillary plus
+    disjoining pressure converges at order 1.94 on the analytic equilibrium
+    droplet.
+\end{itemize}
+
+\subsection*{Input and output}
+
+\begin{itemize}
+  \item Input is a TOML file (\cref{ch:inputformat}). A block-structured \file{.inp}
+    file is also read and produces the same tree, but its format is not
+    specified here (\cref{sec:inputformat:legacy}). \key{SolverName} must read
+    \val{"Yuzen-1.0"}; the accepted value names \code{MAJOR.MINOR} only
+    (\cref{sec:policy:scheme}).
+  \item A result directory carries a verbatim copy of the input file,
+    \file{JobInfo.txt}, \file{Warnings.txt}, \file{FatalErrors.txt}, the field
+    output in VTK and tab-separated text, \file{History.dat},
+    \file{CalcInfo.dat} and any probe files (\cref{sec:output:dir}). The run
+    log itself goes to standard output and to no file
+    (\cref{sec:output:running}). \file{field*.dat} is also the ASCII restart
+    format, and \file{History.dat} and \file{CalcInfo.dat} open with a header
+    line naming their columns.
+  \item The field output is written every \key{TimeInterval} or at listed
+    times (\key{Times}, or a \key{LogSchedule} spaced logarithmically), each
+    of them capping only the step that would pass it, and with
+    \key{ExactTimes} landed on (\cref{sec:ref-output:listed}).
+  \item \key{WritePotential} adds the driving potential $\varphi$ to the
+    well-mixed field output (\cref{sec:output:potential}).
+  \item The capillary pressure, the disjoining pressure and the vertical
+    gravity share one positive face mobility, so the dissipation of the
+    scheme is a sum of squares and a steady film the minimum of the discrete
+    free energy (\cref{sec:disc:positivity-one}).
+  \item \key{Output.Energy} writes \file{Energy.dat}: the free energy of the
+    film, the dissipation of the scheme and their balance, second order in
+    $\Delta t$ (\cref{sec:output:energy}).
+  \item \key{Physics.Slip} gives the substrate a Navier slip length in the
+    well-mixed model: mobility $h^3/3 + \lambda h^2$, Marangoni
+    $h^2/2 + \lambda h$, a positive face mobility built for it
+    (\cref{sec:ref-physics:slip,sec:disc:positivity-slip}). Without the
+    block every number is as it was (\code{compare.py} 0 on every shipped
+    case).
+  \item An entry the parser does not read --- a misspelled key, a key in the
+    wrong table, a misspelled table --- stops the run with its full path and
+    the likely intent (\cref{sec:inputformat:unknown}).
+    \code{yuzen --check-input} makes that check and the others on a file
+    without running it.
+  \item An optional block left out of the file reads as an empty one; a
+    missing \key{Physics} sub-block is a term switched off, and a missing
+    \key{Physics.ConcField} is \key{Model}~$=$~\val{"None"}
+    (\cref{sec:inputformat:defaults}). \key{ExponentN} and
+    \key{ExponentM} of \key{Physics.DisjoiningPressure} default to
+    $(3,2)$ inside a block that is written as well.
+    \key{Grid.Xmax}~$>$~\key{Grid.Xmin}, \key{ChangeFactor} in $(0:1)$
+    and \key{KeepSteps}, the \key{MaxIterations} of both linear solvers
+    and \key{SubRegions} of at least 1 are checked as the manual states.
+  \item \key{Numerics.MaxSteps} stops the run; a run that reaches it says
+    \code{Step count reached Numerics.MaxSteps.} rather than
+    \code{Time reached to the EndTime.}
+    (\cref{sec:ref-numerics:numerics}). It defaults to \val{0}, no limit, and
+    is counted in 64 bits, so any step count a run can reach is representable.
+  \item \key{Grid.Nx}, \key{Ny} and \key{Nz} accept up to one million cells
+    each, with the total
+    $(\mathrm{Nx}+4)(\mathrm{Ny}+4)(\mathrm{Nz}+4)$ capped at $5\times10^{7}$
+    so that the grid's linear index stays inside an \code{int}; a 1-D run can
+    therefore be made large enough to occupy a large machine
+    (\cref{sec:parallel:kit}).
+  \item \file{JobInfo.txt} carries a \code{\#\#\#\#\#\# Performance
+    \#\#\#\#\#\#} section: the wall-clock time of the time-step loop alone,
+    the number of steps taken, and the total Newton and linear iterations.
+    \code{Elapsed Time} covers the whole process, including grid
+    construction and the initial output, which makes it useless as a scaling
+    measurement on a large grid.
+\end{itemize}
+
+\subsection*{Documentation}
+
+\begin{itemize}
+  \item This manual, the authoritative description of the solver, with the
+    shorter companion documents \file{docs/theory.md}, \file{docs/numerics.md}
+    and \file{docs/validation.md} (\cref{sec:extending:submitting}).
+  \item \Cref{ch:verification} records the evidence for every claim
+    \emph{together with how strong that evidence is}, and every number in it
+    comes with the command that reproduces it.
+  \item \file{tools/scaling/} is a shared-memory scaling kit --- generated
+    cases that fix the work per run, a restartable sweep script, and a
+    summarizer (\cref{sec:parallel:kit}). It exists because the scaling
+    numbers in \cref{tab:scaling} were measured on one machine and cannot
+    speak for another; the kit is how a reader gets numbers that speak for
+    theirs.
+\end{itemize}
+
+\subsection*{Known gaps}
+
+\begin{itemize}
+  \item \Cref{ch:notverified} is the complete list of what has not been
+    checked, and it is part of the release rather than an apology for it. The
+    largest items are that the contact-line model is verified in one dimension
+    only, that the order in time is measured with every term on but not for
+    every combination of switches, that the
+    \val{"amgcl"} backend --- although its agreement with \val{"eigen"} and its
+    thread-to-thread difference are measured
+    (\cref{sec:verification:backends,sec:verification:amgclthreads}) --- is
+    exercised by no test in the suite, and that \val{"FreshInlet"} and
+    \val{"Outlet"} are checked against each other and against the balances
+    through them, not against a known inflow.
+\end{itemize}
+
+\section{Keeping this list}
+\label{sec:rev:keeping}
+
+For the maintainer. An entry is not free-form. It must carry, at minimum:
+
+\begin{itemize}
+  \item the \textbf{version}, in full, \code{MAJOR.MINOR.PATCH};
+  \item the \textbf{release date};
+  \item \textbf{one line per user-visible change} --- a change nobody outside
+    the repository can observe does not belong here;
+  \item and for any change that altered numerical output, \textbf{the case it
+    was measured on and the size of the difference}. Quantified, not
+    characterized: ``\file{allphys\_1d\_reg}, \code{maxH} moved by
+    $3.2\times10^{-4}$ relative'' is an entry, and ``results change slightly'' is
+    not.
+\end{itemize}
+
+Prefix each line with what kind of change it is --- \code{fix}, \code{add},
+\code{change}, \code{doc} --- and say in the same line whether input files are
+affected. A renamed or removed key must be named here with both spellings, so
+that a user whose input file is stopped on the old one finds the new one; a
+changed default must be named with both values, because nothing in the parser
+can tell a user about that (\cref{sec:policy:compat}).
+
+The format is then unambiguous:
+
+\begin{plain}
+1.0.1  2026-10-03
+  fix: the evaporation cap was applied after the source term instead of before
+       it, so a cell under the nozzle could lose more than half its thickness
+       in one step.  allphys_1d_reg: History.dat Volume 1.1e-5, field maxH
+       3.2e-4 (both relative).  Input files unaffected.
+  doc: numerics.md, the section on the evaporation cap.
+\end{plain}
+
+A release in which nothing moved says so explicitly, in the same place and just
+as plainly: \code{no case changed; compare.py reads 0.000e+00 throughout}.
+That sentence is worth as much to a reader as any of the others, and it is the
+one most often left out.

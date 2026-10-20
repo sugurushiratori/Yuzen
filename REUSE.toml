@@ -1,0 +1,30 @@
+# Licensing of the files that cannot carry a header, in the REUSE format
+# (https://reuse.software). Source files say it themselves in their header;
+# `reuse lint` checks that every file is covered one way or the other.
+version = 1
+
+# Everything of the project's own that has no header of its own: the input
+# cases and their data, the manual's chapters, Markdown, figures and logo
+# artwork, JSON and TSV, and the repository's metadata files. A file that does
+# carry a header is described by that header.
+[[annotations]]
+path = "**"
+precedence = "closest"
+SPDX-FileCopyrightText = "2017-2026 Suguru Shiratori, Tokyo City University"
+SPDX-License-Identifier = "Apache-2.0"
+
+# Bundled third-party code keeps its own license (see THIRD_PARTY_NOTICES.md).
+[[annotations]]
+path = "third_party/doctest/**"
+precedence = "override"
+SPDX-FileCopyrightText = "2016-2023 Viktor Kirilov"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "third_party/toml++/**"
+precedence = "override"
+SPDX-FileCopyrightText = [
+    "Mark Gillard <mark.gillard@outlook.com.au>",
+    "2026 Suguru Shiratori, Tokyo City University (the modification described in THIRD_PARTY_NOTICES.md)",
+]
+SPDX-License-Identifier = "MIT"

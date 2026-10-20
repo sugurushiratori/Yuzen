@@ -1,0 +1,50 @@
+# Build artifacts
+*.o
+*.a
+*.so*
+__pycache__/
+/build*/
+/prefix/
+
+# Run results
+/runs/
+
+# Raw scaling-measurement data. It differs from machine to machine, so
+# add only the ones we want to publish, individually, with git add -f.
+/tools/scaling/results/*.tsv
+
+# Logo work in progress (canvas HTML, intermediate SVGs, sheet images).
+# The distributed files live in docs/logo/ instead.
+/logo/
+
+# Executable
+/yuzen/yuzen
+
+# LaTeX (docs/manual) — generated files. The PDF and HTML are not kept in the
+# repository; on a tag, CI builds them and attaches them to the Release
+# (.github/workflows/release.yml).
+docs/manual/yuzen-manual.pdf
+docs/manual/yuzen-manual.html
+docs/manual/yuzen-manual-ja.pdf
+docs/manual/yuzen-manual-ja.html
+docs/manual/*.aux
+docs/manual/*.fdb_latexmk
+docs/manual/*.fls
+docs/manual/*.log
+docs/manual/*.out
+docs/manual/*.toc
+docs/manual/*.lot
+docs/manual/*.lof
+docs/manual/*.synctex.gz
+
+docs/manual/chapters/*.aux
+docs/manual/chapters-ja/*.aux
+
+# tohtml.py's scratch space, and the MathJax package it renders the formulas
+# with (installed with "npm install mathjax-full").
+docs/manual/.build/
+node_modules/
+
+# Doxygen (docs/Doxyfile) output. The configuration and the front page are kept
+# in the repository, but the generated HTML is not.
+docs/doxygen/

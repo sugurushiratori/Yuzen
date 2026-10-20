@@ -1,0 +1,27 @@
+# Default: for anything git decides is text, leave the working-tree line
+# endings to the OS and store LF in the repository. We also develop on Windows.
+* text=auto
+
+# Files whose line endings must not be changed
+*.svg      text eol=lf
+*.sh       text eol=lf
+*.py       text eol=lf
+*.tex      text eol=lf
+*.md       text eol=lf
+*.toml     text eol=lf
+*.inp      text eol=lf
+*.dat      text eol=lf
+*.tsv      text eol=lf
+*.cff      text eol=lf
+
+# Binary. No diffing and no line-ending conversion
+*.pdf      binary
+*.png      binary
+*.gif      binary
+*.ico      binary
+*.vts      binary
+
+# Exclude bundled third-party code and documentation from GitHub's language stats
+third_party/**  linguist-vendored
+docs/**         linguist-documentation
+cases/**        linguist-documentation

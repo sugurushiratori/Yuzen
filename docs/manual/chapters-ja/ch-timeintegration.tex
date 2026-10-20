@@ -1,0 +1,163 @@
+% ch-timeintegration.tex -- numerical method: theta method, Newton, coupling and the adaptive step
+\chapter{時間積分}
+\label{ch:timeintegration}
+
+Yuzenはすべての式を同じ形に書き直し、同じ$\theta$法で時間を進める。非線形の式は、同じ外側のニュートン反復で陰的な系の解に収束させる。本章では、この仕組みを構成する式の形、反復、ヤコビアン、膜厚と濃度の結合、適応時間刻みを順に説明する。ここで触れるキーについては\cref{sec:ref-numerics:height,%
+sec:ref-numerics:tsc}を参照されたい。反復が収束しない場合については\cref{ch:convergence}で扱う。
+
+\section{式の共通形}
+\label{sec:time:form}
+
+すべての式は、ソルバーに渡す前に次の形に整理する（\file{numerics/ImplicitSolver.h}）。
+
+\[
+  \frac{\partial\varphi}{\partial t} = -A\,\varphi - B
+\]
+
+$A$は未知数に比例する部分で、行列である。$B$は残りのすべてで、ベクトルである。時間は$\theta$法で進める。$\theta = 0$、$0.5$、$1$はそれぞれ前進オイラー法、クランク・ニコルソン法、後退オイラー法に当たる。\textbf{膜厚の式と濃度の式は、どちらもクランク・ニコルソン法}（$\theta = 0.5$）で構成する。
+
+修正量$\delta\varphi$について実際に解く系は次のとおりである。
+
+\begin{equation}\label{eq:nk-update}
+  (I + \theta\,\Delta t\,J)\,\delta\varphi
+    = \varphi_{\mathrm{old}} - \varphi_{\mathrm{guess}}
+      - \Delta t\left[\theta\,A\cdot\varphi_{\mathrm{guess}}
+        + (1-\theta)\,A\cdot\varphi_{\mathrm{old}} + B\right],
+\end{equation}
+
+$J$は\cref{sec:time:jacobian}で述べるヤコビアンである。\cref{eq:nk-update}の右辺は残差である。\cref{sec:convergence:floor}で述べる修正量の下限も、この右辺に由来する。
+
+\begin{warn}[$B$に入れた項も時間平均が必要]
+  \cref{eq:nk-update}の$\theta$重み付けは$A$にかかる。$B$に入れた項がこの重み付けを受けるのは、$B$自体を同じ平均として作った場合に限る。鉛直一様モデルの膜厚の式はそうしている。蒸発は$B = (1-\theta)\,B(\varphi_{\mathrm{old}})
+  + \theta\,B(\varphi_{\mathrm{guess}})$とし、\key{Physics.Source}による液体供給はステップの中点で評価する（\file{HeightEquationBase.h}の\code{SetMatrixA}と\code{BeforeNKLoop}）。ステップの始点だけで評価すると、その項についてスキームは$\Delta t$に関して1次になる。新しい項を加えるときは、係数と未知数の積で書けるなら$A$に入れる（分離圧$\Pihat(H)$を$(\Pihat/H)\cdot H$と書くのがその例である）。書けない場合は、$B$の中で同じ平均を取る。
+\end{warn}
+
+\subsection{行列との積の計算}
+\label{sec:time:apply}
+
+鉛直一様モデルの膜厚の式では、\cref{eq:nk-update}の2つの積$A\cdot\varphi_{\mathrm{guess}}$と$A\cdot\varphi_{\mathrm{old}}$を、すべて$A$の成分と$\varphi$の積で計算しているわけではない（\file{HeightEquationBase.h}の\code{ApplyA}）。毛管圧と鉛直重力の分は、セル界面ごとに計算する（各カーネルの\code{AddConservative}）。セル界面を通る流束は、そのセル界面の移動度（$A$の組み立てに用いたもの）と膜の差分の積である。差分は、毛管圧ではセル界面をまたぐ三階差分（2次元ではその交差項も含む）、重力では$h_b - h_a$と基板の項であり、いずれも隣接する値の差として書く。セル界面を共有する2つのセルは、同じ値から同じ順序でこの流束を計算する。そのため、一方が失う量と他方が得る量は厳密に等しい。厳密な算術ではこれは$A$との積と同じである。浮動小数点演算では、セルについての総和が、流束の丸め誤差の範囲で領域の辺を通る流束に一致する。成分との積ではこうはならない。四階の項の成分は$D/\Delta x^{4}$程度の大きさなので、セルごとの積を総和すると、セルあたり$\epsmach\,\lVert A\rVert\,\lvert\varphi\rvert$の誤差が出る。\file{nozzle\_1d\_rotating}のように幅\SI{3.3}{\micro\metre}のセル上に厚さ\SI{1.2}{\milli\metre}の膜がある場合、実行全体で膜の$2\times10^{-7}$の体積誤差になる（\cref{sec:verification:analytic}）。その他の項（面内の体積力、マランゴニ応力、分離圧、1次元の遠心力項の側方流出）は、成分が$1/\Delta x$または$1/\Delta x^{2}$程度なので、成分との積のままにしている。境界条件の行も同じである。ヤコビアンの出発点となる$A$自体は、引き続きすべての項を含む。
+
+辺のセル界面の流束がゼロになるかどうかは、ゴーストで決まる。線形求解のたびに、境界条件の行は修正量によって厳密に満たされる。求解の許容誤差の範囲で満たすのではない（\code{CRS\_Matrix::SatisfyBCRows}）。このため、\val{"Symmetry"}のゴーストは内側の層の厳密な鏡像に、\val{"Periodic"}のゴーストは反対側の端の厳密な複製になる。鏡映した辺のセル界面をまたぐ三階差分は厳密にゼロである。ゴーストが求解の許容誤差だけ鏡像からずれていると、上で述べた成分との積と同程度の量が漏れる。
+
+\section{ニュートン・カントロビッチ外側反復}
+\label{sec:time:newton}
+
+膜厚の式は、移動度$h^{3}/(3\mu(c))$が未知数に依存するため非線形である。Yuzenは非線形性を遅らせて扱うのではなく、1つの時間刻みの中で非線形性そのものが解けるまで反復する（\file{numerics/NewtonKantorovich.cpp}）。1回の反復は五つの段階からなる。
+
+\begin{enumerate}
+  \item \code{EveryNKLoop()}：現在の推定値$\varphi_{\mathrm{guess}}$で場を更新し、結合相手である濃度を解く。
+  \item \code{SetMatrixA()}：行列$A$を組み立てる。
+  \item \code{SetMatrixJacobi()}：\key{JacobianUpdateInterval}回の反復ごとに1回、ヤコビアンを組み立てる。続いて\code{MakeMatrix\_IA()}で$I + \theta\,\Delta t\,J$を作る。
+  \item 線形求解（\cref{ch:linearsolver}）。修正量$\delta\varphi$を得る。
+  \item $\varphi_{\mathrm{guess}} \mathrel{+}= \alpha\,\delta\varphi$。修正量が前の反復より大きくなった場合だけ$\alpha = 0.5$とし、それ以外は$\alpha = 1$とする。
+\end{enumerate}
+
+反復の初期値には、直前の2ステップから線形に外挿した膜$\varphi^n + (\Delta t/\Delta t_{\mathrm{old}})(\varphi^n -
+\varphi^{n-1})$を用いる。ただし、外挿によって液体のあるセルが空になる場合は用いない。外挿値から始めた試行が失敗した場合は、刻みを縮めたり実行を止めたりする前に、同じ刻みで$\varphi^n$からもう一度試す（ノズルのように途中で作動する供給源は、直前の2ステップに現れないためである）。各パスの線形求解は、反復を進めるのに必要な精度までしか解かない（\cref{sec:linsolve:ew}）。この二つの工夫により、測定したケースではニュートン反復が最大三分の一、線形反復が最大38\,\%減った。収束した答えは変わらない。収束判定は、出発点によらず、そのステップの最初の修正量に対する相対値で行うからである（\cref{sec:convergence:tests}）。
+
+濃度の式と\val{"CZ"}モデルの膜厚の式は、非線形性が弱い。これらは係数を凍結して線形系を解き（\file{numerics/SemiImplicit.cpp}の半陰的経路）、外側反復は行わない。係数をステップの始点で凍結すると、$\theta$の値によらず$\Delta t$について1次になる。そこで\val{"CZ"}モデルは各ステップを2回解く。1回目はステップ始点の係数で解き、終点の状態を予測する。2回目は同じ始点から、すべての係数と$B$のすべての項を始点と終点の中点で作って解く。これは陰的中点則であり、2次精度である。膜厚の式では、直前の2ステップから中点へ外挿した濃度を用いてこれを行う。溶質を運ぶ速度は、予測値ではなく、終点の状態までの中間の膜から作る。こうすると、膜が実際に動いたときの流束で溶質を運べる。マランゴニ項がない場合、濃度の式はその後、独自の予測濃度を用いて1回解く。マランゴニ項がある場合は、直前のパスで得た中点濃度を用い、Aitken緩和をかけて膜と濃度を1段階ずつ解き直す。これを、中点濃度の変化が外挿のずれの十分の一未満になるまで繰り返す（パスは最大八回。要した回数は\file{JobInfo.txt}に出力する）。これは結合した対に対する陰的中点則である。平坦な膜では、緩和なしのパスのゲインが1を超えるのは、モデルの波が$2/\Delta t$より速く成長する場合に限られる（ゲインの導出と測定、実際の実行で要したパス数は\cref{sec:verification:czpasses}に示す）。パスが八回以内に落ち着かないステップは、線形求解が収束しないステップと同じく失敗とみなす。時間刻み制御があれば刻みを縮め、固定刻みなら実行を止める。鉛直一様モデルの濃度の式は、ニュートンループの中で終点状態の現在の推定値を使って解く。そのため、クランク・ニコルソン平均はすでに両端の平均になっている。ループが収束したら、膜がたどったステップのセル界面流束を用いて最後にもう一度解く（\cref{sec:time:coupling}）。
+
+\section{ヤコビアン}
+\label{sec:time:jacobian}
+
+各物理項は、\code{SetJacobiMatrix()}を通して自身の\emph{解析的}ヤコビアンを加える。これはすべての項が実装すべきインターフェースの一部である（\file{PhysicsTermBase.h}）。差分係数は、場に依存する因子とは分けてある。格子とスキームだけで決まる係数は\code{SetLinearCoef()}が一度だけ組み立て、場に依存する部分は\code{NonlinearTerm()}とその導関数\code{NonlinearJacobi()}に置く。
+
+\textbf{ヤコビアンは近似でよい。}ヤコビアンが近似であっても、変わるのは反復の収束の速さであり、収束先は変わらない。収束した答えを決めるのは\cref{eq:nk-update}の残差\code{Rhs}であり、修正量に掛かる行列ではない。膜厚の式でYuzenがこの性質を利用するのは、下に述べる修正ニュートン法の1箇所だけである。各項のヤコビアン自体は近似に頼っていない。
+
+\begin{itemize}
+  \item ヤコビアンは$A$の複製から始め、各項が自分の係数の導関数を加える。重力項と遠心力項では勾配側が$h$について線形なので、その導関数は$A$にすでに含まれている。これらの項が加えるのは移動度の導関数だけである。得られるヤコビアンは厳密であり、\file{test\_jacobian.cpp}がすべての項を有限差分と照合する（\cref{sec:verification:jacobian}）。
+  \item \key{Numerics.HeightEquation.JacobianUpdateInterval}を1より大きくすると、修正ニュートン法になる。ヤコビアンは数回の反復ごとに1回だけ組み直し、\code{\_crsIA}もそのまま保持できる。\code{\_crsIA}は\code{\_crsJacobi}と$\Delta t$だけで決まるからである。ヤコビアンの組み立ては1回の反復の中で最も時間のかかる処理なので、この設定には意味がある。1次元での内訳は、\code{SetMatrixA}が\SI{19}{\percent}、\code{SetMatrixJacobi}が\SI{43}{\percent}、\code{IA + RHS}が\SI{2}{\percent}、線形求解が\SI{37}{\percent}である。
+\end{itemize}
+
+\textbf{勾配側が非線形の項には、その導関数が別に必要である。}分離圧は$\Pi \sim h^{-n}$のように振る舞い、極めて硬い。分離圧は$A$に$(\hat\Pi/h)\,h$の形で書き込む。そのため分離圧項は、移動度の導関数に加えて、勾配側の$\hat\Pi' - \hat\Pi/h$を加える（\cref{sec:terms:disjoining}）。$\hat\Pi'$をすべて加えると$\hat\Pi/h$を二重に数え、ヤコビアンが\SI{50}{\percent}ずれる。正しい導関数を用いると、分離圧のケースでニュートン反復が30--55 \%少なくなる。
+
+\section{膜厚と濃度の結合}
+\label{sec:time:coupling}
+
+膜厚と濃度は、外側のニュートンループの中でブロック・ガウス＝ザイデル反復として解く。
+
+\begin{plain}
+within a time step, for k = 0, 1, 2, ...
+    form the face volume fluxes F of h^k
+    solve the concentration equation over dt   -> c^{k+1}
+        (fluxes and coefficients frozen at h^k, the film at the end h^k)
+    cap the c of the coefficients at 1         (ClampConc)
+    take one Newton step on the thickness      -> h^{k+1}
+        (Jacobian is dF_h/dh only)
+once converged, to h^1:
+    the fluxes F at h^1, made those of the step h^0 -> h^1
+    solve the concentration equation once more -> c^1
+    bring c^1 into [0, 1] without cutting solute
+\end{plain}
+
+非対角ブロック$\partial F_h/\partial c$と$\partial F_c/\partial h$は省く。理由は\cref{sec:time:jacobian}で述べたものと同じで、収束は遅くなるが\textbf{収束した答えは変わらない}。ループが$c^{k+1} = c^{k}$と$\delta h \to 0$を同時に満たして収束すれば、膜厚の式と濃度の式は\emph{同時に}満たされる。この状態は、両者を完全陰的に結合した離散化の解そのものである。
+
+ステップは最後の求解で完了する。ループの中では、各パスはそのパスの膜から求めた流束で溶質を運ぶ。この流束が膜と整合するのは、反復が収束した後に限られる。そこで最後に、収束した膜での流束を、セルごとに膜がたどったステップの流束に置き換え（そこでのステップの残差は内部のセル界面に入れる）、その流束で濃度をもう一度解く。これにより、各セルの溶質は、セル界面を横切る量と供給源がもたらす量だけ変化し、一様な濃度は一様なまま保たれる（\cref{sec:disc:wm-conservative}）。この求解で膜は変わらない。得られる濃度は、ループが収束した許容誤差の分だけ最後のパスの濃度と異なる。
+
+収束判定も同じ議論から決まる。両方の式が満たされる必要があるので、判定は\textbf{2つの修正量のうち大きい方}で行う。
+
+\[
+  \max\bigl(\,\lVert\delta h\rVert_{\infty},\
+             \lVert\Delta c\rVert_{\infty}\,\bigr).
+\]
+
+\begin{warn}[膜厚の修正量だけで判定しない]
+  濃度がまだ動いていても$\lVert\delta h\rVert$は小さくなりうる。濃度を除いた判定では、反復が早く抜けてしまう。抜けた状態は膜厚の式しか満たしておらず、完全陰的な結合解ではない。代わりに最小反復回数で反復を続けさせても解決にはならない。問題と無関係な数で精度を決めることになるからである。
+\end{warn}
+
+濃度の修正量は、クランプ（\code{ClampConc}）の\textbf{後で}測る。物理項の係数に入るのはクランプ後の値であり、結合が落ち着いたかどうかもこの値で決まるからである。結合を報告しないモデルでは、報告値はゼロのままである（\val{"CZ"}モデルは膜厚の式も半陰的に解くので、外側反復をもたない）。この場合、判定は膜厚だけで行うことになる。\key{NewtonMinIterations}で最小反復回数を強制することもできる。しかし濃度の修正量はすでに判定に含まれているので、通常は既定値の\val{1}で十分である。
+
+収束を妨げているのが膜厚か結合かを調べるには、\env{YUZEN\_DEBUG\_RESIDUAL}を設定する。すると各外側反復で、標準エラー出力に
+\code{[resid] <iteration> <thickness correction> <concentration correction>}
+の形の行が出力される。
+
+\section{適応時間刻み}
+\label{sec:time:dt}
+
+時間刻みが変わるのは、\key{Numerics.TimeStepControl.Enable}が\val{true}の場合に限る。刻みは膜厚の式で決め、濃度の式はそれに従う。
+
+\subsection{局所打ち切り誤差}
+
+\code{C\_ImplicitSolver}のルーチン\code{LocalTruncationCriterion}は、連続する2つの時間差分から誤差の推定値を作る。現在のステップでの変化を、前のステップでの変化と比べるものである。
+
+\begin{equation}\label{eq:lte}
+  \mathrm{Ek}_i = 2\,\frac{\Delta t}{\Delta t_0}\,
+    \frac{\Delta t_0\,h^{+}_{i} + \Delta t\,h^{-}_{i}
+          - (\Delta t_0+\Delta t)\,h^{0}_{i}}
+         {(\Delta t_0+\Delta t)\,w_i},
+  \qquad
+  \mathrm{criterion} = 1 - \frac{\max\lvert\mathrm{Ek}\rvert}
+                                {\mathrm{Criterion}}.
+\end{equation}
+
+$\Delta t_0$は直前に取ったステップ、$\Delta t$は現在のステップである。最初のステップでは$\Delta t_0$を\key{InitialDt}とするので、最初のステップも判定の対象になる。\cref{eq:lte}の\code{criterion}が正ならステップを受け入れ、負なら刻みを縮める。求解に失敗したステップも、同じように刻みを縮めて解き直す。失敗とは、鉛直一様モデルの膜のニュートン反復が\key{NewtonMaxIterations}回で収束しないか、収束から遠いところで停滞した場合（\cref{sec:convergence:stagnation}）、またはいずれかのモデルで膜や濃度の線形求解が失敗した場合である。時間刻み制御が無効なら実行を止める（\cref{sec:ref-numerics:tsc}）。$\Delta t_0$は$h^{-}$を生んだステップでなければならない。直前に刻みを変える前のステップの値や、再試行時に棄却したステップを代わりに使うと、推定値に1次の項が残り、刻みが抑えられる。1次元では、一度縮めた刻みが再び大きくならない。また、\key{Criterion}は誤差そのものではない。レベリングする膜を\key{Criterion}
+$= 10^{-5}$で解くと69ステップを要し、減衰の誤差は$2.9\times10^{-4}$である（誤った$\Delta t_0$による推定では385ステップで$1.1\times10^{-5}$）。\key{Criterion}は必要な誤差に応じて選ぶ。
+
+誤差を正規化する重み$w_i$は次式で与える。
+
+\begin{equation}\label{eq:lte-weight}
+  w_i = \max\bigl(\,\lvert h^{0}_{i}\rvert,\
+                   \mathrm{ScaleFloor}\times\max\lvert h^{0}\rvert\,\bigr),
+\end{equation}
+
+つまり\key{ScaleFloor}で「誤差」の意味が決まる。既定値の\val{0}では局所的な膜厚で割るので、完全に局所的な相対誤差になる。\val{1}では大域的な最大値だけで正規化するので、絶対誤差に近くなる。中間の値では、膜の本体は相対誤差で判定しつつ、薄い領域に過大な重みをかけない。\cref{eq:lte-weight}を言葉にすると「最大膜厚の\key{ScaleFloor}倍より薄い箇所は、それ以上厳しく判定しない」となる。これは乾いた領域（$h \to 0$）でのゼロ除算の防止も兼ねる。
+
+この既定値には知っておくべき影響がある。$\Hstar = 0.02$の前駆膜は$H \sim 1$の液滴本体の五十分の一の厚さなので、\key{ScaleFloor}を\val{0}のままにすると、前駆膜の中の揺らぎは本体の同じ揺らぎの五十倍の重みをもつ。\textbf{ただし、接触線の計算で刻みが崩壊する原因は、通常これではない}。まず疑うべきは収束判定である（\cref{sec:convergence:absolute}）。
+
+\subsection{刻みの拡大と縮小}
+
+\begin{yzntable}{刻みの変え方\label{tab:dt-change}}{@{}l L{0.34\textwidth} L{0.30\textwidth}@{}}
+\textsf{\bfseries 方向} & \textsf{\bfseries 条件} &
+\textsf{\bfseries 動作} \\ \midrule
+縮小 & \code{criterion <= 0} & \code{dt *= ChangeFactor} \\
+拡大 & \key{KeepSteps}ステップ連続で\code{criterion > 0.9} &
+         \code{dt /= ChangeFactor} \\
+\end{yzntable}
+
+縮小は直ちに、再試行するステップに適用する。拡大した刻みは次のステップから適用し、時刻は解いたステップの分だけ進める。
+
+刻みはその後、上下から制限する。上限は、\key{MaxDtFactor} $\times$ (最小格子幅)$^{4}$と最小の出力間隔のうち小さい方である。下限は\key{MinDt}である。
+
+上限に出力間隔が入っているのは、出力時刻をまたぐステップがあると、実際に出力を書く時刻がずれてしまうからである。
+
+下限の扱いは上限と異なる。\textbf{\key{MinDt}より小さいステップが要求された時点で実行を中断し}、下限値で計算を続けることはしない。これは意図した動作である。そこまで刻みが縮んだ計算は、刻み幅に問題があるわけではない。\key{MinDt}を下げて計算を延々と続けさせても何も得られない。接触線のケースで刻み幅が崩壊する原因は、実際には打ち切り誤差の推定ではなく収束判定である。その仕組みは\cref{sec:convergence:absolute}で説明している。最初に確認すべきはこの点である。

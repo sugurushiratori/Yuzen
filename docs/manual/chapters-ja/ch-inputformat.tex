@@ -1,0 +1,184 @@
+% ch-inputformat.tex -- the input file: TOML, type conversion, map of the blocks
+\chapter{入力ファイル}
+\label{ch:inputformat}
+
+Yuzenの計算1回分は、ただ一つのテキストファイルで記述する。このファイルをコマンドラインで実行ファイルに渡す。ファイルの形式は\textbf{TOML}である。本章では、YuzenでのTOMLの使い方を説明する。具体的には、ケースのブロック構造とTOMLのテーブルの対応、書いた値がソルバー内部で数値になるまでの過程、既定値と必須キーの扱い、そして読み取り処理が\emph{検出しない}誤りを取り上げる。キーそのものはブロックごとに\cref{ch:ref-domain,ch:ref-physics,ch:ref-bcout,ch:ref-numerics}に記載した。どの章を参照すべきかは\cref{sec:inputformat:map}の対応表に示す。
+
+入力ファイルを初めて手で書く前に、本章を一度通読されたい。Yuzenの計算がメッセージを出して中断せず、気づかないうちに誤った方向へ進む場合、原因の大半は物理ではなく、ここで説明する読み取り処理の性質にある。
+
+\section{形式はファイル名で決まる}
+\label{sec:inputformat:formats}
+
+読み取り層は\code{yuzen::config::Block}で、パーサーはファイル名の拡張子だけで選ぶ。名前が\file{.toml}で終わるファイルはtoml\texttt{++}で解析する。本マニュアルが規定するのはこの形式であり、新しく作るファイルもこの形式で書く。ファイルの中身は選択に影響しない。そのためTOMLファイルの名前を変えても形式は変換されず、\cref{sec:inputformat:legacy}の\file{.inp}パーサーに渡されて、TOMLの構文のところで失敗する。
+
+TOML自体は公開された標準であり、ここでは改めて規定しない。文法（コメント、文字列、数値、真偽値、配列、テーブル）は\url{https://toml.io}にある。Yuzenの入力ファイルは、どのTOMLパーサー、エディタモード、スクリプトライブラリでも正しく読める。Yuzen固有の事柄として本章の残りで説明するのは、ソルバーのブロック木をどのTOML構文で組み立てるか、そして値がファイルから変数に入るまでに何が起こるかである。
+
+\section{ブロックとテーブル}
+\label{sec:inputformat:tables}
+
+Yuzenのケースは木構造をなす。名前付きのブロックが入れ子になり、各ブロックがキーと下位のブロックを持つ。この木は次の四つの規則でTOMLに対応させる。
+
+\begin{description}
+  \item[ブロックはテーブルで書く。]\key{Grid}は\code{[Grid]}と書く。このヘッダから次のヘッダまでのキーはすべて\key{Grid}に属する。
+  \item[入れ子のブロックはドット区切りのテーブルパスで書く。]\key{Physics}の中の\key{Evaporation}は\code{[Physics.Evaporation]}、\key{Initial}の中の\key{SurfaceShape}は\code{[Initial.SurfaceShape]}となる。深さに制限はない。自身のキーを持たない容器（\code{[Initial]}、\code{[Physics]}）は、空のテーブルとして書いても、まったく書かなくてもよい。子のドット区切りヘッダによって作られるためである。
+  \item[繰り返すブロックはテーブルの配列で書く。]ヘッダを\code{[[Substrate.EllipseBump]]}のように二重の角括弧で囲み、出現ごとに1回ずつ書く。繰り返せるブロックは\cref{sec:inputformat:repeat}に示す。
+  \item[ベクトル値のキーは配列で書く。]\code{Center = [0.5, 0.0]}のように書く。二つの成分は順に$x$と$y$の値であり、1次元の計算でも同じである。
+\end{description}
+
+最初のテーブルヘッダより前に書いたキーは\textbf{ルートレベル}のキーとなる。\key{SolverName}と\key{JobName}、省略可能な長さスケールの組がこれにあたる。ヘッダより後のキーはすべてそのテーブルに属するので、TOMLではこれらのキーを\code{[...]}の行より前、ファイルの先頭に置く必要がある。\key{JobName}を\code{[Grid]}の後に書くと\key{Grid}のキーとなり、ルートレベルの\key{JobName}がないため計算は停止する。
+
+ブロック名、キー名、文字列値は\textbf{大文字と小文字を区別する}。\key{Nx}は格子サイズだが、\code{nx}は未知のキーとなり、計算は停止する（\cref{sec:inputformat:unknown}）。\val{"ILU"}を\val{"ilu"}と書いた場合のように、受け付ける値と大文字・小文字だけが異なる文字列もエラーとなる。メッセージには受け付ける綴りが示される。
+
+キー名は\code{PascalCase}で（\key{NewtonMaxIterations}、\key{EndConcValue}）、綴りは米国式である（\key{Center}）。
+
+\section{書いた値が数値になるまで}
+\label{sec:inputformat:types}
+
+値の変換は読み込み時に行う。変換の仕方は、書いたTOMLの型ではなく、ソルバー内で値を格納する変数の型で決まる。toml\texttt{++}はスカラーをすべてテキストとして\code{yuzen::config::Block}に渡し、ソルバーがそのキーを要求した時点でテキストを変換する。したがって\val{Nx = 300.0}と書いてもよく、\val{Enable = 1}と書いてもよい。変換は四種類あり、いずれも厳格である。値は全体として変換されるか、エラーとなるかのどちらかで、エラーメッセージにはキーのパスと値が示される。
+
+\begin{description}
+  \item[bool] \val{true}、\val{yes}、\val{on}、\val{1}、\val{.true.}を真、\val{false}、\val{no}、\val{off}、\val{0}、\val{.false.}を偽とする。大文字・小文字は区別しない。それ以外はエラーとなる。
+  \item[int] doubleとして解析し、整数であることを要求する。\val{1e3}は1000となり、\val{1000.4}はエラーとなる。キーの整数型（32ビット、\key{Numerics.MaxSteps}では64ビット）の範囲を超える整数は、範囲の端の値に切り詰める。
+  \item[double] \code{strtod}で解析する。テキスト全体が数値である必要があり、\val{nan}と\val{inf}はエラーとなる。
+  \item[array] 要素ごとに上の規則で変換する。値を一つだけとる箇所に書いたリスト、入れ子のリスト、TOMLの日付や時刻はエラーとなる。64段を超える入れ子もエラーとなる。
+\end{description}
+
+読み取り処理は配列の大きさを制限しない。doubleを二つ並べた配列と記載したキーの長さは、後で\file{Input.cpp}が確認し、ちょうど~2でなければ計算を中断する。変換のほかに、式の上で意味をなさない値もエラーとする。正でない密度・粘度・表面張力、正でない時間刻み・許容誤差・出力間隔、負の\key{EndTime}、液体を含まない初期膜がこれにあたり、\code{Input mismatch: key = value: why}と出力される。範囲はリファレンスの各章に示す。
+
+\begin{note}[TOMLが検出する誤り]
+  TOMLとして解析できない数値（カンマを含む\val{1,0e-6}、\val{1e--6}、先頭のゼロがない\val{.5}）は\emph{構文エラー}となる。計算は、ファイル名、行番号、toml\texttt{++}による問題の説明を出力して停止する。引用符のない文字列も同様で、\key{Dimension = "xh"}は値だが\key{Dimension = xh}は値として成り立たない。数値のキーに引用符付きの値を書いた\key{InitialDt = "fast"}はTOMLとしては正しく、上の変換でエラーとなる。変換が厳格でなければ、\key{Enable =
+  "ture"}は偽と解釈され、読めないdoubleは0になり、日付はキーを書かなかったものとして捨てられてしまう。これらは開発中に\file{tools/proptest.py}と\cref{sec:verification:fuzzing}のファジングで見つかった。
+\end{note}
+
+\section{既定値、必須キー、書かれていないキー}
+\label{sec:inputformat:defaults}
+
+キーが必須かどうかは、ファイルのどこにも宣言しない。ソルバーがそのキーに対して\code{getin}のどのオーバーロードを呼ぶかで決まる。既定値を持たない\code{getin(name, v)}は\code{VariableNotFound}を送出し、\code{Input::Read}がこれを捕捉してプロセスを直ちに終了させる。\code{getin(name, v, def)}は何も出力せずに\code{def}を格納する。ブロックも同じ仕組みである。\code{getBlockSize}や\code{getBlock}をそのまま呼んで取得するブロックは必須、\code{try \dots{} catch(BlockNotFound)}の中で取得するブロックは省略可能となる。
+
+ファイル全体で、条件なしに必須となるキーは十三個ある。ルートレベルの\key{SolverName}と\key{JobName}、\key{Grid}の\key{Dimension}、\key{Nx}、\key{Xmin}、\key{Xmax}、\key{Initial.Concentration}の\key{Value}、\key{Physics.ConcField}の\key{Model}（ブロックがある場合のみ）、\key{Numerics}の\key{InitialDt}、各\key{Output.ProbeList.Probe}の\key{X}、\key{Output.FieldData.LogSchedule}の\key{Start}、\key{End}、\key{PerDecade}（ブロックがある場合のみ）である。それ以外のキーには組み込みの既定値がある。リファレンスの各章では、必須キーの既定値の欄に\reqd{}と記す。
+
+省略可能なブロックを省くと、空のブロックとして読み、各キーは既定値をとる。例外は\key{Physics}である。ここではサブブロックを省くと項は無効となり、書いたブロックの中では\key{Enable}の既定値が\val{true}であってもこれは変わらない。また\key{Physics.ConcField}がない場合は\key{Model}~$=$~\val{"None"}とみなす（\cref{ch:ref-physics}）。
+
+必須の\emph{ブロック}を2回書くと、書かなかった場合と同じく致命的エラーとなる。読み取り処理は\code{Block [...] is required and must appear
+exactly once}を出力して中断する。TOMLでは通常のテーブルヘッダを2回書くことはできない（\code{[Grid]}を2回書くとキー重複の構文エラーとなり、toml\texttt{++}が受け付けない）。したがってこのエラーが出るのは、単一のテーブルを書くべき箇所にテーブルの配列\code{[[Grid]]}を書いた場合である。以降の章では、ブロックごとに必須かどうか、繰り返せるかどうかを示す。トップレベルについては\cref{tab:file-map}にまとめる。
+
+\section{ソルバーが知らない項目があると計算は停止する}
+\label{sec:inputformat:unknown}
+
+読み取り処理は、要求したキーとブロックを、見つかったかどうかにかかわらずすべて記録する。入力全体を読み終えた時点で、ファイル中にあって一度も要求されなかった項目は、このバージョンが知らない項目である。綴りを誤ったキー、別のテーブルに書いたキー、名前の綴りを誤ったテーブルがこれにあたる。この場合、計算を始める前に停止し、該当する項目を完全なパス付きで列挙する。
+
+\begin{plain}
+Error in the input: case.toml contains 3 entries that this version of Yuzen
+does not read, so whatever they were meant to set would keep its default:
+  key   Initial.PrecursorRatio   (this key is read in [Initial.SurfaceShape])
+  key   Initial.SurfaceShape.EdgeBump.alpha   (did you mean Initial.SurfaceShape.EdgeBump.Alpha?)
+  block [Physics.Evaporaton]   (did you mean [Physics.Evaporation]?)
+Correct the spelling or remove the entry. The manual's input reference lists
+every key each block accepts.
+\end{plain}
+
+ブロックが読む名前に近い綴りであれば、意図した名前の候補を示す。正しい綴りのキーが別のテーブルにある場合は、そのキーを読むテーブルを示す。ほかの入力エラーと同じく、このメッセージは結果ディレクトリを作る前に標準エラー出力へ出る（\cref{sec:output:running}）。
+
+計算を行わずにこれらを確認するには、ファイル名の前に\code{--check-input}を付ける。
+
+\begin{shell}
+yuzen --check-input case.toml
+\end{shell}
+
+ファイルは計算時とまったく同じ手順で読み込み、確認する（未知の項目、必須キー、範囲、受け付ける値、キー間の整合性）。確認に通れば\code{Input check passed}を出力して状態0で終了し、通らなければ理由を示して状態1で停止する。ファイルやディレクトリは何も作成しない。確認を行うディレクトリから見て\key{Restart.FileName}が存在しない場合は、\code{Note:}で始まる行で知らせるが、確認は失敗としない。そのファイルを読む計算は、別の場所で開始するかもしれないからである。ファイルがない場所で開始した計算は、結果ディレクトリを作る前に停止する。
+
+この確認がなければ、上のような項目はどれも読まれず、変えようとした設定は何の知らせもなく既定値のままとなる。前駆膜は\val{0}、$\alpha$は\val{1}、蒸発は無効のままである。確認が警告にとどめず、エラーとするのはこのためである。
+
+TOML自身が確認するのは構文だけである。キーの位置を誤った文書でも、構文としては正しい。上の確認をtoml\texttt{++}ではなくソルバーが行うのはそのためである。この確認でも、正しいテーブルに正しい綴りで書いたキーの値が誤っている場合は検出できない。これについては、ソルバーが\textbf{標準出力}に出力する格子、スケール、無次元数を読み、意図どおりに解釈されたかを確かめる（\cref{sec:output:running}）。
+
+\section{繰り返すブロック}
+\label{sec:inputformat:repeat}
+
+一部のブロックは2回以上書ける。十三個の形状ブロック（\key{Initial.SurfaceShape}の下に七つ、\key{Substrate}の下に六つ）と、\key{Output.ProbeList.Probe}である。パーサーは\code{getBlockSize}でベクトルの大きさを決め、ファイル中の順に要素を埋める。したがって\key{EllipseBump}ブロックを四つ書けば凸部が四つできる。ゼロ個でもよく、形状ブロックを含まない\key{Substrate}テーブルは平坦な基板を表す。
+
+出現ごとに、テーブルの配列のヘッダを書く。
+
+\begin{toml}
+[[Substrate.RectBump]]
+Order  = 1
+Center = [0.0, 0.0]
+
+[[Substrate.RectBump]]
+Order  = 2
+Center = [1.0e-3, 0.0]
+\end{toml}
+
+1回しか書けないブロックは、\code{[Substrate]}のような通常のテーブルで書く。同梱のケースでは、繰り返せるブロックを\emph{一つだけ}書く場合にも通常のテーブル（\code{[Substrate.EllipseBump]}）を使っており、ソルバーは要素が一つのリストとして読む。どちらの書き方でもよい。ただし二つ以上書く場合は、必ず二重角括弧の形にする。通常の\code{[Substrate.RectBump]}ヘッダを2回書くと、凸部が二つになるのではなく、キー重複のエラーとなる。
+
+\section{単位}
+\label{sec:inputformat:units}
+
+\textbf{有次元の入力はすべてSI単位で与える}。メートル、秒、キログラム、\si{\pascal\second}、\si{\newton\per\metre}、\si{\metre\squared\per\second}、ラジアンを用い、リファレンスの各章の表で別に定めた場合だけが例外となる。特に覚えておくべき例外が二つある。一つは接触角\key{Physics.DisjoiningPressure.ContactAngle}で、\emph{度}で与える。ファイル中で度を使う角度はこれだけで、\key{FlatPlane}形状の傾きもほかと同じくラジアンで与える。もう一つは\key{Fluid.MolarMass}で、二つの値の比しか使わないため、単位がそろっていれば何でもよい。
+
+無次元量を書くのは、本当に無次元である少数のキー（指数、比、スイッチ、\key{Numerics}の許容誤差）に限る。\code{NonDimensionalNumbers::Build}はSI単位の値をソルバー内部のスケールに変換し、結果を標準出力に出力する（\cref{sec:output:running}）。
+
+\section{入力の断片}
+\label{sec:inputformat:example}
+
+\begin{toml}
+# a 1-D film, 1 mm wide
+SolverName = "Yuzen-1.0"
+JobName    = "demo"
+
+[Grid]
+Dimension = "xh"
+Nx        = 300
+Xmin      = -0.5e-3
+Xmax      = 0.5e-3
+
+[Initial.Concentration]
+Value = 0.5
+
+[Initial.SurfaceShape]
+TotalHeight    = 10e-6
+PrecursorRatio = 0.02
+
+[[Initial.SurfaceShape.EllipseBump]]
+CreateType = "add"
+Height     = 0.5
+Center     = [0.0, 0.0]
+Width      = [0.4e-3, 1.0]
+SlopeWidth = 0.05
+
+[Boundary.XminBC]
+Type = "Symmetry"
+
+[Boundary.XmaxBC]
+Type = "Outlet"
+\end{toml}
+
+この断片だけでは入力ファイルとして完全ではない。\key{Fluid}、\key{Physics}、\key{Output}、\key{Numerics}も必須であり、これらがないと計算は中断する。\code{[Initial]}と\code{[Boundary]}は独立したヘッダとしては現れず、下位のドット区切りパスによって作られる。ルートレベルのキー二つは、どのヘッダよりも前、ファイルの先頭に置いてある。
+
+\section{ファイルの対応表}
+\label{sec:inputformat:map}
+
+入力ファイルのトップレベルに書けるすべてのブロックと、そのキーをマニュアルのこの部のどこに記載したかを\cref{tab:file-map}に示す。対象とするバージョンは一貫してYuzen 1.0であり、ブロックパスは58個、そのうちキーを持つものは54個、キー項目は合計229個である。
+
+\begin{yzntable}{トップレベルのブロックと記載箇所\label{tab:file-map}}{@{}L{0.20\textwidth} L{0.13\textwidth} L{0.11\textwidth} L{0.44\textwidth}@{}}
+\textsf{\bfseries ブロック} & \textsf{\bfseries 必須} & \textsf{\bfseries 繰り返し} &
+\textsf{\bfseries 内容と参照先} \\ \midrule
+ルートレベル & 一部 & \dash & 最初のテーブルヘッダより前のキー。\key{SolverName}と\key{JobName}は必須、長さスケールは省略可能。\Cref{sec:ref-domain:root}。 \\
+\key{Grid} & はい & いいえ & 次元、セル数、領域の範囲。\Cref{sec:ref-domain:grid}。 \\
+\key{Initial} & はい & いいえ & 初期濃度と膜形状。繰り返せる形状サブブロックを含む。\Cref{sec:ref-domain:initial}。 \\
+\key{Substrate} & いいえ & いいえ & 基板形状。同じ形状サブブロックを含む。\Cref{sec:ref-domain:substrate}。 \\
+\key{Fluid} & はい & いいえ & 密度、表面張力、粘度、拡散係数、モル質量。\Cref{sec:ref-domain:fluid}。 \\
+\key{Physics} & はい & いいえ & 有効にする項とそのパラメータ。\Cref{ch:ref-physics}。 \\
+\key{Boundary} & はい & いいえ & 領域の辺ごとの境界条件。\Cref{sec:ref-bcout:boundary}。 \\
+\key{Output} & はい & いいえ & 出力する内容と頻度。\Cref{sec:ref-bcout:output}。 \\
+\key{Numerics} & はい & いいえ & 時間刻み、ニュートン法、線形ソルバーの設定。\Cref{sec:ref-numerics:numerics}。 \\
+\key{Restart} & いいえ & いいえ & 以前の結果からの継続。\Cref{sec:ref-numerics:restart}。 \\
+\end{yzntable}
+
+トップレベルのブロックはどれも繰り返せない。必須ブロックを2回書くと計算は中断する。繰り返せるブロックはすべて入れ子のブロックで、\key{Initial.SurfaceShape}の七つの形状ブロック、\key{Substrate}の六つの形状ブロック、\key{Output.ProbeList.Probe}である。
+
+\section{\file{.inp}形式}
+\label{sec:inputformat:legacy}
+
+Yuzenはブロック構造の\file{.inp}形式も読める。名前が\file{.toml}で終わらないファイルは、すべてこの形式のパーサーに渡す。\textbf{この形式は本マニュアルでは規定しない。}代替の入力形式であり、新しく作るファイルには使わない。
+
+同梱のケースと本マニュアルの例は、すべてTOMLで書いてある。

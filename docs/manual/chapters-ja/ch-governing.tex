@@ -1,0 +1,195 @@
+% ch-governing.tex -- theory: the long-wave equations, their scaling and their limits
+\chapter{支配方程式}
+\label{ch:governing}
+
+本章では、Yuzenが解く方程式を示す。膜厚の発展方程式と溶質の輸送方程式、ナビエ・ストークス方程式をこの二つに帰着させる近似、ソルバーが扱う無次元形へのスケーリングである。入力キーが数式の上で何を意味するか、モデルがどこで信頼できなくなるかを知りたい場合には本章を参照されたい。流束の各項は\cref{ch:terms}で一つずつ説明し、キーの一覧は\cref{ch:ref-physics,ch:ref-domain}にまとめる。
+
+\section{長波長近似}
+\label{sec:governing:longwave}
+
+膜厚$h$が面内の代表長さ$L$に比べて小さいとき、ナビエ・ストークス方程式は$h(x,y,t)$に関する一本の発展方程式に帰着する。これが長波長近似（潤滑近似）であり、Yuzenはこの方程式を解く。近似は次の四つの仮定からなり、どの仮定にも得るものと失うものがある。
+
+\begin{itemize}
+  \item \textbf{アスペクト比が小さい}（$\varepsilon = h_0/L_0 \ll 1$）。膜厚方向の座標を完全に消去できるので、二次元・三次元ではなく一次元・二次元の問題を解けばよく、未知量も体積ではなく曲面になる。ただし結論はすべて$\varepsilon$による展開に基づくため、膜厚と同程度の短い構造についてはモデルの結果を信用できない。
+  \item \textbf{慣性を無視できる。}このとき膜厚方向の速度分布は厳密に放物線になる。基板ではすべりなし（またはナビエすべり長さ\key{Physics.Slip}、\cref{sec:terms:slip}）とし、自由表面のせん断応力は表面張力勾配だけで決まる。その結果、膜厚方向に積分した流束$\Qvec$は$h$と駆動圧力の陽な代数関数となり、運動量方程式を解く必要がなくなる。一方、高速回転や低粘度の膜のように速度分布が放物線から外れる場合はモデルの範囲外となる。
+  \item \textbf{圧力が膜厚方向に一様である。}毛管圧、重力、分離圧はすべて一つの圧力にまとまる。このため、どの物理効果も同じ括弧の中に項として加えるだけで表現でき、項を無効にするには式を変えずに係数をゼロにすれば十分である。一方、深さとともに圧力が変わるような、膜厚方向に構造をもつ効果は表現できない。
+  \item \textbf{界面の傾きが小さい}ため、曲率を$\nabla^2 h$に線形化できる。厳密な平均曲率$\nabla\cdot\bigl(\nabla h/\sqrt{1+|\nabla h|^2}\bigr)$の分母を1とおくことに相当する。毛管項は最高階の微分について線形のままとなり、方程式全体が扱いやすくなる。一方、表面が急峻な場所では誤差が直接現れる。接触線の近くがそうである（\cref{sec:governing:breakdown}を参照）。
+\end{itemize}
+
+\section{有次元の方程式}
+\label{sec:governing:dimensional}
+
+有次元変数で書くと、膜厚は次式に従う。
+
+\begin{equation}\label{eq:height-dim}
+  \frac{\partial h}{\partial t} = -\nabla\cdot\Qvec \;-\; E(h,c) \;+\; S(x,t),
+\end{equation}
+
+ここで$\Qvec$は膜厚方向に積分した流束、$E$は蒸発による膜厚の減少速度、$S$はノズルからの液の供給である。流束は六つの寄与からなる。
+
+\begin{equation}\label{eq:flux-dim}
+  \begin{aligned}
+    \Qvec = {}& \frac{\sigma h^{3}}{3\mu}\,\nabla\nabla^{2}(h+s)
+      && \text{capillary pressure} \\
+      &{}- \frac{\rho g_z h^{3}}{3\mu}\,\nabla(h+s)
+      && \text{vertical gravity} \\
+      &{}+ \frac{h^{3}}{3\mu}\,\nabla\Pi(h)
+      && \text{disjoining pressure} \\
+      &{}+ \frac{h^{2}}{2\mu}\,\nabla\sigma
+      && \text{Marangoni stress} \\
+      &{}+ \frac{\rho g_\parallel h^{3}}{3\mu}
+      && \text{in-plane gravity} \\
+      &{}+ \frac{\rho \omega^{2} h^{3}}{3\mu}\,r\,\er
+      && \text{centrifugal force.}
+  \end{aligned}
+\end{equation}
+
+$h$は膜厚、$s(x,y)$は基板の高さであり、自由表面の位置は$h+s$である。この区別は表記上のものではなく、意味をもつ。\textbf{毛管圧と鉛直重力は自由表面$h+s$の形状で駆動される}。どちらも液表面が空間のどこにあるかで決まるからである。一方、\textbf{分離圧は膜厚$h$だけの関数である}。分離圧は基板と自由表面の相互作用を表し、その強さは両者の距離だけで決まる。実用上、最初の二項の少なくとも一方を有効にしない限り、基板形状は流れに影響しない（\cref{sec:terms:vgravity}）。
+
+$\mu = \mu(c)$と$\sigma = \sigma(c)$はどちらも溶質濃度に依存する（\cref{sec:conc:properties}）。この依存性を通じて、\cref{eq:height-dim}は後述の輸送方程式と連成する。
+
+\begin{note}[Yuzenが出力する速度は新たな未知量ではない]
+  \cref{eq:height-dim,eq:flux-dim}には速度を求める過程がない。場の出力に含まれる面内速度は$\Qvec/h$、つまり流束から求めた深さ平均速度を、有効な項について足し合わせたものである。鉛直一様モデルの\file{.vts}ファイルには、これが項ごとにも出力される。分離圧を除く\cref{eq:flux-dim}の各寄与に一つずつ配列がある（\cref{sec:output:vtk}）。ある場所・ある時刻に液を動かしている物理効果を知るには、この分解を見るのが最も直接的である。
+\end{note}
+
+\section{溶質の輸送}
+\label{sec:governing:concentration}
+
+溶質（樹脂）濃度$c$は質量分率であり、$c = 1$は完全に乾燥した状態を表す。鉛直一様モデルでは濃度を膜厚方向に一様とみなし、膜の柱に含まれる溶質量$hc$を保存量とする。
+
+\begin{equation}\label{eq:conc-dim}
+  \frac{\partial (hc)}{\partial t} + \nabla\cdot\bigl(c\,\Qvec\bigr)
+    = \nabla\cdot\bigl(D(c)\,h\,\nabla c\bigr) \;+\; c_S\,S .
+\end{equation}
+
+溶質は、\cref{eq:height-dim}で液を動かす流束$\Qvec$と同じ流束で運ばれ、膜に沿って拡散し、ノズルからの液とともに供給される。$c_S$は供給される液の濃度であり、\key{Physics.Source.ConcType}で選ぶ（\cref{sec:terms:source}）。選択肢は、着地点の濃度をそのまま用いる$c_S = c$（\val{"local"}、既定値）と、着地した柱の厚さ全体に混ぜる$c_S = \key{Physics.Source.Conc}$（\val{"supplied"}）である。\textbf{蒸発の項はない}。蒸発は溶媒だけを除き、溶質は残すからである。Yuzenはこの方程式を時間発展させ、各セルの溶質量$hc$を同じステップの膜厚$h$とともに未知量として進める。そのため、閉じた膜の溶質は丸め誤差の範囲で保存される。また、濃度の異なる液を供給しない限り、膜がどう動いても一様な$c$は一様のまま保たれる（\cref{sec:disc:wm-conservative}）。
+
+\cref{eq:height-dim}に$c$を掛けて差し引くと、$c$自体に関する同じ法則が得られる。$\uvec = \Qvec/h$は有効な項をすべて合わせた速度である。
+%
+\begin{equation}\label{eq:conc-adv}
+  \frac{\partial c}{\partial t} + \uvec\cdot\nabla c
+    = \frac{1}{h}\,\nabla\cdot\bigl(D(c)\,h\,\nabla c\bigr)
+      \;+\; \frac{E c}{h} \;+\; \frac{S\,(c_S - c)}{h}.
+\end{equation}
+
+こちらの形のほうが読み取りやすく、乾燥の面白さは蒸発の項に表れている。蒸発は溶媒を除くが溶質は除かないので、残った液は濃くなる。その速さは、単位時間に失われる膜厚$E$を、溶質を薄めている膜厚$h$で割ったものである。\textbf{$h$で割るため、濃度は膜が最も薄いところで最も速く上がる。}乾燥する塗膜で端部効果が生じるのはこの機構による。接触線を含む計算に\cref{sec:terms:evaporation}の前駆膜補正が必要な理由もここにある。補正がなければ、領域内で最も薄い部分が真っ先に、しかも最も速く乾ききってしまう。最後の項はノズルによるもので、液が局所の濃度で供給される場合は0である。濃度の異なる$c_S$の液を供給すると、$c$は$S/h$の速さで$c_S$に近づく。そのため、ノズル下の薄い膜はすぐに供給濃度に近づき、厚い膜はゆっくり近づく。
+
+深さ平均ではなく膜厚方向の濃度分布が必要な場合は、\val{"CZ"}モデルを用いる（\cref{sec:conc:cz}）。
+
+\section{仮定が成り立たなくなる場合}
+\label{sec:governing:breakdown}
+
+\paragraph{傾きが大きい場合} 二種類の誤差が同時に現れる。線形化した曲率の精度が落ち、分離圧の較正（\cref{sec:wetting:dp}）に用いる小角度近似$1-\cos\thetae \approx \thetae^{2}/2$の精度も落ちる。後者の誤差は厳密に評価できる。
+
+\begin{yzntable}{$1-\cos\thetae \approx \thetae^{2}/2$の誤差\label{tab:cos-error}}{@{}d d@{}}
+\textsf{\bfseries $\thetae$ [deg]} & \textsf{\bfseries 誤差} \\ \midrule
+10 & 0.3 \% \\
+20 & 1.0 \% \\
+30 & 2.3 \% \\
+45 & 5.3 \% \\
+90 & 23 \% \\
+\end{yzntable}
+
+\key{Physics.DisjoiningPressure.ContactAngle}には$[0:90]$度の任意の値を指定できるが、角度を定量的に扱うなら小さな値にとどめること。
+
+\paragraph{慣性} 回転速度が高い場合や粘度が低い場合、速度分布は導出で仮定した放物線から外れる。ソルバーにはこれを検出する仕組みがない。方程式は問題なく解け続けるが、実際とは別の問題を解いていることになる。
+
+\paragraph{面内長さが膜厚に近づく場合} 接触線の近くは、もともと傾きが大きく面内長さが短い領域であり、この近似が最も苦手とする条件が両方そろう。長波長方程式をこの領域で使えるようにする仕掛けが分離圧である。分離圧で何ができ、何ができないかは\cref{ch:wetting}で扱う。
+
+以上はすべて一つの数にまとめられる。膜が薄いという仮定は無次元数
+
+\[
+  \As = \left(\frac{L_0}{h_0}\right)^{2},
+\]
+
+に現れる。$\As$がオーダー1まで下がるような設定は、近似の適用範囲から完全に外れている。
+
+\section{スケール}
+\label{sec:governing:scales}
+
+入力ファイルの値はすべて有次元（メートル、秒、パスカル秒）で与えるが、ソルバー内部の計算はすべて無次元変数で行う。変換には五つのスケールを用いる。
+
+\begin{yzntable}{無次元化に用いるスケール\label{tab:scales}}{@{}l L{0.42\textwidth} L{0.44\textwidth}@{}}
+\textsf{\bfseries 記号} & \textsf{\bfseries 意味} &
+\textsf{\bfseries 決め方} \\ \midrule
+$L_0$ & 面内長さ。毛管長$\sqrt{\sigma_0/(\rho g)}$、$g = \SI{9.80665}{\metre\per\second\squared}$ & \key{LengthScaleType}。\val{"custom"}のときは\key{LengthScale}の値を$L_0$とする \\
+$h_0$ & 膜厚 & \key{Initial.SurfaceShape.TotalHeight} \\
+$T_0$ & 時間、$\mu_0 L_0^{4}/(\sigma_0 h_0^{3})$ & $\mu_0$、$\sigma_0$、$L_0$、$h_0$から計算 \\
+$U_0$ & 速度、$L_0/T_0$ & $L_0$と$T_0$から計算 \\
+$\varepsilon$ & アスペクト比、$h_0/L_0$ & $h_0$と$L_0$から計算 \\
+\end{yzntable}
+
+基準物性値は$\sigma_0 =$ \key{Fluid.SurfaceTension.BaseValue}、$\rho =$ \key{Fluid.Density.Value}、$\mu_0 =$ \key{Fluid.Viscosity.BaseValue}である。\key{LengthScaleType = "custom"}とすると、毛管長の代わりに\key{LengthScale}の値を用いる。
+
+無次元膜厚は$H = h/h_0$、無次元の面内座標は$X = x/L_0$である。したがって
+
+\begin{equation}\label{eq:slope-conversion}
+  \text{physical slope} \;=\; \varepsilon \times \text{dimensionless slope},
+\end{equation}
+
+が成り立つ。\cref{eq:slope-conversion}は些細な注意書きではなく、\textbf{\cref{ch:wetting}の接触角の議論はすべてこの関係に基づく}。$X$が一単位進む間に1だけ上がる無次元形状は、物理的には$45^\circ$ではなく$\varepsilon$の傾きの表面である。五つのスケールのうち四つ（$L_0$、$h_0$、$T_0$、$U_0$）は、標準出力の実行ログに\code{Scaling factors}という見出しで出力される（\cref{sec:output:running}）。自分で計算し直さず、この値を読めばよい。$\varepsilon$は出力されないが、出力される二つの値から$h_0/L_0$として求まる。
+
+\section{無次元数}
+\label{sec:governing:groups}
+
+入力はすべて、次の十二の無次元数を通じて方程式に入る。
+
+\begin{yzntable}{無次元数\label{tab:groups}}{@{}l L{0.225\textwidth} L{0.22\textwidth} L{0.375\textwidth}@{}}
+\textsf{\bfseries 記号} & \textsf{\bfseries 定義} &
+\textsf{\bfseries 意味} & \textsf{\bfseries 決め方} \\ \midrule
+$\As$   & $(L_0/h_0)^{2}$ & アスペクト比の逆数の二乗。毛管圧の強さ & \key{Initial.SurfaceShape.TotalHeight}と$L_0$ \\
+$\Bo$   & $\rho g_z L_0^{2}/\sigma_0$ & ボンド数。基板に垂直な重力 & \key{Physics.\bk VerticalGravity.\bk Acceleration} \\
+$\Pgx$  & $\rho g_x L_0^{2}/(\sigma_0\varepsilon)$ & $x$方向の面内重力。基板が傾いていると非ゼロ & \key{Physics.\bk HorizontalGravity.\bk Acceleration[0]} \\
+$\Pgy$  & $\rho g_y L_0^{2}/(\sigma_0\varepsilon)$ & $y$方向の面内重力 & \key{Physics.\bk HorizontalGravity.\bk Acceleration[1]} \\
+$\Spn$  & $\rho \omega^{2} L_0^{4}/(\sigma_0 h_0)$ & スピン数。遠心力 & \key{Physics.Centrifugal.RotationRate} \\
+$\Ma$   & $(\mathrm{d}\sigma/\mathrm{d}c)/\sigma_0$ & マランゴニ数。表面張力が濃度にどれだけ依存するか & \key{Fluid.SurfaceTension.Coef} \\
+$\Dpn$  & $\displaystyle\frac{\As\,(n-1)(m-1)\,\thetae^{2}}{2\,\Hstar\,(n-m)}$ & 分離圧係数。目標の平衡接触角から決まる & \key{Physics.DisjoiningPressure.*}と\key{PrecursorRatio} \\
+$\Hstar$ & \key{PrecursorRatio} & 無次元の前駆膜厚。$\Pihat(\Hstar) = 0$の根 & \key{Initial.SurfaceShape.PrecursorRatio} \\
+$\Ev$   & $E_0 T_0/h_0$ & 蒸発数。蒸発で膜が薄くなる速さ & \key{Physics.Evaporation.Coef} \\
+$\Pen$  & $E_0 h_0/D_0$ & ペクレ数。蒸発と膜厚方向の拡散の比 & \key{Physics.Evaporation.Coef}、\key{Fluid.Diffusivity.BaseValue} \\
+$\Df$   & $D_0 T_0/L_0^{2}$ & 拡散数。面内拡散の速さ & \key{Fluid.Diffusivity.BaseValue} \\
+$\Mr$   & $M_{\mathrm{resin}}/M_{\mathrm{solvent}}$ & モル質量比。ラウールの法則に用いる & \key{Fluid.MolarMass.Solvent}、\key{Fluid.MolarMass.Resin} \\
+$\Lambda$ & $\lambda/h_0$ & 無次元すべり長さ。移動度は$H^3/3 + \Lambda H^2$（\cref{sec:terms:slip}） & \key{Physics.Slip.Length} \\
+\end{yzntable}
+
+定義中の$g_z$、$g_x$、$g_y$は入力で与える重力加速度の成分（単位\si{\metre\per\second\squared}）、$\omega$は回転速度（\si{\radian\per\second}）、$E_0$は蒸発係数（\si{\metre\per\second}）、$D_0$は基準拡散係数（\si{\metre\squared\per\second}）である。
+
+$\Bo$、$\Pgx$、$\Pgy$、$\Spn$、$\Ma$、$\Dpn$は、対応する項を入力で無効にすると\textbf{ゼロになり}、その項は組み立てられない（\cref{sec:repro:order}）。$\Ev$、$\Pen$、$\Df$は常に値をもち、蒸発と拡散の有効・無効は別のキーで切り替える。最初の規則には副作用がある。$\Ma = 0$とすると、マランゴニ応力だけでなく表面張力の濃度依存性もすべてなくなる（\cref{sec:conc:properties}）。
+
+覚えておくと便利な値が一つある。長さスケールを毛管長のままにして\key{Acceleration = 9.80665}（$g = \SI{9.80665}{\metre\per\second\squared}$）とすると、ちょうど$\Bo = 1$になる。毛管長は重力と表面張力が釣り合う長さとして定義されているからである。したがって、$\Bo$を変えたいときは\key{Acceleration}を変更する。
+
+\section{無次元の方程式}
+\label{sec:governing:nondim}
+
+これらのスケールと無次元数を用いると、\cref{eq:height-dim,eq:flux-dim}は
+
+\begin{equation}\label{eq:height}
+  \frac{\partial H}{\partial T} = -\nabla\cdot\Qvec - \Ev\,\hat{E}(H,C) + \hat{S},
+\end{equation}
+
+\begin{equation}\label{eq:flux}
+  \Qvec = \frac{H^{3}}{3\hat{\mu}}
+    \Bigl[\,\hat{\sigma}\,\nabla\nabla^{2}(H+S)
+      - \Bo\,\nabla(H+S)
+      + \Dpn\,\nabla\Pihat(H)
+      + \Pvec
+      + \Spn\,r\,\er \Bigr]
+    + \frac{\As\,\Ma}{2}\,\frac{H^{2}}{\hat{\mu}}\,\nabla C,
+\end{equation}
+
+となり、溶質の収支\cref{eq:conc-dim}は
+
+\begin{equation}\label{eq:conc}
+  \frac{\partial (HC)}{\partial T} + \nabla\cdot\bigl(C\,\Qvec\bigr)
+    = \Df\,\nabla\cdot\bigl(\hat{D}(C)\,H\,\nabla C\bigr) + C_S\,\hat{S},
+\end{equation}
+
+となる。$C_S = c_S$は供給される液の濃度である（既定では$C$に等しい）。分離圧は次式で与える。
+
+\begin{equation}\label{eq:pihat}
+  \Pihat(H) = (\Hstar/H)^{n} - (\Hstar/H)^{m}.
+\end{equation}
+
+$\hat{\mu}(C)$、$\hat{\sigma}(C)$、$\hat{D}(C)$は、粘度、表面張力、拡散係数を基準濃度で1となるよう正規化したものであり、$\Pvec = (\Pgx, \Pgy)$である。ハットのない$S$は無次元の基板高さ、ハットのついた$\hat{S}$は無次元の供給項であり、別の量である。紛らわしいが同じ文字を使っている。
+
+\cref{eq:flux}を理解するには、何がこれをゼロにするかを考えるのが有効である。六つの寄与のうち五つは$H^{3}/3\hat{\mu}$を掛けた一つの括弧に入っているので、$\Qvec = 0$となるには括弧の中身が\emph{空間的に一様}でなければならない。個々の項が小さいことではなく括弧全体が一様であること、これが平衡条件であり、\cref{ch:wetting}の出発点となる。離散化では、膜厚と濃度をセル中心に、速度をセル界面に置く（\cref{ch:discretization}）。

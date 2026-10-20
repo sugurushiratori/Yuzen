@@ -1,0 +1,168 @@
+% bibliography.tex -- background reading
+\chapter*{Further reading}
+\addcontentsline{toc}{chapter}{Further reading}
+\markboth{Further reading}{Further reading}
+
+This is mostly background reading rather than a provenance list: Yuzen's
+equations and their calibration are derived in Part~III of this manual from
+first principles, and the only external results the manual compares against
+are the ones named explicitly in \cref{ch:verification}. The works below are
+where the standard material is set out properly.
+
+Some entries are provenance and not background. The well-mixed model
+implements the method of Diez and Kondic (2002), listed under \emph{Numerical
+method} below, extended with the centrifugal, Marangoni and disjoining-pressure
+terms. Its positivity preserving mobility is that paper's Eq.~(23); see
+\cref{sec:disc:positivity}. The convection schemes of
+\cref{sec:disc:convection} are those of the works listed under
+\emph{Convection schemes}.
+
+\section*{Thin films and the lubrication approximation}
+
+\begin{description}[leftmargin=0pt, labelsep=0.5em, style=unboxed]
+  \item[O.~Reynolds (1886).] \emph{On the theory of lubrication and its
+    application to Mr.~Beauchamp Tower's experiments.} Philosophical
+    Transactions of the Royal Society of London \textbf{177}, 157--234. The
+    origin of the approximation the whole solver rests on.
+
+  \item[A.~Oron, S.~H.~Davis and S.~G.~Bankoff (1997).] \emph{Long-scale
+    evolution of thin liquid films.} Reviews of Modern Physics \textbf{69},
+    931--980. The standard review. If you read one thing alongside
+    \cref{ch:governing}, read this: it derives the same equation, catalogs
+    the terms, and is careful about the ordering assumptions that make each one
+    admissible.
+
+  \item[R.~V.~Craster and O.~K.~Matar (2009).] \emph{Dynamics and stability of
+    thin liquid films.} Reviews of Modern Physics \textbf{81}, 1131--1198. A
+    later review, with more on evaporation, surfactants and instability.
+\end{description}
+
+\section*{Wetting, contact lines and disjoining pressure}
+
+\begin{description}[leftmargin=0pt, labelsep=0.5em, style=unboxed]
+  \item[P.~G.~de Gennes (1985).] \emph{Wetting: statics and dynamics.} Reviews
+    of Modern Physics \textbf{57}, 827--863.
+
+  \item[D.~Bonn, J.~Eggers, J.~Indekeu, J.~Meunier and E.~Rolley (2009).]
+    \emph{Wetting and spreading.} Reviews of Modern Physics \textbf{81},
+    739--805. Includes the moving-contact-line problem and the various ways of
+    regularizing it, of which the disjoining-pressure model used here is one.
+
+  \item[L.~W.~Schwartz and R.~R.~Eley (1998).] \emph{Simulation of droplet
+    motion on low-energy and heterogeneous surfaces.} Journal of Colloid and
+    Interface Science \textbf{202}, 173--188. The two-exponent disjoining
+    pressure $\Pi \propto (\hstar/h)^n - (\hstar/h)^m$ in the form Yuzen uses,
+    together with the energy argument that fixes its coefficient from the
+    equilibrium contact angle --- the argument reproduced in
+    \cref{sec:wetting:dp}.
+
+  \item[O.~V.~Voinov (1976).] \emph{Hydrodynamics of wetting.} Fluid Dynamics
+    \textbf{11}, 714--721.
+
+  \item[R.~G.~Cox (1986).] \emph{The dynamics of the spreading of liquids on a
+    solid surface. Part~1. Viscous flow.} Journal of Fluid Mechanics
+    \textbf{168}, 169--194. The relation tested in
+    \cref{sec:verification:spreading}, including the logarithmic factor that
+    the test explicitly does \emph{not} verify independently.
+
+  \item[L.~H.~Tanner (1979).] \emph{The spreading of silicone oil drops on
+    horizontal surfaces.} Journal of Physics D \textbf{12}, 1473--1484. The
+    complete-wetting spreading law, and why it is not the right target for a
+    partial-wetting disjoining-pressure model.
+\end{description}
+
+\section*{Spin coating and drying}
+
+\begin{description}[leftmargin=0pt, labelsep=0.5em, style=unboxed]
+  \item[A.~G.~Emslie, F.~T.~Bonner and L.~G.~Peck (1958).] \emph{Flow of a
+    viscous liquid on a rotating disk.} Journal of Applied Physics
+    \textbf{29}, 858--862. The centrifugal thinning law, with no evaporation.
+
+  \item[D.~Meyerhofer (1978).] \emph{Characteristics of resist films produced
+    by spinning.} Journal of Applied Physics \textbf{49}, 3993--3997. Spinning
+    with solvent loss, which is the combination Yuzen's centrifugal and
+    evaporation terms together produce.
+\end{description}
+
+\section*{Numerical method}
+
+\begin{description}[leftmargin=0pt, labelsep=0.5em, style=unboxed]
+  \item[H.~A.~van der Vorst (1992).] \emph{Bi-CGSTAB: a fast and smoothly
+    converging variant of Bi-CG for the solution of nonsymmetric linear
+    systems.} SIAM Journal on Scientific and Statistical Computing \textbf{13},
+    631--644. The algorithm behind both backends.
+
+  \item[Y.~Saad (2003).] \emph{Iterative Methods for Sparse Linear Systems},
+    2nd edition. SIAM. Incomplete factorizations, algebraic multigrid, and the
+    preconditioners named in \cref{ch:linearsolver}.
+
+  \item[L.~V.~Kantorovich (1948).] \emph{Functional analysis and applied
+    mathematics.} Uspekhi Matematicheskikh Nauk \textbf{3}, 89--185. The
+    Newton--Kantorovich method of \cref{sec:time:newton}.
+
+  \item[J.~A.~Diez and L.~Kondic (2002).] \emph{Computing three-dimensional
+    thin film flows including contact lines.} Journal of Computational Physics
+    \textbf{183}, 274--306. The method the well-mixed model implements: the
+    positivity preserving mobility of \cref{sec:disc:positivity} is its
+    Eq.~(23), and the quasi-3D formulation there is the reason the
+    two-dimensional height equation carries mixed $x$--$y$ terms and a
+    thirteen-point stencil.
+
+  \item[L.~Zhornitskaya and A.~L.~Bertozzi (2000).] \emph{Positivity-preserving
+    numerical schemes for lubrication-type equations.} SIAM Journal on
+    Numerical Analysis \textbf{37}, 523--555. Where the positivity preserving
+    discretization of the mobility comes from, and why a fourth-order
+    degenerate diffusion needs one.
+\end{description}
+
+\section*{Convection schemes}
+
+\begin{description}[leftmargin=0pt, labelsep=0.5em, style=unboxed]
+  \item[B.~van Leer (1974).] \emph{Toward the ultimate conservative
+    difference scheme. II. Monotonicity and conservation combined in a
+    second-order scheme.} Journal of Computational Physics \textbf{14},
+    361--370. The limiter $\Phi_{\text{vL}}$ of \cref{eq:disc:limited}
+    (\val{"VanLeer"}).
+
+  \item[B.~P.~Leonard (1979).] \emph{A stable and accurate convective
+    modelling procedure based on quadratic upstream interpolation.} Computer
+    Methods in Applied Mechanics and Engineering \textbf{19}, 59--98. The
+    quadratic upstream interpolation \val{"QUICK"}.
+
+  \item[T.~Kawamura, H.~Takami and K.~Kuwahara (1986).] \emph{Computation of
+    high Reynolds number flow around a circular cylinder with surface
+    roughness.} Fluid Dynamics Research \textbf{1}, 145--162. The third-order
+    upwind difference with the larger fourth-difference dissipation,
+    \val{"KK"}; Yuzen writes it as a face value, \cref{eq:disc:face}.
+
+  \item[B.~Koren (1993).] \emph{A robust upwind discretization method for
+    advection, diffusion and source terms.} In C.~B.~Vreugdenhil and
+    B.~Koren (eds), \emph{Numerical Methods for Advection--Diffusion
+    Problems}, Notes on Numerical Fluid Mechanics \textbf{45}, Vieweg,
+    117--138. The limiter $\Phi_{\text{Koren}}$ of \cref{eq:disc:limited}
+    (\val{"Koren"}), third order where the solution is smooth.
+
+  \item[B.~P.~Leonard, M.~K.~MacVean and A.~P.~Lock (1993).]
+    \emph{Positivity-preserving numerical schemes for multidimensional
+    advection.} NASA Technical Memorandum 106055 (ICOMP-93-05), NASA Lewis
+    Research Center. The uniformly third-order polynomial interpolation
+    \val{"UTOPIA"}, the default for the concentration.
+\end{description}
+
+\section*{Software Yuzen uses}
+
+\begin{description}[leftmargin=0pt, labelsep=0.5em, style=unboxed]
+  \item[Eigen.] G.~Guennebaud, B.~Jacob and others,
+    \url{https://eigen.tuxfamily.org}. MPL-2.0. Linked unconditionally; fetched by CMake if it is not installed.
+
+  \item[AMGCL.] D.~Demidov, \emph{AMGCL: an efficient, flexible, and extensible
+    algebraic multigrid implementation}, Lobachevskii Journal of Mathematics
+    \textbf{40} (2019), 535--546. \url{https://github.com/ddemidov/amgcl}.
+    MIT. Optional backend.
+
+  \item[doctest.] V.~Kirilov, \url{https://github.com/doctest/doctest}. MIT.
+    Bundled; the test suite is written against it.
+
+  \item[toml++.] M.~Gillard, \url{https://marzer.github.io/tomlplusplus}. MIT.
+    Bundled, with one local fix; parses the \file{.toml} input form.
+\end{description}

@@ -1,0 +1,249 @@
+% ch-linearsolver.tex -- numerical method: the two linear-solver backends and their shared contract
+\chapter{Linear solvers}
+\label{ch:linearsolver}
+
+Every Newton iteration and every semi-implicit solve ends in a sparse linear
+system (\cref{sec:time:newton}). Yuzen ships two implementations of that one
+job, and which of them you get is an input-file decision. This chapter says
+what the two are, how they compare on measured cases, and what every backend
+is required to do regardless of which one you pick. The keys themselves are
+tabulated in \cref{sec:ref-numerics:linearsolver}.
+
+\section{Two backends behind one interface}
+\label{sec:linsolve:backends}
+
+The two implementations sit behind the single interface
+\code{ILinearSolverBackend} and are interchangeable. The calling code knows
+only \code{LinearSolver} and never learns which backend it has. The choice is
+made by \key{Numerics.HeightEquation.LinearSolver.Backend} and
+\key{Numerics.ConcEquation.LinearSolver.Backend}, separately --- the thickness
+equation and the concentration equation may use different backends in the same
+run.
+
+\begin{yzntable}{The three values of \key{Backend}\label{tab:backends}}{@{}l L{0.30\textwidth} L{0.38\textwidth}@{}}
+\textsf{\bfseries Value} & \textsf{\bfseries Implementation} &
+\textsf{\bfseries Character} \\ \midrule
+\val{"auto"} (default) & amgcl for a 2-D film on a build with AMGCL, otherwise eigen &
+  the choice to make when you have no reason to prefer another \\
+\val{"eigen"} & Eigen \code{BiCGSTAB} with block-Jacobi \code{IncompleteLUT} &
+  depends on Eigen alone; parallel, and \textbf{bit-identical whatever the thread count} \\
+\val{"amgcl"} & AMGCL \code{bicgstab} with smoothed-aggregation AMG and SPAI0 &
+  fastest in 2-D on most sizes; OpenMP-parallel including the preconditioner \\
+\end{yzntable}
+
+\begin{note}[Why there is no in-house BiCGStab]
+  An in-house BiCGStab with ILU(0) was measured during development and left
+  out of the release: it was far slower than the alternatives --- on
+  \file{leveling\_1d\_reg} it needed 3676 linear iterations where
+  \val{"eigen"} needs 21 (\cref{sec:verification:backends}) --- and it had
+  bugs, while the one property it offered, bit-identity under a change of
+  thread count, is a property of \val{"eigen"} as well. Any other value of
+  \key{Backend} is \textbf{refused rather than quietly given something
+  else}: the parser reports that \key{Backend} \code{must be one of
+  [`auto',`eigen',`amgcl']} and the run aborts with exit code 1
+  (\cref{sec:ref-numerics:linearsolver}).
+\end{note}
+
+Asking for \val{"amgcl"} on a build without AMGCL is not an error: the solver
+emits a warning and falls back to \val{"eigen"}. The line in
+\file{Warnings.txt} reads \code{LinearSolver: Backend="amgcl" was requested,
+but this build has no AMGCL. Falling back to "eigen".} Grep for
+\code{has no AMGCL}. The run then produces valid
+results that are not the ones you asked for, so check which backend was
+actually used before comparing against another machine's output. You do not
+have to infer it: the \code{\#\#\#\#\#\# Solver Info \#\#\#\#\#\#} section of
+\file{JobInfo.txt} names the resolved backend of each equation
+(\cref{sec:output:jobinfo}), so it reads \val{"eigen"} after a fall-back and
+names the real choice behind \val{"auto"}.
+
+\section{What each backend does}
+\label{sec:linsolve:what}
+
+\subsection{\val{"eigen"}: block-Jacobi ILUT}
+\label{sec:linsolve:eigen}
+
+With \key{PreconditionType} \val{"ILU"}, the rows are split into contiguous
+blocks, one per 1024 rows and at most 128, and each diagonal block is
+factorized by Eigen's \code{IncompleteLUT} (fill factor 10, drop tolerance
+$10^{-10}$); the preconditioner applies each block's factors to its own rows,
+and the coupling between the blocks is left to the BiCGStab iteration. The
+blocks are factorized and applied in parallel. \textbf{The blocking follows
+from the size of the system alone, never from the thread count}, so the
+result is bit-identical whatever the thread count, as before
+(\cref{ch:reproducibility}). A system of fewer than 2048 rows is one block:
+the ILUT of the whole matrix. Against one ILUT of the whole matrix, the blocks
+take 4 to 9 times the iterations on the 2-D films measured, and are 1.3 to 3
+times faster on one thread all the same, because the factorization of the
+whole matrix costs far more than that of its blocks; at the best thread
+count, 3.7 to 21 times faster (\cref{sec:parallel:profile}). The analysis of each block's
+pattern is done once and reused while the pattern stays the same.
+
+\subsection{\val{"amgcl"}: smoothed-aggregation AMG}
+\label{sec:linsolve:amgcl}
+
+With \val{"ILU"}, AMGCL's BiCGStab is preconditioned by smoothed-aggregation
+AMG with SPAI0 smoothing, built anew at every solve. On a system of more
+than 3000 unknowns the hierarchy is coarsened down to 500 (AMGCL's own default
+is 3000), because the coarsest level is solved directly and sequentially: on a
+$128^2$ film the deeper hierarchy made the solve 2.9 times faster. A system of
+3000 unknowns or fewer is left to AMGCL's default, which solves it directly in
+one iteration; coarsened to 500, the fourth-order 1-D film of 2000 cells took
+80 BiCGStab iterations a solve and ran 6.5 times slower on one thread.
+
+\subsection{The concentration equation}
+\label{sec:linsolve:conc}
+
+The concentration systems are dominated by their diagonal (the film over the
+step), so with \key{PreconditionType} \val{"ILU"} a light preconditioner is
+tried first: Jacobi with \val{"eigen"}, SPAI0 with \val{"amgcl"}, at most 300
+iterations. \textbf{If that try does not
+converge, the solve starts again from the same initial guess with the
+preconditioner of the input} (ILUT or AMG). A system on which the light one
+does not work --- a ConcZ film with dry columns is one --- then costs a few
+failed tries, not one per solve: after a failure the next 16 tries are
+skipped, doubling after each further failure up to 1024, and back to 16 after
+a try that converged. The same holds for the block-Jacobi ILUT of the film
+height and of the concentration: a try that does not converge in 300
+iterations falls back to the ILUT of the whole matrix. Which way a solve goes
+depends on its convergence only, not on the thread count. The iterations of a
+dropped try are counted in the linear iterations of \file{JobInfo.txt}.
+
+\subsection{The tolerance of each Newton pass}
+\label{sec:linsolve:ew}
+
+The film height is solved by Newton's method (\cref{sec:time:newton}), one
+linear solve a pass. A pass far from the solution does not need its
+correction to 13 digits, so \textbf{the tolerance of each pass follows the
+progress of the iteration} (Eisenstat and Walker's choice 2):
+\[
+  \eta_k = 0.9\left(\frac{\lVert F_k\rVert}{\lVert F_{k-1}\rVert}\right)^{2},
+\]
+$F$ the right-hand side of the pass (the residual of the step at the current
+guess), safeguarded by $0.9\,\eta_{k-1}^2$ while that is above $0.1$, and held
+between \key{Epsilon} and $10^{-4}$; the first pass of a step is solved to
+$10^{-4}$. \textbf{\key{Epsilon} of the film height's linear solver is
+therefore the tightest tolerance a pass is solved to}, reached as the
+iteration converges, not the tolerance of every pass. The Newton convergence
+tests themselves (\cref{sec:convergence:tests}) are unchanged, and the
+answer agrees with that of solving every pass to \key{Epsilon} to within
+the Newton tolerance: on the cases measured, the final film differed by
+$10^{-15}$ relative and the linear iterations fell by 24 to 38\,\%.
+
+These four choices can each be turned off with \env{YUZEN\_OPT}
+(\cref{tab:envvars}), to compare a run with the algorithm it replaced.
+
+\section{Which one to choose}
+\label{sec:linsolve:choosing}
+
+\Cref{tab:linsolve-timing} gives measured wall-clock times. They were taken on
+one node with two Intel Xeon CPU Max 9480 (56 cores each, 8 NUMA nodes), with
+GCC 11 and LLVM's \file{libomp} (the default build, \cref{sec:parallel:runtime}),
+from a \code{Release} build configured with \code{-DYUZEN\_WITH\_AMGCL=ON},
+the threads bound to cores 0 to $T-1$ (\env{OMP\_PROC\_BIND=close}) and the
+shortest of three runs shown --- the same machine as the case run times of
+\cref{tab:cases-runtimes}. \textbf{The absolute values depend on the machine,
+so what to read is the ratio between the columns, not the seconds
+themselves.} \file{tools/case\_runtimes.py --backends-only} measures the table
+(\cref{sec:env:tools}).
+
+\begin{yzntable}{Measured wall-clock times, one Xeon Max 9480 node, up to the cores of one socket (\cref{sec:parallel:cap}).\label{tab:linsolve-timing}}{@{}L{0.24\textwidth} l d d@{}}
+\textsf{\bfseries Case} & \textsf{\bfseries Threads} &
+\textsf{\bfseries eigen} & \textsf{\bfseries amgcl} \\ \midrule
+1-D \file{leveling\_1d\_reg}, $N_x = 300$ & 1 & \textbf{0.58 s} & 0.64 s \\
+                                         & 2 & \textbf{0.46 s} & 0.51 s \\
+                                         & 4 & \textbf{0.38 s} & 0.44 s \\
+                                         & 8 & \textbf{0.35 s} & 0.42 s \\
+                                         & 16 & \textbf{0.36 s} & 0.42 s \\
+                                         & 28 & \textbf{0.36 s} & 0.43 s \\
+                                         & 56 & \textbf{0.37 s} & 0.44 s \\
+2-D \file{leveling\_2d\_reg}, $60\times60$ & 1 & 19.8 s & \textbf{12.0 s} \\
+                                         & 2 & 10.6 s & \textbf{7.5 s} \\
+                                         & 4 & 6.5 s & \textbf{4.8 s} \\
+                                         & 8 & 5.8 s & \textbf{3.6 s} \\
+                                         & 16 & 5.5 s & \textbf{3.1 s} \\
+                                         & 28 & 5.4 s & \textbf{2.9 s} \\
+                                         & 56 & 5.3 s & \textbf{2.8 s} \\
+\end{yzntable}
+
+\textbf{In 1-D eigen is \SI{10}{\percent} faster on one thread and stays
+ahead; in 2-D amgcl is 1.6 times as fast on one thread and 1.9 times on 56.}
+These cases are small --- 300 and 3\,600 cells. In 1-D both gain a factor of
+about 1.6 by eight threads and nothing after; with the runtime's hot teams
+(\cref{sec:parallel:runtime}) more threads do not cost time either, 56 being
+within \SI{6}{\percent} of 8. In 2-D eigen gains a factor of 3.8 by 56 threads
+and amgcl 4.3, most of it by eight. \Cref{sec:parallel:scaling} shows the
+larger films.
+
+Where the time of the 2-D case goes (\file{tools/\bk profile\_threads.py},
+\cref{sec:parallel:profile}): with eigen, building the block-Jacobi ILUT
+preconditioner takes \SI{55}{\percent} of the time-step loop on one thread and
+on eight, and the BiCGStab iterations \SI{13}{\percent}; the factorization is
+redone at every linear solve, and its blocks stop dividing the work at a few
+thousand rows. The profile of amgcl is spread out: on one thread the AMG
+set-up takes \SI{9}{\percent}, the iterations \SI{27}{\percent} and the
+assembly of the film-height matrices \SI{27}{\percent}.
+
+The in-house backend was timed during development on a two-core Xeon at
+\SI{2.1}{\giga\hertz} on the same two cases, and two things in those measurements are worth
+remembering. In 1-D it took 9.3 seconds at one thread and 11.5 at two, against
+2.2 and 1.9 for eigen on the same development form of the case --- \textbf{four
+to six times slower, and \emph{slower} again when given a second thread}. That was not a measurement error: its ILU
+had to run sequentially (\cref{sec:repro:other}), so the only parts that
+parallelized were the matrix--vector products and the reductions, and at this
+problem size the synchronization cost more than those parts saved. In 2-D, at
+5.2 and 4.0 seconds, it did beat the 12.9 and 11.4 seconds eigen took on
+that development form of the case, but it did not beat amgcl, which is the
+backend to reach for in that regime anyway.
+
+\textbf{If exact agreement between runs matters, use \val{"eigen"}.}
+AMGCL's internal reductions are not order-fixed, so changing
+the thread count can change the low-order bits. Measured on \file{leveling\_1d\_reg} at
+one thread against four, the differences are $6.089\times10^{-11}$ in the
+physical quantities and $9.615\times10^{-2}$ in the error measures (a column
+that is rounding in that case); at two threads, and in 2-D
+(\file{allphys\_2d\_reg}) at two and four, the bits happened not to move,
+which nothing guarantees. For \val{"eigen"} the same comparison gives exactly
+$0$ at any thread count (\cref{sec:verification:backends}). \Cref{ch:reproducibility} explains what
+stands behind that property, and why it is worth having.
+
+\begin{warn}[Changing the backend changes how the rounding falls]
+  Results from two different backends do not agree bit for bit. They agree only
+  to within the convergence tolerance of the linear solver. When you make a
+  regression comparison, fix the backend on both sides of it --- and check what
+  each run really used in the \code{Solver Info} section of its
+  \file{JobInfo.txt} (\cref{sec:output:jobinfo}) rather than trusting the two
+  input files to have resolved \val{"auto"} the same way.
+\end{warn}
+
+\section{The shared contract}
+\label{sec:linsolve:contract}
+
+Whichever backend is in use, the following hold.
+
+\begin{itemize}
+  \item \textbf{The solution vector passed to \code{Solve()} is also the
+    initial guess.} With Eigen it is handed to \code{solveWithGuess}. The
+    return value is \val{0} for converged, \val{1} for the iteration cap
+    reached, and \val{2} for divergence or breakdown.
+  \item \textbf{A failed solve must have its solution vector thrown away.} If a
+    NaN is left in the vector and passed to the next call, the solve fails with
+    a NaN again no matter how far the time step is cut, and the run grinds down
+    to \key{MinDt} and aborts for a reason that has nothing to do with the time
+    step. \code{C\_NewtonKantorovich::Solve} discards it; anything new that
+    calls a backend directly must do the same.
+  \item \textbf{Diagonal scaling does not change the solution.}
+    \key{RowScaling} divides each row by its own diagonal, which leaves the
+    solution of the system untouched. It is applied to a mirror of the values
+    and to a copy of the right-hand side; the matrix itself is not modified.
+  \item \textbf{Preconditioner names map differently onto each
+    implementation.} Under \val{"eigen"}, \val{"ILU"} is block-Jacobi ILUT
+    (\cref{sec:linsolve:eigen}); under \val{"amgcl"} it becomes
+    smoothed-aggregation AMG with SPAI0, and \val{"Jacobi"} becomes damped
+    Jacobi. The name you write selects a preconditioner of comparable
+    strength, not the same algorithm.
+  \item \textbf{\env{YUZEN\_ILUT\_FILL} overrides the fill factor} of Eigen's
+    \code{IncompleteLUT}; the default is 10. Lowering it makes the
+    preconditioner cheaper, but drop too much and the factorization breaks down
+    and the solution comes back as NaN --- a value of 1 breaks down even on a
+    1-D problem.
+\end{itemize}

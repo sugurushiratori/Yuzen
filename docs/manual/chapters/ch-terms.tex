@@ -1,0 +1,355 @@
+% ch-terms.tex -- theory: the individual physics terms of the flux
+\chapter{The physics terms}
+\label{ch:terms}
+
+\Cref{eq:flux} collects six flux contributions, and \cref{eq:height} adds
+evaporation and a source. Each of them has its own sub-block under
+\key{Physics} and its own \key{Enable} key, so they are switched on and off one
+at a time. This chapter takes them in turn: what the term is, what it does to
+the film, what behavior you should expect to see when it dominates, and which
+keys control it. The keys are quoted by name only --- their types, defaults and
+ranges are tabulated once, in \cref{ch:ref-physics}, and are not repeated here.
+
+\section{Capillary (Laplace) pressure}
+\label{sec:terms:laplace}
+
+\begin{equation}\label{eq:q-cap}
+  \Qvec_{\mathrm{cap}}
+    = \frac{\hat{\sigma}(C)\,H^{3}}{3\hat{\mu}(C)}\,\nabla\nabla^{2}(H+S).
+\end{equation}
+
+Surface tension acting to flatten the free surface. It is responsible for
+almost everything the word ``leveling'' covers: a rough coating smoothing
+itself out, a drop relaxing toward a spherical cap, liquid collecting in the
+dips of a textured substrate. In practice nearly every run keeps it on.
+
+Two details are worth holding on to. First, \textbf{this term is why the height
+equation is fourth order}: $\nabla\nabla^{2}$ is three derivatives acting on
+$H$ inside a divergence, so \cref{eq:height} carries a fourth spatial
+derivative, and that in turn is why each boundary needs two conditions
+(\cref{sec:conc:boundaries}) and why the linear systems are what they are
+(\cref{ch:linearsolver}). Second, the curvature is measured on the free surface
+$H+S$, not on the film thickness $H$ --- which is how the substrate shape gets
+into the problem at all.
+
+Its mobility contains $\hat{\sigma}(C)$ as well as $\hat{\mu}(C)$, so as a film
+dries and its surface tension changes, the rate at which it levels changes too.
+
+The only key is \key{Physics.LaplacePressure.Enable}
+(\cref{sec:ref-physics:laplace}).
+
+\section{Disjoining pressure}
+\label{sec:terms:disjoining}
+
+\begin{equation}\label{eq:q-dis}
+  \Qvec_{\mathrm{dis}} = \Dpn\,\frac{H^{3}}{3\hat{\mu}}\,\nabla\Pihat(H),
+  \qquad
+  \Pihat = (\Hstar/H)^{n} - (\Hstar/H)^{m},
+  \qquad n > m > 1.
+\end{equation}
+
+Once a film becomes very thin, the substrate and the free surface start to
+interact with one another. Expressing that interaction as a pressure gives the
+disjoining pressure, and it is this term that gives the model partial wetting:
+a finite contact angle and a contact line that can move. The first term of
+$\Pihat$ is repulsive and tries to keep the film thick; the second is
+attractive. They cancel at $H = \Hstar$, where $\Pihat = 0$, and that thickness
+is the precursor film left behind outside a drop.
+
+The characteristic behavior is a drop of finite extent sitting on a thin
+precursor, with a transition region between the two whose width is set by
+$\Hstar$ and the contact angle. How the coefficient $\Dpn$ is calibrated
+against the angle you ask for, and how wide that transition region actually is,
+is the subject of \cref{ch:wetting}.
+
+Four keys live in the \key{Physics.DisjoiningPressure} block: \key{Enable},
+\key{ContactAngle}, \key{ExponentN} and \key{ExponentM}. The precursor
+thickness comes from \key{Initial.SurfaceShape.PrecursorRatio}
+(\cref{sec:ref-physics:disjoining}). Enabling the term with
+\key{PrecursorRatio} left at \val{0} leaves $\Hstar$ undefined and terminates
+the run.
+
+\begin{warn}[This is the stiffest term in the model]
+  $\Pihat \sim H^{-n}$ is a very strong non-linearity: with the conventional
+  exponents $(n,m) = (3,2)$ a halving of the thickness multiplies the repulsive
+  branch by 8. They are the defaults of \key{ExponentN} and \key{ExponentM}
+  (\cref{sec:ref-physics:disjoining}).
+  Nothing else in the equation responds that steeply to a small change in $H$.
+  Expect this term to dominate the Newton iteration, the conditioning of the
+  linear system and the admissible time step whenever it is on.
+\end{warn}
+
+\section{Vertical gravity and the substrate shape}
+\label{sec:terms:vgravity}
+
+\begin{equation}\label{eq:q-vg}
+  \Qvec_{\mathrm{vg}} = -\frac{\Bo}{3}\,\frac{H^{3}}{\hat{\mu}}\,\nabla(H+S).
+\end{equation}
+
+Gravity normal to the substrate. Hydrostatic pressure drives liquid from the
+high parts of the free surface to the low ones, so on a horizontal substrate it
+flattens bumps and works alongside capillary pressure; the two together are
+what level a film. The difference between them is the order of the derivative,
+and hence the length scale: gravity levels long-wavelength unevenness that
+capillary pressure barely feels.
+
+The keys are \key{Physics.VerticalGravity.Enable} and
+\key{Physics.\bk VerticalGravity.\bk Acceleration}, the latter in
+\si{\metre\per\second\squared} (\cref{sec:ref-physics:vgravity}). If you are
+using a substrate tilted by an angle $\alpha$, the value to give here is
+$g\cos\alpha$, and the in-plane component goes to
+\cref{sec:terms:hgravity}.
+
+\subsection*{The substrate shape}
+
+The substrate profile $S(x,y)$ is built in the \key{Substrate} block. Any
+number of \key{RectBump}, \key{EllipseBump}, \key{PeriodicWave},
+\key{FlatPlane}, \key{MexicanHat} and \key{SmoothConvex} blocks may be listed;
+they are applied in ascending \key{Order} and combined into one shape
+(\cref{sec:ref-domain:substrate}). The substrate never moves and never changes
+with time.
+
+$S$ enters the equations only through the combination $H+S$, and only in
+\cref{eq:q-cap,eq:q-vg}. \textbf{If neither capillary pressure nor vertical
+gravity is enabled, the substrate shape does nothing whatsoever} --- it is
+parsed, built, written to the output and then never read by any term. This is
+a common way to spend an afternoon wondering why a carefully built topography
+has no effect.
+
+\section{In-plane gravity}
+\label{sec:terms:hgravity}
+
+\begin{equation}\label{eq:q-hg}
+  \Qvec_{\mathrm{hg}} = \frac{\Pvec}{3}\,\frac{H^{3}}{\hat{\mu}}.
+\end{equation}
+
+Flow down an inclined substrate. What distinguishes it from vertical gravity is
+that the driving field is a constant vector, independent of position: there is
+no gradient in it at all. The flux is then simply proportional to $H^{3}$, so
+\textbf{thicker parts of the film run faster}, the thick regions overtake the
+thin ones, and a front forms at the leading edge. That front steepening is the
+signature behavior of this term, and it is the origin of the fingering
+instabilities seen in real coatings running downhill.
+
+The keys are \key{Physics.HorizontalGravity.Enable} and
+\key{Physics.\bk HorizontalGravity.\bk Acceleration}, a pair $(g_x, g_y)$ in
+\si{\metre\per\second\squared} (\cref{sec:ref-physics:hgravity}). For a
+substrate tilted by $\alpha$, give the in-plane component $g\sin\alpha$ ---
+\num{4.903} at $30^\circ$. The sign sets the downhill direction.
+
+\section{Centrifugal force}
+\label{sec:terms:centrifugal}
+
+\begin{equation}\label{eq:q-cf}
+  \Qvec_{\mathrm{cf}} = \frac{\Spn}{3}\,\frac{H^{3}}{\hat{\mu}}\,r\,\er.
+\end{equation}
+
+A rotating substrate throws the film outwards. This is the main driving force
+of spin coating. The driving field is proportional to the distance $r$ from the
+rotation axis, so unlike in-plane gravity it is not uniform: the effect is
+weak at the center and strongest at the rim, which is what produces the
+characteristic thinning-from-the-middle history of a spin-coated film.
+
+The keys are \key{Physics.Centrifugal.Enable},
+\key{Physics.Centrifugal.RotationRate} in \si{\radian\per\second}, and
+\key{Physics.Centrifugal.RotationAxis}, the coordinates of the rotation center
+in meters (\cref{sec:ref-physics:centrifugal}).
+
+\begin{note}[What a 1-D spin-coating run does with the $y$ direction]
+  In a \val{"xh"} run there is no $y$ direction to be thrown into, but the
+  liquid would be thrown there all the same. The solver accounts for it: the
+  material that would leave through the unsolved $y$ direction is treated as
+  loss, $\partial_y[\tfrac13\mathrm{Sp}\,H^3(y-y_0)/\hat\mu] = \tfrac13\mathrm{Sp}\,H^3/\hat\mu$
+  --- the line $y = y_0$ of a film that is uniform in $y$ there. A 1-D
+  spin-coating run is therefore not a slice through a 2-D one, and its total
+  volume falls even between walls. Both models do this; \val{"CZ"} also
+  carries the sideways divergence into its vertical velocity. What leaves this
+  way is counted as outflow in \file{History.dat} (\code{OutflowedVol},
+  \code{OutflowedResin}), so \code{VolErr} still balances
+  (\cref{sec:output:history}).
+\end{note}
+
+A rotating film is not periodic: the arm $r$ grows across the domain and jumps
+by its length across a periodic seam, where liquid would be created or lost.
+The solver refuses \val{"Periodic"} edges with the centrifugal term
+(\cref{sec:ref-bcout:boundary}); a strip of a film that goes on beyond the domain
+takes an \val{"Outlet"} at each end. The one exception is a run with a
+manufactured solution (\key{Numerics.ManufacturedSolution}), whose source is
+formed for the arm of each cell: the periodic domains of \file{tools/mms.py}
+carry every term at once.
+
+\section{Solutal capillarity (Marangoni)}
+\label{sec:terms:marangoni}
+
+\begin{equation}\label{eq:q-sc}
+  \Qvec_{\mathrm{sc}} = \frac{\As\,\Ma}{2}\,\frac{H^{2}}{\hat{\mu}}\,\nabla C.
+\end{equation}
+
+A surface stress arising because surface tension depends on concentration.
+Where drying is faster the concentration rises, surface tension changes with
+it, and the resulting gradient drags liquid along the free surface. Drying
+mottle and flow streaks in a coating commonly start here.
+
+Note the power of $H$. \textbf{This term scales with $H^{2}$, not $H^{3}$,
+because it is a shear applied at the surface rather than a body force acting
+through the whole thickness.} Integrating a constant body force across a
+parabolic profile gives $H^{3}/3$; integrating the response to a surface
+traction gives $H^{2}/2$. One consequence is that Marangoni flow becomes
+relatively more important as a film thins, which is precisely when
+concentration gradients are strongest.
+
+The keys are \key{Physics.SolutoCapillarity.Enable} and
+\key{Fluid.SurfaceTension.Coef}, which is $\mathrm{d}\sigma/\mathrm{d}c$ in
+\si{\newton\per\metre} per unit concentration
+(\cref{sec:ref-physics:soluto}). The sign of \key{Coef} decides which way the
+liquid is pulled. Setting \key{Enable = false} forces $\Ma = 0$, which removes
+this term and, in the same stroke, removes the concentration dependence of
+surface tension everywhere else (\cref{sec:conc:properties}).
+
+\section{Navier slip at the substrate}
+\label{sec:terms:slip}
+
+Slip is not a term of its own but a change of every mobility. With a slip
+length $\lambda$ the velocity at the substrate is $\lambda\,\partial u/\partial z$
+instead of zero, the parabolic profile gains a uniform slip velocity, and the
+flux integrated across the film becomes
+%
+\begin{equation}\label{eq:q-slip}
+  \Qvec = -\frac{1}{\mu}\Big(\frac{h^{3}}{3} + \lambda h^{2}\Big)\nabla p
+          + \frac{1}{\mu}\Big(\frac{h^{2}}{2} + \lambda h\Big)\nabla\sigma .
+\end{equation}
+%
+In the dimensionless equations $H^{3}/3$ of \cref{eq:q-cap,eq:q-dis,eq:q-vg,eq:q-hg,eq:q-cf}
+becomes $H^{3}/3 + \Lambda H^{2}$ and $H^{2}$ of \cref{eq:q-sc}
+becomes $H^{2} + 2\Lambda H$, with $\Lambda = \lambda/h_0$. The extra part grows
+relative to the no-slip one as the film thins, $3\Lambda/H$ against 1: slip
+matters most at a contact line, where it relieves the stress singularity as a
+precursor film does by other means. It leaves the driving potential, and
+therefore every equilibrium, unchanged. The keys are in
+\cref{sec:ref-physics:slip}; the well-mixed model only.
+
+\section{Evaporation}
+\label{sec:terms:evaporation}
+
+Evaporation is not a flux contribution. It removes solvent only, so it enters
+the film-height equation and not the balance of the solute:
+
+\begin{yzntable}{Where the evaporation rate enters\label{tab:evap-terms}}{@{}l L{0.5\textwidth}@{}}
+\textsf{\bfseries Equation} & \textsf{\bfseries Evaporation term} \\ \midrule
+Height, \cref{eq:height} & $-\Ev\,\hat{E}(H,C)$ \\
+Solute $HC$, \cref{eq:conc} & none \\
+Concentration $C$, the form of \cref{eq:conc-adv} & $+\Ev\,\hat{E}(H,C)\,C/H$ \\
+\end{yzntable}
+
+The film thins and the solute left behind becomes more concentrated. Written for
+$C$, the enrichment is divided by $H$, so thin regions concentrate fastest ---
+the same observation made about \cref{eq:conc-adv}.
+
+The rate factorizes into three independent pieces, plus a correction:
+
+\begin{equation}\label{eq:evap-factor}
+  \hat{E} = \mathrm{Coef}\cdot f_{\mathrm{conc}}(C)\cdot
+            f_{\mathrm{space}}(X)\cdot f_h(H).
+\end{equation}
+
+\begin{description}
+  \item[Concentration, $f_{\mathrm{conc}}$] chosen by \key{ConcFunc}.
+    \val{"Raoult"} is Raoult's law: the rate is proportional to the mole
+    fraction of solvent, computed from the molar-mass ratio $\Mr$ of
+    \key{Fluid.MolarMass}. \val{"PowerN"} is
+    $(1 - C - \mathrm{ConcR})^{\mathrm{PowerN}}$, floored at zero so it never
+    goes negative.
+  \item[Position, $f_{\mathrm{space}}$] chosen by \key{SpatialFunc}.
+    \val{"uniform"} is the same everywhere in the plane. \val{"negPow"} is a
+    power of the distance to the rim of a circular pool of radius
+    $R = \mathrm{NegPowRmax}$ centered on the origin of the grid coordinates,
+    \begin{equation}\label{eq:evap-negpow}
+      f_{\mathrm{space}} = \min\!\Bigl(k\,\bigl(1 - r/R'\bigr)^{-n},\ 10\Bigr),
+      \qquad k = \tfrac{1}{2}(1-n)(2-n),\quad R' = 1.001\,R,
+    \end{equation}
+    with $r = \sqrt{x^2+y^2}$ and $n = \mathrm{NegPowExponent} < 1$; $k$
+    makes the mean over the disc $r < R'$ equal to 1, which needs $n < 1$.
+    For $0 < n < 1$ the rate diverges toward the rim, capped at 10; $n = 0$
+    is uniform, and for $n < 0$ the rate falls to zero at the rim. Over the last 5 cells before $R$ the curve is blended
+    into a quarter cosine that takes over its value and slope and levels off
+    at $R$, and the rate is constant beyond $R$.
+  \item[Precursor correction, $f_h$] a correction that suppresses evaporation
+    from the precursor film. It is applied only when \key{PrecursorRatio} is
+    greater than zero, and it ramps up linearly: \textbf{zero at $H = \Hstar$,
+    and 1 at $H = 20\Hstar$.} It is zero below $\Hstar$ as well, so a film
+    thinner than the precursor neither evaporates nor takes up solvent. Its purpose is to stop the precursor drying out
+    and disappearing, so it is always active in a calculation that contains a
+    contact line.
+\end{description}
+
+No step removes more solvent than the film holds: $E\Delta t \le h(1-c)$, at
+either end of the step and in both equations, beside the cap at
+$h/(2\Delta t)$. A film therefore dries toward $c = 1$ without passing it ---
+with a rate that does not depend on $c$, a third of the remaining solvent is
+left after each step --- and no solute is ever removed. Raoult's law takes $c$
+within $[0, 1]$.
+
+\key{Physics.Evaporation.Coef} has the dimensions of a velocity,
+\si{\metre\per\second}, and is the source of both $\Ev$ and $\Pen$ --- changing
+it moves the balance against diffusion as well as the drying rate. The
+condition under which a run is declared dry and stopped is set by
+\key{EndConcType} (\val{"mean"}, \val{"max"} or \val{"min"}) and
+\key{EndConcValue}. All of these keys are tabulated in
+\cref{sec:ref-physics:evaporation}.
+
+\section{The source (nozzle)}
+\label{sec:terms:source}
+
+The supply term $\hat{S}$ added to \cref{eq:height}. It is modeled as a nozzle
+mounted on the end of a rotating arm dispensing liquid onto the film, which
+covers both a stationary dispense and a moving one. The keys live in
+\key{Physics.Source} (\cref{sec:ref-physics:source}).
+
+\begin{description}
+  \item[Footprint] \key{Radius} is the radius of the nozzle mouth in meters. A
+    cell receives supply in proportion to the fraction of it covered by that
+    circle --- by that interval, in 1-D. \key{SubRegions} sets how many
+    sub-divisions per cell are used to measure the fraction, so a larger value
+    makes the supply vary more smoothly as the nozzle moves. Each
+    sub-division counts when its center lies inside the footprint.
+  \item[Rate] \key{InletRate} is the steady-state supply, given with the
+    dimensions of a rate of thickness increase, \si{\metre\per\second}.
+    \key{TimeConstant} is the rise-time constant $\tau$ in seconds, with the
+    rate growing as $1 - e^{-t/\tau}$.
+  \item[Arm] \key{ArmCenter} is the pivot position in meters and
+    \key{ArmLength} the arm length, also in meters; \key{RotationRate} is its
+    angular velocity in \si{\radian\per\second} and \key{StartAngle} the
+    initial angle in radians.
+    \key{ArmLength = 0} gives a nozzle that does not move. \key{RampTime} and
+    \key{PlateauTime} are the ramp time applied to the rotation rate and the time
+    it holds its plateau: the rate is $\omega f(t)$, with $f$ rising linearly
+    from 0 to 1 over $T_s$, holding 1 for $T_m$ and falling back to 0 over
+    another $T_s$, and the arm's angle is
+    $\theta = \theta_0 + \omega\int_0^t f\,dt'$, so the arm stops at
+    $\theta_0 + \omega(T_s + T_m)$ and stays there.
+\end{description}
+
+\paragraph{The concentration of the supplied liquid.}
+\key{ConcType} says what the arriving liquid brings to the solute balance
+\cref{eq:conc-dim}, as $c_S\,S$ (in the well-mixed model; \val{"CZ"} ignores
+the nozzle altogether, \cref{sec:ref-physics:disjoining}):
+\begin{description}
+  \item[\val{"local"} (the default)] The liquid has the concentration already
+    present where it lands, $c_S = c$. It thickens the film without changing
+    $c$, and \key{Conc} is not used.
+  \item[\val{"supplied"}] The liquid has the concentration \key{Conc}, a mass
+    fraction in $[0:1]$, $c_S = \key{Conc}$. It is mixed through the
+    thickness of the column it lands on, as the well-mixed model assumes of
+    all its liquid, so the solute $hc$ of the column grows by $S\,c_S$ while
+    its film grows by $S$. On a film that does not flow,
+    \begin{equation}\label{eq:source-mixing}
+      c(t) = \frac{h_0 c_0 + c_S\int_0^t S\,dt'}{h_0 + \int_0^t S\,dt'},
+    \end{equation}
+    so a thin film under the nozzle takes on $c_S$ quickly and a thick one
+    slowly; in general the concentration is pulled toward $c_S$ at the rate
+    $S/h$ (\cref{eq:conc-adv}).
+\end{description}
+\file{History.dat} counts the solute that came with the liquid in
+\code{SuppliedResin} (\cref{sec:output:history}), at the concentration the
+mode gives it.
+

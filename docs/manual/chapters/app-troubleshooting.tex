@@ -1,0 +1,218 @@
+% app-troubleshooting.tex -- symptom-driven index into the rest of the manual
+\chapter{Troubleshooting}
+\label{ch:troubleshooting}
+
+This appendix is an index by symptom. Each entry says what to look at and where
+in the manual the explanation lives; none of it is new material.
+
+\section{The run stops immediately}
+\label{sec:trouble:stops}
+
+\begin{description}
+  \item[After exactly one step.] \key{Numerics.EndTime} is \val{0}, which is
+    its default. It means ``stop at $t = 0$'', not ``no limit''. Set it.
+
+  \item[With \code{Steady state.} in the log.] The steady-state test fired. On
+    a finely resolved case this is more often the criterion than the physics:
+    the test is a rate, and \key{SteadyStateCriterion} defaults to $10^{-3}$,
+    meaning ``the shape would change by \SI{0.1}{\percent} if it went on
+    changing at the present rate for the whole span of the run''. Look at the \code{ChangeRate} column of
+    \file{CalcInfo.dat} before choosing a value, or set the criterion
+    non-positive to switch the test off. See
+    \cref{sec:convergence:termination}.
+
+  \item[With \code{Dry out.} in the log.] The concentration test selected by
+    \key{Physics.\bk Evaporation.\bk EndConcType} passed \key{EndConcValue}. Note that
+    this test runs whether or not evaporation is enabled.
+
+  \item[With a message naming the result directory.] It exists and
+    \key{Output.Overwrite} is \val{false}, a file has its name, or it cannot
+    be made or written to; the message says which, with the path. Nothing has
+    been written (\cref{sec:output:dir}).
+
+  \item[With \code{Could not write} and a file name.] The disk or the quota
+    is full, a file size limit was reached, or the directory became
+    unwritable. The files already written are whole; free space and restart
+    from the last field file with its \file{.state}
+    (\cref{sec:output:failures}).
+
+  \item[With exit code 130 or 143.] The run was stopped by Ctrl-C or
+    \code{SIGTERM} --- often a batch scheduler at the end of the job's time.
+    Its output is complete, and it continues exactly from its last field file
+    (\cref{sec:output:failures}).
+
+  \item[Before any computation.] The input was rejected during set-up. The
+    reason is in \file{FatalErrors.txt} in the result directory and on
+    standard error --- except when the input file itself was rejected, which
+    happens before the result directory exists, so there the terminal is the
+    only place to read it (\cref{sec:output:warnings}). The
+    common causes are disjoining pressure enabled with
+    \key{Initial.\bk SurfaceShape.\bk PrecursorRatio} left at \val{0}, whose
+    message reads \code{Physics.\bk DisjoiningPressure requires
+    Initial.\bk SurfaceShape.\bk PrecursorRatio > 0.} and is found by grepping
+    for \code{PrecursorRatio} (\cref{sec:output:warnings}); and
+    disjoining pressure with exponents that fail the $n > m > 1$ test. A
+    \val{"Periodic"} on one edge of a pair only, and a \val{"CZ"} case with an
+    edge other than \val{"Symmetry"} or \val{"Periodic"}, stop the run earlier,
+    at the consistency check, with \code{Input mismatch} and the edge named. A
+    \val{"Pinning"} edge facing a film that does not reach zero there stops it
+    just before the first step, with the film thickness found at the wall. See
+    \cref{ch:ref-physics} and \cref{sec:ref-bcout:boundary}.
+\end{description}
+
+\section{The time step collapses}
+\label{sec:trouble:dt}
+
+If the run log on standard output alternates \code{dt-} and \code{dt+}, or
+\code{deltaT} in \file{CalcInfo.dat} falls steadily until the run aborts at
+\key{MinDt}, check these in order.
+
+\begin{enumerate}
+  \item \textbf{Is the Newton loop hitting its iteration limit?} Look at
+    \code{NK\_iter} in \file{CalcInfo.dat}. If it equals \key{NewtonMaxIterations}, the
+    loop is reporting failure and the caller is halving the step in response.
+  \item \textbf{Is the correction floor above \key{NewtonEpsilon}?} Run with
+    \env{YUZEN\_DEBUG\_FLOOR} set. If it is, lowering \key{NewtonEpsilon} makes
+    matters worse, not better: where the floor is proportional to $\Delta t$,
+    the absolute test and the step size chase each other down. Rely on the relative
+    test \key{NewtonEpsilonRel} instead. This is the single most common cause of a
+    contact-line case being two orders of magnitude slower than it needs to be;
+    \cref{sec:convergence:absolute} works through the feedback loop.
+  \item \textbf{Is it the height equation or the concentration equation?}
+    \env{YUZEN\_DEBUG\_RESIDUAL} prints both corrections per iteration
+    (\cref{sec:time:coupling}).
+  \item \textbf{Is the linear solver returning NaN?} Once a NaN enters the
+    solution vector, cutting the step does not help, because the next solve
+    starts from it. \Cref{sec:linsolve:contract}. If you set
+    \env{YUZEN\_ILUT\_FILL}, raise it back.
+  \item \textbf{Only then} consider \key{Numerics.TimeStepControl}. Raising
+    \key{ScaleFloor} from its default of \val{0} stops a thin precursor film
+    dominating the error estimate; with $\Hstar = 0.02$ the precursor carries
+    fifty times the weight of the droplet body. \Cref{sec:time:dt}.
+\end{enumerate}
+
+\section{The Newton loop will not converge}
+\label{sec:trouble:newton}
+
+\begin{description}
+  \item[Correction-stagnated warnings.] Grep \file{Warnings.txt} for
+    \code{correction stagnated}; the full line begins
+    \code{Newton-Kantorovich: the Newton correction stagnated far from
+    convergence} and then gives the iteration number, the correction reached
+    and the first one (\cref{sec:output:warnings}). The stagnation test fired
+    and the correction was neither below \key{NewtonEpsilon}, nor four orders
+    below its first value, nor within $1000\,\epsmach$ times the film --- so this
+    is genuine non-convergence, not the floor, and the step was cut and
+    solved again; \file{JobInfo.txt} counts how many were. A few, at the
+    start of a run or at a sudden change, are the step control doing its
+    job. Many, or a run that aborts on \key{MinDt} or (at a fixed step) on
+    the stagnation itself: suspect something non-smooth --- an upwind switch
+    flipping, evaporation, or the concentration clamp --- or a strongly
+    concentration-dependent viscosity under a nozzle.
+    \Cref{sec:convergence:stagnation}.
+  \item[Many iterations with disjoining pressure on.] $\Pihat \sim H^{-n}$ is
+    genuinely stiff, but its Jacobian is exact, and the measured contact-line
+    cases converge in three outer iterations, as they do without the term.
+    \Cref{sec:verification:coupling} has the measured iteration counts.
+  \item[It converges but to something implausible.] Check the initial state
+    first. A shape function meeting a precursor film can start with a velocity
+    many orders above the natural scale $U_0$; an analytically constructed
+    equilibrium droplet does not. \Cref{sec:wetting:equilibrium} and
+    \file{tools/make\_equilibrium\_1d.py}.
+\end{description}
+
+\section{The run is slow}
+\label{sec:trouble:slow}
+
+\begin{description}
+  \item[Thousands of BiCGStab iterations.] Look at \code{BCG\_iter} in
+    \file{CalcInfo.dat}. A count in the thousands means the preconditioner is
+    not earning its keep: an in-house backend tried during development needed
+    3676 iterations on \file{leveling\_1d\_reg} where \val{"eigen"} needs 21 on
+    the same problem (\cref{sec:verification:backends}), and that ratio is why
+    it was left out.
+    On \val{"eigen"}, a count that high points at the ILUT fill factor ---
+    see \env{YUZEN\_ILUT\_FILL} (\cref{ch:environment}) --- or at a time step
+    the linear solve is struggling with; \val{"amgcl"} is the other thing to
+    try (\cref{sec:linsolve:choosing}).
+  \item[Slow specifically in 2-D with \val{"eigen"}.] Check \file{JobInfo.txt}
+    for the set of algorithms in force (\code{YUZEN\_OPT}): with \val{bilu}
+    turned off, Eigen factorizes the ILUT of the whole matrix at every solve,
+    sequentially, and in 2-D that alone consumes the time. With the default
+    block-Jacobi ILUT (\cref{sec:linsolve:eigen}) \val{"eigen"} is within a
+    factor of two of \val{"amgcl"} on the 2-D films measured.
+    \Cref{sec:linsolve:choosing}.
+  \item[Slow after refining the mesh.] Expected in part --- but if the slowdown
+    is far worse than the cell count suggests, go back to
+    \cref{sec:trouble:dt}; a correction floor of the kind of
+    \cref{eq:floor}, from the terms formed as a product, rises as
+    $\Delta x^{-4}$.
+  \item[More threads do not help.] On a small case the work of a step is
+    shared out in pieces too small to pay for starting and synchronizing the
+    threads: the reductions in \code{Vector} use a fixed number of blocks of
+    at least 512 elements, so below 512 unknowns per thread the extra threads
+    have no block to take (\cref{sec:parallel:kit}), and the thread limit of
+    \cref{sec:parallel:cap} stops a run asked for more than it can use. Past
+    one socket every size measured ran slower. The direct solve of AMGCL's
+    coarsest level is sequential, but kept small (\cref{sec:parallel:what}).
+    Run several cases side by side instead.
+\end{description}
+
+\section{Two runs that should agree do not}
+\label{sec:trouble:diff}
+
+\begin{enumerate}
+  \item Are both using the same \key{Backend}? Compare the
+    \code{\#\#\#\#\#\# Solver Info \#\#\#\#\#\#} section of the two
+    \file{JobInfo.txt} files (\cref{sec:output:jobinfo}): it names the backend
+    each equation resolved to, so it settles the question even when both input
+    files say \val{"auto"}. Changing backend changes the rounding; results then
+    agree only to the linear-solver tolerance, not bit-for-bit.
+    \Cref{sec:linsolve:choosing}.
+  \item Is either using \val{"amgcl"}? Its internal reductions are not
+    order-fixed, so its results can move with thread count --- measured on
+    \file{leveling\_1d\_reg} at $6.089\times10^{-11}$ in the physical quantities
+    (the error measures of that case are rounding, so their relative
+    difference is of order one)
+    (\cref{sec:verification:amgclthreads}).
+  \item Otherwise, with \val{"eigen"}, two runs differing
+    only in thread count must agree \emph{exactly}. If they do not, something
+    in \cref{ch:reproducibility} has been broken; the four dependencies listed
+    there are the places to look, and the test suite should catch it first.
+  \item Use \file{tools/compare.py} rather than \code{diff}: it reports the
+    largest relative difference per column, which tells you whether you are
+    looking at rounding or at a changed answer.
+\end{enumerate}
+
+\section{The answer looks wrong by orders of magnitude}
+\label{sec:trouble:scales}
+
+Read the run log --- the terminal, or the \file{stdout.txt} of
+\file{tools/run\_case.sh} --- and check $L_0$, $T_0$ and $U_0$ against what you
+expect (\cref{sec:governing:scales}). They are in the \code{Scaling factors}
+block near the top, above the progress log --- not in \file{JobInfo.txt}, whose
+only input-derived section is the model and the linear-solver backends. A
+mistyped
+\key{Fluid.\bk SurfaceTension.\bk BaseValue} or
+\key{Initial.\bk SurfaceShape.\bk TotalHeight} is visible there immediately and
+invisible everywhere else for a long time.
+
+The parser refuses a misspelled key or block and a value it cannot convert
+(\cref{sec:inputformat:unknown,sec:inputformat:types}), and
+\code{yuzen --check-input FILE} runs those checks without starting a run. What
+it cannot catch is a correctly spelled key with the wrong value, or a whole
+\key{[Physics.*]} block left out, which switches that term off. If a term
+appears to do nothing, check the copy of the input file inside the result
+directory.
+
+\section{The contact angle is not the one I asked for}
+\label{sec:trouble:angle}
+
+This is usually not a bug but the model. A droplet with a finite precursor film
+has an apparent angle $\thetacap = \thetae(1 - \Hstar/(2\Hmax))$, so at
+$\Hmax/\Hstar = 2$ a requested \ang{10} is really \ang{7.5}, and the maximum
+slope of the profile is \ang{0.63}. Two rules of thumb size the case: $\Delta x
+\le \ell/5$ with $\ell = \hstar/\thetae$ to resolve the contact line, and
+$\Hmax/\Hstar \ge 50$ to get the angle within \SI{1}{\percent}.
+\Cref{sec:wetting:apparent,sec:wetting:sizing} give the table and the worked
+example.

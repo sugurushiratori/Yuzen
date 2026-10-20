@@ -1,0 +1,194 @@
+% app-environment.tex -- environment variables and helper tools
+\chapter{Environment variables and tools}
+\label{ch:environment}
+
+\section{Environment variables}
+\label{sec:env:vars}
+
+Yuzen reads no model or numerical setting from the environment; those are all
+in the input file. What the environment does control is diagnostics, a few
+implementation details of the solvers --- which move the answer only within
+the tolerances of the solvers --- and the thread count.
+
+\begin{yzntable}{Environment variables\label{tab:envvars}}{@{}L{0.30\textwidth} L{0.62\textwidth}@{}}
+\textsf{\bfseries Variable} & \textsf{\bfseries Effect}\\ \midrule
+\env{OMP\_NUM\_THREADS}     & Thread count, as usual for OpenMP. It does not change the answer --- that is asserted, not assumed (\cref{ch:reproducibility}), with the \val{"amgcl"} backend as the documented exception. A value that is not a positive integer is reported by the OpenMP runtime (GCC: \code{libgomp: Invalid value for environment variable OMP\_NUM\_THREADS}) and ignored; the run goes on with the default, the number of processors, which the banner prints as \code{omp\_get\_max\_threads}. A run uses at most the cores of one socket, and with GCC's \code{libgomp} at most $\min(\text{cores of a socket},\ \max(8,\ \lceil\text{cells}/1000\rceil))$ threads: asked for more, it stops and says what to ask for; left to the default, it takes that many (\env{YUZEN\_THREAD\_CAP}, \cref{sec:parallel:cap}). \\
+\env{OMP\_WAIT\_POLICY}     & Leave it unset when the cores are yours. \val{passive} makes idle threads sleep instead of spinning, and every parallel loop then pays for waking them: an empty loop costs \SI{25}{\micro\second} on 8 threads and \SI{258}{\micro\second} on 112, against \num{1.7} and \SI{24}{\micro\second} unset (Xeon Max 9480), and a step makes thousands of loops. On a machine whose cores are busy with other work it is the other way round, and \val{passive} can make a run fifty times faster. It never changes the answer (\cref{sec:parallel:threads}). \\
+\env{YUZEN\_THREAD\_CAP}    & The cells per thread of the size term of the thread limit (\cref{sec:parallel:cap}): unset, 1000 with GCC's \code{libgomp} and no size term with \code{libomp} or \code{libiomp5}; set to a positive integer, that many with any runtime. \val{0} turns the limit off, socket included, and so does anything that is not a positive integer; the run then uses every thread \env{OMP\_NUM\_THREADS} asks for. It never changes the answer with \val{"eigen"}. \\
+\env{YUZEN\_GRAIN}         & The thread count of a linear solve of $n$ unknowns, $\min(T, \lceil n/G\rceil)$ (\cref{sec:parallel:runtime}): \val{lin=}\textit{G} sets $G$, \val{off} uses all $T$ threads. Unset, $G = 500$ with \code{libomp} or \code{libiomp5} and off with \code{libgomp}. Anything else is reported in \file{Warnings.txt} and ignored; \file{JobInfo.txt} records the grain in force (\code{YUZEN\_GRAIN}). It never changes the answer with \val{"eigen"}. \\
+\env{KMP\_HOT\_TEAMS\_MODE}  & Read by \code{libomp} and \code{libiomp5}. The solver sets it to \val{1} at start-up unless it is set already, which makes \env{YUZEN\_GRAIN} pay (\cref{sec:parallel:runtime}). \\
+\env{YUZEN\_OPT}            & Turns off algorithms that are on by default, to compare a run with the ones they replaced (\file{util/\bk Opt.h}): \val{-name} turns one off, \val{none} all of them, \val{none,name} leaves one on, \val{default} restores them; comma or space separated, applied in order. The names: \val{regions} (fewer parallel regions; bit-identical), \val{assembly} (face properties shared by the matrix and its Jacobian; bit-identical), \val{numa} (first-touch placement of large arrays; bit-identical), \val{ew} (\cref{sec:linsolve:ew}), \val{extrap} (\cref{sec:time:newton}), \val{concpc} (\cref{sec:linsolve:conc}), \val{bilu} (\cref{sec:linsolve:eigen}) and \val{amgcoarse} (\cref{sec:linsolve:amgcl}). An unknown name is reported in \file{Warnings.txt} and ignored; \file{JobInfo.txt} records the set in force (\code{YUZEN\_OPT}). \\
+\env{YUZEN\_PROFILE}        & If set to anything but \val{0}, writes at exit to standard error the wall-clock time spent in the named parts of the run --- assembly, linear solves and their preconditioner, output --- one line \code{[profile] name calls seconds} each (\cref{sec:parallel:profile}). Off, it costs nothing measurable and changes nothing. \\
+\env{YUZEN\_DEBUG\_RESIDUAL}& If set, writes one line per Newton outer iteration to standard error: iteration number, height correction, concentration correction. Use it to find out which of the two equations is holding up convergence (\cref{sec:time:coupling}). Where the iteration stagnates it adds a line \code{[stall]}: the iteration, the correction, the first correction of the step, the floor $1000\,\epsmach\,\lvert\varphi\rvert$ it was judged against, and 1 if the step was accepted, 0 if it failed (\cref{sec:convergence:stagnation}). \\
+\env{YUZEN\_DEBUG\_FLOOR}   & If set, reports the quantities that set the correction floor --- the magnitudes of $A\varphi$, of the right-hand side and of the solution --- so you can see where the cancellation happens (\cref{sec:convergence:floor}). \\
+\env{YUZEN\_DEBUG\_COUPLING}& If set, writes one line per coupling pass of the \val{"CZ"} model with the Marangoni term to standard error: \code{[couple]}, the dimensionless time at the start of the step, the pass (0 for the first), how far the midpoint concentration moved, that over the first pass's, and the relaxation factor of the next pass (0 once the passes have settled). The ratio of one pass's movement to the last is the gain of \cref{sec:verification:czpasses}. \\
+\env{YUZEN\_ILUT\_FILL}     & Overrides the fill factor of Eigen's \code{IncompleteLUT}, of the whole matrix and of each block of block-Jacobi ILUT (default 10). Lowering it makes the preconditioner cheaper; lower it too far and the factorization breaks down and the solution becomes NaN. A value of 1 fails even in 1-D. \\
+\env{YUZEN\_DBG\_EQ}        & Read by the test suite, not by the solver: makes \file{test\_disjoining.cpp} print the per-mesh residual velocity and where on the droplet it occurs (\cref{sec:verification:disjoining}). \\
+\end{yzntable}
+
+All of them are read once and cached, so setting one part-way through a run has
+no effect.
+
+\section{Helper tools}
+\label{sec:env:tools}
+
+\file{tools/} holds the scripts used to produce and check the numbers in
+\cref{ch:verification}. They are small and worth reading before use; each one
+has a usage line at the top.
+
+\subsection{\file{tools/run\_case.sh}}
+
+\begin{shell}
+./tools/run_case.sh <input> <output dir> [threads]
+\end{shell}
+
+Clears the output directory, copies the input into it \emph{keeping its
+extension}, copies across any \file{.dat} file the \key{Restart} table refers
+to, and runs the solver there with a fixed thread count, capturing standard
+output \emph{and} standard error to \file{stdout.txt}.
+
+It removes the two usual sources of spurious difference between two runs --- a
+stale result directory and an unfixed thread count --- and it keeps the run
+log, which the solver writes to standard output and to no file
+(\cref{sec:output:running}). Because it captures standard error too, it also
+catches the message of an aborted run even when the abort came too early for a
+result directory to exist.
+
+\begin{note}[Both input formats]
+  The extension is preserved, so the script works with a \file{.toml} case and
+  with a block-structured \file{.inp} one, and the solver picks the right parser either
+  way (\cref{sec:inputformat:formats}).
+\end{note}
+
+\subsection{\file{tools/compare.py}}
+
+\begin{shell}
+python3 tools/compare.py <runA> <runB> [--job <JobName>]
+\end{shell}
+
+Compares \file{History.dat}, \file{CalcInfo.dat} and the final
+\file{field*.dat} of two result directories column by column, and reports for
+each the largest difference divided by the scale of that column. The four
+solver-diagnostic columns \code{NK\_iter}, \code{NK\_resid}, \code{BCG\_iter}
+and \code{BCG\_resid} are excluded from that figure and reported separately,
+as the largest difference-over-column-scale among them --- it is not a total
+iteration count, and it is not part of the pass criterion. For two runs that
+should be identical the answer is \code{0.000e+00} exactly --- see
+\cref{sec:verification:linalg}.
+
+\subsection{\file{tools/make\_equilibrium\_1d.py}}
+
+\begin{shell}
+python3 tools/make_equilibrium_1d.py --out cases/eq/eq_n2000.dat \
+        --nx 2000 --xmin=-0.3e-3 --xmax=0.3e-3 \
+        --hstar 0.02 --theta 10 --hmax 1.0
+\end{shell}
+
+Constructs the analytic equilibrium droplet of \cref{sec:wetting:equilibrium}
+by integrating one ODE, and writes it in the ASCII restart format so it can be
+used as an initial condition. \code{--sweep} prints the apparent-angle table of
+\cref{sec:wetting:apparent} instead of writing a file. \code{--out} is declared
+required and is parsed before the sweep branch is reached, so \code{--sweep}
+on its own fails with an argparse error; pass a throwaway destination:
+
+\begin{shell}
+python3 tools/make_equilibrium_1d.py --out /dev/null --sweep
+\end{shell}
+
+Nothing is written to it. The files in \file{cases/eq/} are byte-for-byte the
+output of this command.
+
+This is also the tool to reach for when a contact-line case starts with an
+implausible velocity: an analytically constructed equilibrium droplet begins at
+rest, whereas an analytic bump shape meeting a precursor film does not.
+
+\subsection{\file{tools/measure\_spreading.py}}
+
+\begin{shell}
+python3 tools/measure_spreading.py <result dir> --dt-out 1e-3 --stride 5
+\end{shell}
+
+Reads the \file{field*.dat} series, fits a parabola to the outer part of the
+droplet at each time, extrapolates to $h = 0$ to get the base radius and the
+apparent angle, differences the radius to get the velocity and the capillary
+number, and fits the Cox--Voinov relation. \code{--dt-out} must match
+\key{Output.FieldData.TimeInterval}. \code{--stride} widens the interval used
+to difference $R$, which reduces the noise in $\Ca$; the correlation reported
+in \cref{sec:verification:spreading} depends on it, and the dependence is
+quoted there. Its \code{fit\_cap()} function is importable and is what measures
+the apparent angle of a single field file.
+
+\subsection{\file{tools/case\_runtimes.py}}
+
+\begin{shell}
+python3 tools/case_runtimes.py --exe build/bin/yuzen --workdir runs/rt
+python3 tools/case_runtimes.py --exe build/bin/yuzen --workdir runs/rt-be \
+        --backends-only --threads "1 2 4 8"
+\end{shell}
+
+Measures \cref{tab:cases-runtimes}: every case under \file{cases/},
+single-threaded and pinned to one core, with the CPU time of the run (user
+plus system), the wall-clock time, the number of steps, how the run ended and
+the number of warnings. \code{--repeats} runs each several times and the
+table keeps the fastest; \code{--jobs} runs that many cases side by side, each
+on a core of its own. With \code{--backends} or \code{--backends-only} it
+also measures \cref{tab:linsolve-timing}: \file{leveling\_1d\_reg} and
+\file{leveling\_2d\_reg} with each backend at each thread count of
+\code{--threads}, and it marks a run in which \val{"amgcl"} was asked for but
+the build has no AMGCL. Every run is kept in \file{runtimes.tsv} with a
+description of the machine; \file{summary.txt} holds the tables, and
+\file{table\_cases.tex} and \file{table\_backends.tex} their rows as they
+appear in this manual. The runs have their cores to themselves, so
+\env{OMP\_WAIT\_POLICY} is left unset (\cref{sec:parallel:threads}); the cap
+on small grids stays on, and \file{summary.txt} gives the thread count a run
+used in parentheses where the cap lowered it (\cref{sec:parallel:cap}).
+For a batch queue with a short time limit, \code{--budget SECONDS} starts no
+run past that much time and stops one still going (it is not recorded), and
+\code{--resume} keeps the runs already in \file{runtimes.tsv}; a call that
+leaves runs undone exits with code 3 and writes no tables, so repeating the
+same command until it exits 0 gives the tables of one long call.
+
+\subsection{\file{tools/profile\_threads.py}}
+
+\begin{shell}
+python3 tools/profile_threads.py --exe build/bin/yuzen --workdir runs/prof \
+        --threads "1 2 4 8 16" --resume --budget 1500
+\end{shell}
+
+Runs a set of shipped and scaling cases, cut to a fixed number of steps, with
+\val{"eigen"} and \val{"amgcl"} at each thread count of \code{--threads}, with
+\env{YUZEN\_PROFILE=1} and the cap on small grids off, and writes
+\file{profile.tsv} (one row per run, the timed parts in it) and
+\file{summary.txt} (each part against the thread count, and the speed-up of
+the step). \code{--wait "default PASSIVE"} repeats every run with
+\env{OMP\_WAIT\_POLICY=PASSIVE}. \code{--resume} and \code{--budget} work
+as in \file{tools/case\_runtimes.py}. The parts are those of \cref{tab:profile-parts}.
+
+\subsection{\file{tools/bench.sh}}
+
+\begin{shell}
+./tools/bench.sh <input> [threads ...]
+\end{shell}
+
+Runs one case at several thread counts and prints the wall-clock time for each.
+It writes into \file{runs/bench\_t<n>/}. It is the quick answer; for a
+scaling measurement worth quoting use \file{tools/scaling/} instead
+(\cref{sec:parallel:kit}), which fixes the work per run and records the
+machine alongside the numbers. Note that the timings in
+\cref{sec:linsolve:choosing} are performance measurements, not verification
+measurements --- a faster configuration is not a more correct one.
+
+\subsection{\file{tools/scaling/}}
+
+\begin{shell}
+python3 tools/scaling/make_cases.py            # regenerate the cases
+tools/scaling/scaling.sh [options]             # sweep and append to a TSV
+python3 tools/scaling/summarize.py <tsv ...>   # text, LaTeX or CSV
+\end{shell}
+
+The shared-memory scaling kit described in \cref{sec:parallel:kit}. The cases
+it sweeps are generated into \file{cases/scaling/} together with a
+\file{manifest.tsv} the sweep script reads; \file{tools/scaling/README.md}
+specifies the result format, column by column, and states what the summarizer
+does with repeats. \code{make\_cases.py -{}-check} verifies that the checked-in
+cases still match the generator.

@@ -1,0 +1,94 @@
+%  Copyright 2017-2026 Suguru Shiratori, Tokyo City University
+%  SPDX-License-Identifier: Apache-2.0
+% ===========================================================================
+%  The Yuzen User Manual
+%  Build with:  latexmk -lualatex yuzen-manual.tex     (or  make)
+%  LuaLaTeX is required: the preamble uses fontspec / unicode-math.
+% ===========================================================================
+%  Check the engine before \documentclass, not after. yuzenman.sty issues
+%  \RequireLuaTeX, but that is only read once the class has loaded, so running
+%  pdflatex reported a missing scrbook.cls (or a fontspec error) instead of the
+%  real problem, which is the engine.
+\RequirePackage{iftex}
+\RequireLuaTeX
+\documentclass[11pt, a4paper, twoside, openright, numbers=noenddot,
+               parskip=half-, DIV=12, BCOR=6mm]{scrbook}
+
+\usepackage{yuzenman}
+
+\title{Yuzen}
+\subtitle{A thin liquid film flow solver based on the lubrication approximation}
+\author{Suguru Shiratori}
+\date{\today}
+
+\hypersetup{
+  pdftitle={Yuzen User Manual},
+  pdfauthor={Suguru Shiratori},
+  pdfsubject={Thin liquid film flow solver, lubrication approximation},
+  pdfkeywords={thin film, lubrication approximation, disjoining pressure,
+               contact line, spin coating, evaporation, Marangoni},
+}
+
+\begin{document}
+
+% --- front matter ----------------------------------------------------------
+\frontmatter
+\include{chapters/titlepage}
+
+\cleardoublepage
+\pdfbookmark[0]{Contents}{toc}
+\tableofcontents
+
+\include{chapters/preface}
+
+% --- body ------------------------------------------------------------------
+\mainmatter
+
+\part{Getting started}
+\include{chapters/ch-introduction}
+\include{chapters/ch-installation}
+\include{chapters/ch-firstrun}
+
+\part{Using Yuzen}
+\include{chapters/ch-inputformat}
+\include{chapters/ch-ref-domain}
+\include{chapters/ch-ref-physics}
+\include{chapters/ch-ref-boundary-output}
+\include{chapters/ch-ref-numerics}
+\include{chapters/ch-output}
+\include{chapters/ch-parallel}
+
+\part{Theory}
+\include{chapters/ch-governing}
+\include{chapters/ch-terms}
+\include{chapters/ch-wetting}
+\include{chapters/ch-concentration}
+
+\part{Numerical method}
+\include{chapters/ch-discretization}
+\include{chapters/ch-timeintegration}
+\include{chapters/ch-convergence}
+\include{chapters/ch-linearsolver}
+\include{chapters/ch-reproducibility}
+
+\part{Verification}
+\include{chapters/ch-verification}
+\include{chapters/ch-notverified}
+
+\part{Extending and maintaining Yuzen}
+\include{chapters/ch-extending}
+\include{chapters/ch-policy}
+
+% --- back matter -----------------------------------------------------------
+\appendix
+\part{Appendices}
+\include{chapters/app-cases}
+\include{chapters/app-environment}
+\include{chapters/app-troubleshooting}
+\include{chapters/app-layout}
+\include{chapters/app-revisions}
+
+\backmatter
+\include{chapters/bibliography}
+
+\end{document}

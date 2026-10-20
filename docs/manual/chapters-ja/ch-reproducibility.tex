@@ -1,0 +1,140 @@
+% ch-reproducibility.tex -- numerical method: what bit-level reproducibility depends on
+\chapter{ビット単位の再現性}
+\label{ch:reproducibility}
+
+\textbf{この章は、ソルバーを改変する開発者を対象とする。}Yuzen を実行するだけなら、
+\cref{sec:linsolve:choosing}を読めば十分である。
+
+Yuzen は、\textbf{OpenMP のスレッド数を変えても結果が一ビットも変わらない}ように書いてある。
+唯一の例外は\val{"amgcl"}バックエンドで、内部の縮約が決定的でない
+（\cref{sec:linsolve:choosing}）。この性質はテストスイートでも確認している。\code{ctest}には、
+同じバイナリを別々の三つのプロセスで実行する三つの項目が登録されている。スレッド数は、環境の設定どおり、
+\env{OMP\_NUM\_THREADS=1}、\env{OMP\_NUM\_THREADS=4}の三通りである。
+
+この保証は、コード中の四つの工夫によって成り立っている。どれも整理好きな読者なら書き直したくなる
+見かけをしているが、書き直すとビット単位の一致が崩れる。以下では一節に一つずつ説明し、残りの規則は
+章末にまとめる。
+
+コードの監査ではなく物理の追加が目的なら、この章の後に\cref{ch:extending}を参照されたい。
+そこでは、この四つを新しい項が守るべき規則として述べ直し、項を追加する手順を示している。
+ここで扱うコードの所在は\cref{ch:layout}にまとめてある。
+
+\section{\code{Vector}の決定的な縮約}
+\label{sec:repro:reduction}
+
+\code{\#pragma omp parallel for reduction(+:x)}では、部分和の分割の仕方と足し合わせる順序が
+スレッド数によって決まる。浮動小数点の加算は結合則を満たさないため、スレッド数が変わると
+内積やノルムの下位ビットが変わる。この差は小さいままでは済まない。BiCGStab の反復回数や
+時間刻み制御の受理判定に波及し、「一スレッドと二スレッドで答えが違う」という形で表に出る。
+
+そこで\code{Vector}の内積（\code{operator,}）、\code{Sum()}、\code{Norm()}では、配列を
+\textbf{スレッド数に依存しない固定個数のブロック}に分割する。ブロックごとに部分和をとり、
+最後にブロックの順に足し合わせる。ブロック数は配列の長さだけで決まる（ブロックあたり 512 要素以上、
+ブロック数は最大 256）。そのため、動いているスレッドの数によらず加算の順序は同じになる。
+
+\begin{warn}[総和の順序を変えてはならない]
+  これらを素の\code{reduction(+:...)}で置き換えてはならない。
+  この振る舞いは\file{yuzen/tests/test\_vector.cpp}で固定している。
+\end{warn}
+
+\code{Max}、\code{Min}、\code{AbsMax}にはこうした配慮は要らない。厳密に結合則と交換則を
+満たすので、単純な逐次ループで正しい結果が得られる。
+
+\section{\code{CRS\_Matrix}の格納順序}
+\label{sec:repro:crs}
+
+行の中の要素は\textbf{挿入した順に}格納し、各行の先頭には必ず対角要素を置く。これは見た目の
+問題ではない。行列ベクトル積、\code{ScalingDiag}、\code{Residual}での浮動小数点の加算の順序を、
+この格納順が決めている。
+
+\begin{warn}[行の要素を列番号の昇順に並べ替えてはならない]
+  並べ替えると和の丸め方が変わり、ビット単位の一致が失われる。
+\end{warn}
+
+行内の列番号が昇順であることを要求するライブラリ（Eigen と AMGCL）には、行列本体とは別に保持する
+\textbf{並べ替えた写し}を渡す。置換は疎構造が確定した時点で一度だけ作る。以後の受け渡しでは、
+値を$O(\mathrm{nnz})$で集めるだけである。
+
+\code{CRS\_Matrix}には二つの状態がある。構築段階では各行が別々の可変長配列であり、行どうしが
+独立なので、OpenMP のもとで安全に挿入できる。確定段階では平坦な CRS を保持する。読み出し側の
+呼び出しを行うと、どれも自動的に確定段階へ移る。構築段階の細部で一つ注意を要するのは、
+境界条件のフラグを\code{bool}ではなく\code{char}にしている点である。\code{std::vector<bool>}は
+ビット詰めされたプロキシ参照であり、書き込みがスレッドセーフでないためである。
+
+\section{物理項の登録順序}
+\label{sec:repro:order}
+
+物理項は\code{WellMixed\_HeightEquationBase::RegisterPhysics()}で列挙する。この一覧の順に行列への
+\code{+=}演算が行われ、それが\cref{sec:repro:crs}で述べた列の挿入順序になる。順序は次のとおりである。
+
+\begin{plain}
+LaplacePressure -> VerticalGravity -> ParallelGravity
+                -> SolutoCapillarity -> Centrifugal -> DisjoiningPressure
+\end{plain}
+
+\begin{warn}[一覧を並べ替えず、新しい項は末尾に加える]
+  並べ替えると格納順序が変わり、\cref{sec:repro:crs}で述べた和の丸めも変わる。
+\end{warn}
+
+この規則は裏返して述べておく意味がある。そう考えると制約が苦にならないからである。
+\textbf{新しい項を末尾に追加する限り、既存の結果はどれも一ビットも変わらない}。有効でない項は
+\code{SetMatrixA}すら呼ばれないので、その項を使わないケースの演算順序には何の影響も与えない。
+
+唯一の例外は速度の計算\code{CalVelocity}である。ここでは各項が専用の速度場に書き込むので、
+項を実行する順序が結果に影響することはない。
+
+\section{方向の二つの順序}
+\label{sec:repro:directions}
+
+カーネルは方向の順序を\textbf{二通り}もち、場所によって\emph{意図的に}使い分けている
+（\file{GridTraits.h}）。
+
+\begin{itemize}
+  \item \code{T::Dir(d)}は軸の順序で、2 次元では\code{Xm}、\code{Xp}、\code{Ym}、
+    \code{Yp}の順である。
+  \item \code{T::StencilDir(k)}はステンシルの順序で、2 次元では\code{Ym}、\code{Xm}、
+    \code{Xp}、\code{Yp}の順である。
+\end{itemize}
+
+\code{SetMatrixA}は各行を軸の順序で足し合わせる。\code{SetJacobiMatrix}は対角項と交差項を
+ステンシルの順序で足し合わせる。毛管圧の項の対角要素では、一つの式に両方が現れる。同じ和の中で、
+\code{gBo*aB + gLo*aL + gRo*aR + gTo*aT}はステンシルの順序、
+\code{sLo*bL + sRo*bR + sBo*bB + sTo*bT}は軸の順序である。
+
+\begin{warn}[どちらの順序を使うかはカーネル内のコメントに従う]
+  一方を他方に置き換えるとビット単位の一致が崩れる。とくに、両方の箇所で同じ順序を使うように
+  「整理」してはならない。
+\end{warn}
+
+1 次元では二つの順序が一致するので、この区別は表に出ず、2 次元で初めて現れる。
+そのため、気づかないうちに壊しやすい。
+
+\section{その他の規則}
+\label{sec:repro:other}
+
+\begin{itemize}
+  \item \textbf{前処理の三角代入は逐次実行しなければならない。}前進代入も後退代入も、
+    ループの反復間に依存がある。並列化すると、あるスレッドが、別のスレッドがまだ更新していない値を
+    読むことになる。その結果、前処理は知らないうちに、スレッド分割をブロックとするブロック・ヤコビ前処理に
+    変わる。こうして前処理が、ひいては反復回数がスレッド数に依存するようになる。
+    自前のバックエンドに前処理を追加する場合も、この規則に従う（\cref{ch:extending}）。
+    \val{"eigen"}のブロック・ヤコビ ILUT はこの規則を守っている。ブロックはスレッドではなく
+    連立方程式の規模から決まり、各ブロックの代入は逐次実行する（\cref{sec:linsolve:eigen}）。
+  \item \textbf{求解中の判断は、スレッドではなく数値に基づいて下す。}軽い前処理での試行を採用するか
+    破棄するか、ニュートンのパスの許容誤差、ニュートン反復の初期値は、いずれも求解の収束状況と場から決まる
+    （\cref{sec:linsolve:conc,sec:linsolve:ew,sec:time:newton}）。\val{"eigen"}を用いる限り、
+    これらはスレッド数によらず同じになる。
+  \item \textbf{\code{Vector}はゼロ初期化を省略しない。}\code{resizeFast()}の動作は
+    \code{resize()}とまったく同じである。初期化していない値を読む可能性のある経路があると、
+    結果は非決定的になる。
+  \item \textbf{コンパイラに乗算と加算を融合させない。}ビルドでは GCC と Clang に
+    \code{-ffp-contract=off}を渡す。積和演算（FMA）をもつプロセッサ（Apple silicon を含むすべての
+    AArch64）では、これがないとコンパイラが\code{a*b + c}を任意に一命令へ融合し、同じコードを
+    インライン展開した二か所で融合の仕方が異なることがある。その場合、状態ファイルからリスタートした
+    計算は、通しで行った計算と一致しなくなる。\code{-march}を指定しない x86-64 のビルドでは
+    このフラグで何も変わらない。このフラグを外してはならず、融合を再び有効にするオプション
+    （\code{-ffast-math}、\code{-ffp-contract=fast}）を加えてもならない。
+  \item \textbf{関数ローカルの\code{static}に状態を保持してはならない。}インスタンスに属するはずの状態が、
+    翻訳単位に属する状態になってしまう。その結果、複数のケースを一つのプロセスで実行できなくなり、
+    別々のインスタンス（たとえば膜厚の方程式と濃度の方程式）の間でカウンターが混ざり合う。
+\end{itemize}

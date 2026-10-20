@@ -1,0 +1,319 @@
+% ---------------------------------------------------------------------------
+%  yuzenman.sty -- shared preamble for the Yuzen manual (LuaLaTeX only)
+%
+%  Copyright 2017-2026 Suguru Shiratori, Tokyo City University
+%  SPDX-License-Identifier: Apache-2.0
+% ---------------------------------------------------------------------------
+\ProvidesPackage{yuzenman}[2026/09/16 Yuzen manual style]
+
+\RequirePackage{iftex}
+\RequireLuaTeX
+
+%  [ja]: the Japanese edition (yuzen-manual-ja.tex). The chapters are the
+%  same files in Japanese; this option sets the Japanese fonts and the words
+%  the style itself prints (box titles, table heads, cross references).
+\newif\ifyzn@ja
+\DeclareOption{ja}{\yzn@jatrue}
+\ProcessOptions\relax
+
+% --- page geometry ---------------------------------------------------------
+\RequirePackage[a4paper,
+                inner=28mm, outer=32mm, top=28mm, bottom=32mm,
+                marginparwidth=22mm, marginparsep=4mm,
+                headsep=8mm, footskip=14mm]{geometry}
+
+% --- language & typography -------------------------------------------------
+\RequirePackage{microtype}
+\RequirePackage{ragged2e}
+
+% Long unbreakable key names and paths are unavoidable in a reference manual.
+% Allow slightly looser lines rather than overfull ones, and let \bk (defined
+% below) supply break points inside the longest of them.
+\tolerance=1500
+\emergencystretch=2.4em
+\hbadness=2500
+
+% --- colors (the Yuzen logo palette) --------------------------------------
+\RequirePackage{xcolor}
+\definecolor{yznInk}    {HTML}{22201D}   % sumi   -- body text, rules
+\definecolor{yznCeladon}{HTML}{5E8C78}   % seiji  -- primary accent
+\definecolor{yznShadow} {HTML}{48705E}   % kage   -- darker accent
+\definecolor{yznAmber}  {HTML}{C08A3E}   % ame    -- warnings
+\definecolor{yznLapis}  {HTML}{2E4A7D}   % ruri   -- links, cross references
+\definecolor{yznPaper}  {HTML}{F4F1EA}   % ji     -- box backgrounds
+\definecolor{yznKiln}   {HTML}{2B211B}   % kama   -- reversed backgrounds
+\colorlet{yznRule}{yznCeladon!45!white}
+\colorlet{yznCodeBg}{yznPaper!60!white}
+
+% --- fonts (OpenType, via fontspec / unicode-math) -------------------------
+\RequirePackage{fontspec}
+\RequirePackage{unicode-math}
+\setmainfont{TeX Gyre Pagella}[Numbers=OldStyle, Ligatures=TeX]
+\setsansfont{TeX Gyre Heros}  [Scale=0.92, Ligatures=TeX]
+\setmonofont{Inconsolata}     [Scale=0.94]
+\setmathfont{TeX Gyre Pagella Math}
+% keep upright digits inside maths and in tables
+\newfontfamily\liningfont{TeX Gyre Pagella}[Numbers=Lining]
+\newfontfamily\tablefont{TeX Gyre Pagella}[Numbers=Lining]
+\ifyzn@ja
+  %  Harano Aji (TeX Live's own Japanese fonts): Mincho with Pagella, Gothic
+  %  with Heros
+  \RequirePackage{luatexja-fontspec}
+  \setmainjfont{HaranoAjiMincho-Regular}[BoldFont=HaranoAjiGothic-Medium]
+  \setsansjfont{HaranoAjiGothic-Regular}[BoldFont=HaranoAjiGothic-Bold]
+  \ltjsetparameter{jacharrange={-2}}   % Greek and Cyrillic letters stay Latin
+  %  lining figures beside kanji (第3章, 表1.1), and the date in Japanese
+  \setmainfont{TeX Gyre Pagella}[Numbers=Lining, Ligatures=TeX]
+  \renewcommand{\today}{\the\year 年\the\month 月\the\day 日}
+\fi
+
+% --- maths -----------------------------------------------------------------
+\RequirePackage{amsmath}
+\RequirePackage{mathtools}
+\allowdisplaybreaks[1]
+\RequirePackage{siunitx}
+\sisetup{range-units=single, per-mode=symbol, detect-all}
+
+% --- floats, tables, lists -------------------------------------------------
+\RequirePackage{booktabs}
+\RequirePackage{longtable}
+\RequirePackage{array}
+\RequirePackage{tabularx}
+\RequirePackage{multirow}
+\RequirePackage{enumitem}
+\setlist{noitemsep, topsep=0.4\baselineskip, parsep=0pt, leftmargin=1.4em}
+\RequirePackage{graphicx}
+\RequirePackage[font=small, labelfont={bf,color=yznShadow}, skip=6pt]{caption}
+\RequirePackage{float}
+
+\renewcommand{\arraystretch}{1.18}
+\setlength{\tabcolsep}{5pt}
+\newcolumntype{L}[1]{>{\RaggedRight\arraybackslash}p{#1}}
+\newcolumntype{C}[1]{>{\Centering\arraybackslash}p{#1}}
+\newcolumntype{R}[1]{>{\RaggedLeft\arraybackslash}p{#1}}
+\newcolumntype{d}{>{\tablefont}r}   % numbers, lining figures, right aligned
+
+% --- headings (KOMA) -------------------------------------------------------
+\setkomafont{disposition}{\normalcolor\sffamily\bfseries}
+\addtokomafont{chapter}{\color{yznShadow}\fontsize{26pt}{30pt}\selectfont}
+\addtokomafont{section}{\color{yznShadow}\large}
+\addtokomafont{subsection}{\color{yznInk}\normalsize}
+\addtokomafont{subsubsection}{\color{yznInk}\normalsize\itshape\mdseries}
+\addtokomafont{part}{\color{yznShadow}}
+\addtokomafont{partnumber}{\color{yznCeladon}}
+\setkomafont{descriptionlabel}{\normalfont\bfseries\color{yznShadow}}
+\RedeclareSectionCommand[beforeskip=-1\baselineskip, afterskip=1.1\baselineskip]{chapter}
+
+% --- running heads ---------------------------------------------------------
+\RequirePackage[headsepline=0.4pt]{scrlayer-scrpage}
+\pagestyle{scrheadings}
+\setkomafont{pagehead}{\sffamily\footnotesize\color{yznShadow}}
+\setkomafont{pagefoot}{\sffamily\footnotesize\color{yznInk!70}}
+\setkomafont{pagenumber}{\sffamily\footnotesize\color{yznShadow}}
+\clearpairofpagestyles
+\automark[section]{chapter}
+\ihead{\headmark}
+%  The page number at the foot of every page, chapter openings included
+%  (the starred form also sets the plain style those use).
+\cfoot*{\pagemark}
+
+% --- code ------------------------------------------------------------------
+\RequirePackage{listings}
+\lstdefinelanguage{YuzenInp}{
+  morekeywords={block,end,root,true,false},
+  sensitive=false,
+  morecomment=[l]{//},
+  morecomment=[l]{\#},
+  morestring=[b]",
+  morestring=[b]',
+}
+\lstdefinelanguage{YuzenToml}{
+  morekeywords={true,false},
+  sensitive=false,
+  morecomment=[l]{\#},
+  morestring=[b]",
+  morestring=[b]',
+}
+\lstdefinestyle{yzn}{
+  basicstyle=\ttfamily\footnotesize,
+  keywordstyle=\color{yznLapis}\bfseries,
+  commentstyle=\color{yznInk!55}\itshape,
+  stringstyle=\color{yznShadow},
+  numberstyle=\ttfamily\scriptsize\color{yznInk!45},
+  backgroundcolor=\color{yznCodeBg},
+  frame=leftline,
+  framerule=1.6pt,
+  rulecolor=\color{yznCeladon!70},
+  framesep=7pt,
+  xleftmargin=9pt,
+  aboveskip=0.9\baselineskip,
+  belowskip=0.9\baselineskip,
+  columns=fullflexible,
+  keepspaces=true,
+  showstringspaces=false,
+  breaklines=true,
+  breakatwhitespace=false,
+  breakindent=1.6em,
+  postbreak=\mbox{\textcolor{yznAmber}{$\hookrightarrow$}\space},
+  tabsize=2,
+  upquote=true,
+}
+\lstset{style=yzn}
+\lstnewenvironment{inp}[1][]{\lstset{language=YuzenInp,#1}}{}
+\lstnewenvironment{toml}[1][]{\lstset{language=YuzenToml,#1}}{}
+\lstnewenvironment{shell}[1][]{\lstset{language=bash,#1}}{}
+\lstnewenvironment{cpp}[1][]{\lstset{language=C++,#1}}{}
+\lstnewenvironment{plain}[1][]{\lstset{language={},#1}}{}
+
+% --- admonition boxes ------------------------------------------------------
+\RequirePackage[most]{tcolorbox}
+\tcbuselibrary{skins,breakable}
+
+\newtcolorbox{yznbox}[2][]{
+  enhanced, breakable,
+  colback=#2!6!white, colframe=#2,
+  boxrule=0pt, leftrule=2.4pt,
+  arc=1.5pt, outer arc=1.5pt,
+  left=8pt, right=8pt, top=6pt, bottom=6pt,
+  fonttitle=\sffamily\bfseries\small,
+  coltitle=#2!65!black,
+  attach boxed title to top left={xshift=8pt, yshift=-2pt},
+  boxed title style={colback=white, boxrule=0pt, arc=1pt, left=3pt, right=3pt},
+  #1
+}
+\ifyzn@ja
+  \def\yzn@warn{警告}\def\yzn@note{注}\def\yzn@tip{目安}
+  \def\yzn@required{必須}
+  \def\yzn@khead{\textsf{\bfseries キー} & \textsf{\bfseries 型} & \textsf{\bfseries 既定値} &
+    \textsf{\bfseries 意味・単位・範囲}}
+\else
+  \def\yzn@warn{Warning}\def\yzn@note{Note}\def\yzn@tip{Rule of thumb}
+  \def\yzn@required{required}
+  \def\yzn@khead{\textsf{\bfseries Key} & \textsf{\bfseries Type} & \textsf{\bfseries Default} &
+    \textsf{\bfseries Meaning, units, range}}
+\fi
+\newenvironment{warn}[1][\yzn@warn]{\begin{yznbox}[title={#1}]{yznAmber}}{\end{yznbox}}
+\newenvironment{note}[1][\yzn@note]{\begin{yznbox}[title={#1}]{yznCeladon}}{\end{yznbox}}
+\newenvironment{tip}[1][\yzn@tip]{\begin{yznbox}[title={#1}]{yznLapis}}{\end{yznbox}}
+
+% --- semantic inline markup ------------------------------------------------
+% \key  -- an input-file key, e.g. \key{Physics.Evaporation.Coef}
+% \val  -- a literal value written in an input file, e.g. \val{"WM"}
+% \file -- a file or directory name
+% \code -- anything else in code voice (identifiers, commands, env variables)
+\newcommand{\key}[1]{\texorpdfstring{\textcolor{yznLapis}{\texttt{#1}}}{#1}}
+\newcommand{\val}[1]{\texorpdfstring{\texttt{#1}}{#1}}
+\newcommand{\file}[1]{\texorpdfstring{\textcolor{yznShadow}{\texttt{#1}}}{#1}}
+\newcommand{\code}[1]{\texorpdfstring{\texttt{#1}}{#1}}
+\newcommand{\env}[1]{\texorpdfstring{\texttt{#1}}{#1}}
+\newcommand{\reqd}{\textcolor{yznAmber}{\textsf{\footnotesize \yzn@required}}}
+% permitted break point inside a long path or key name: \file{a/\bk b/\bk c}
+\newcommand{\bk}{\discretionary{}{}{}}
+\newcommand{\dash}{\textendash}
+
+% --- key-reference tables --------------------------------------------------
+% \begin{keytable}{<caption>}{<label suffix>} ... \end{keytable}
+% four columns: key | type | default | meaning
+\newenvironment{keytable}[1]{%
+  \par\smallskip
+  \setlength{\LTpre}{0.5\baselineskip}\setlength{\LTpost}{0.9\baselineskip}%
+  \footnotesize
+  \begin{longtable}{@{}L{0.235\textwidth} L{0.085\textwidth} L{0.135\textwidth} L{0.455\textwidth}@{}}
+  \caption{#1}\\[-0.2ex]
+  \toprule
+  \yzn@khead\\
+  \midrule
+  \endfirsthead
+  \toprule
+  \yzn@khead\\
+  \midrule
+  \endhead
+  \bottomrule
+  \endlastfoot
+}{%
+  \end{longtable}\par
+}
+
+% a plain full-width table environment with the same look
+\newenvironment{yzntable}[2]{%
+  \par\smallskip\setlength{\LTpre}{0.5\baselineskip}\setlength{\LTpost}{0.9\baselineskip}%
+  \footnotesize\begin{longtable}{#2}\caption{#1}\\[-0.2ex]\toprule
+}{%
+  \bottomrule\end{longtable}\par
+}
+
+% --- cross references and links --------------------------------------------
+\RequirePackage[hidelinks, bookmarksnumbered, unicode]{hyperref}
+\hypersetup{
+  colorlinks=true,
+  linkcolor=yznLapis,
+  urlcolor=yznShadow,
+  citecolor=yznShadow,
+  linktoc=all,
+}
+\RequirePackage[nameinlink,capitalise]{cleveref}
+\ifyzn@ja
+  %  第3章, 3.2節, 表3.1, 図3.1, 式(3.1), 付録A; several are joined with と and 、
+  \def\yzn@jcref#1#2#3{%
+    \crefformat{#1}{##2#2##1#3##3}\Crefformat{#1}{##2#2##1#3##3}%
+    \crefmultiformat{#1}{##2#2##1#3##3}{と##2#2##1#3##3}{、##2#2##1#3##3}{と##2#2##1#3##3}%
+    \Crefmultiformat{#1}{##2#2##1#3##3}{と##2#2##1#3##3}{、##2#2##1#3##3}{と##2#2##1#3##3}%
+    \crefrangeformat{#1}{##3#2##1#3##4〜##5#2##2#3##6}%
+    \Crefrangeformat{#1}{##3#2##1#3##4〜##5#2##2#3##6}}
+  \yzn@jcref{chapter}{第}{章}
+  \yzn@jcref{appendix}{付録}{}
+  \yzn@jcref{section}{}{節}
+  \yzn@jcref{subsection}{}{節}
+  \yzn@jcref{subsubsection}{}{節}
+  \yzn@jcref{subappendix}{}{節}
+  \yzn@jcref{subsubappendix}{}{節}
+  \yzn@jcref{table}{表}{}
+  \yzn@jcref{figure}{図}{}
+  \yzn@jcref{equation}{式(}{)}
+  \yzn@jcref{part}{第}{部}
+  \renewcommand*{\partformat}{第\thepart 部}
+  \captionsetup{labelsep=quad}
+  \AtBeginDocument{%
+    \renewcommand{\contentsname}{目次}%
+    \renewcommand{\figurename}{図}%
+    \renewcommand{\tablename}{表}%
+    \renewcommand{\appendixname}{付録}%
+    \renewcommand{\bibname}{参考文献}%
+    \renewcommand{\indexname}{索引}}
+\else
+\crefname{chapter}{Chapter}{Chapters}
+\crefname{section}{Section}{Sections}
+\crefname{table}{Table}{Tables}
+\crefname{figure}{Figure}{Figures}
+\crefname{equation}{Eq.}{Eqs.}
+\fi
+
+% --- maths shorthands used throughout --------------------------------------
+\newcommand{\Rey}{\mathrm{Re}}
+\newcommand{\As}{\mathrm{As}}
+\newcommand{\Bo}{\mathrm{Bo}}
+\newcommand{\Dpn}{\mathrm{Dp}}
+\newcommand{\Ma}{\mathrm{Ma}}
+\newcommand{\Spn}{\mathrm{Sp}}
+\newcommand{\Ev}{\mathrm{Ev}}
+\newcommand{\Pen}{\mathrm{Pe}}
+\newcommand{\Df}{\mathrm{Df}}
+\newcommand{\Mr}{\mathrm{Mr}}
+\newcommand{\Ca}{\mathrm{Ca}}
+\newcommand{\Pgx}{\mathrm{Pgx}}
+\newcommand{\Pgy}{\mathrm{Pgy}}
+\newcommand{\Pvec}{\mathbf{Pg}}
+\newcommand{\Qvec}{\mathbf{Q}}
+\newcommand{\uvec}{\mathbf{u}}
+\newcommand{\er}{\mathbf{e}_r}
+\newcommand{\hstar}{h_{*}}
+\newcommand{\Hstar}{H_{*}}
+\newcommand{\Hmax}{H_{\mathrm{max}}}
+\newcommand{\Hf}{H_{\mathrm{f}}}
+\newcommand{\thetae}{\theta_{e}}
+\newcommand{\thetacap}{\theta_{\mathrm{cap}}}
+\newcommand{\Pihat}{\hat{\Pi}}
+\newcommand{\epsmach}{\varepsilon_{\mathrm{mach}}}
+\newcommand{\dtexp}{\Delta t_{\mathrm{explicit}}}
+
+\endinput

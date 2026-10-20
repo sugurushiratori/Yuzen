@@ -1,0 +1,368 @@
+% ch-ref-numerics.tex -- reference: the Numerics and Restart blocks
+\chapter{数値解法とリスタート}
+\label{ch:ref-numerics}
+
+\key{Numerics}には、方程式の中身ではなく、方程式を\emph{どう}解くかに関する設定をすべてまとめる。
+時間刻み、膜厚方程式のニュートン反復、二つの線形求解である。
+\key{Restart}では、継続計算をどこから再開するかを指定する。本章はリファレンスであり、
+キー、その範囲と直接の意味を示す。設定の理由は数値解法の部で説明しているので、参照先を示すにとどめる。
+計算が収束しない、あるいは進まないときは、そちらを参照されたい。
+
+\section{\key{Numerics}}
+\label{sec:ref-numerics:numerics}
+
+必須のブロックで、ちょうど一度だけ記述する。次の五つのキーは最も外側のループ、
+つまり計算をいつまで続けるか、何も起きなくなったといつ判断するかを決める。
+定常状態の判定では、1ステップあたりの変化ではなく、膜厚の\emph{単位時間あたりの}相対変化に
+全時間幅を掛けた値を測る。「今の速さで計算を続けたら、形状がまだどれだけ動くか」を表す量である。
+そのため、つぶれた時間刻みを定常状態と取り違えることはない。\cref{ch:timeintegration}を参照されたい。
+
+\begin{keytable}{\key{Numerics}のキー\label{tab:numerics-keys}}\key{InitialDt} & double & \reqd & 初期時間刻み〔秒〕。正の値。最小の出力間隔より大きい場合は、その値まで切り下げる。 \\
+\key{EndTime} & double & \val{0} & 物理的な終了時刻〔秒〕。ループは$\mathrm{StartTime}\le t\le\mathrm{EndTime}$の間続く。実用上は正の値とする（下の警告を参照）。リスタート時も絶対時刻のままなので、\key{Restart.RestartTime}より大きくなければならない。 \\
+\key{MaxSteps} & int & \val{0} & \key{EndTime}によらず、このステップ数で停止する。0以上。\val{0}は制限なし。64ビットで数え、上限は$2^{63}-1$。リスタート時は、既に進んだステップ数から数え続ける。 \\
+\key{SteadyStateCriterion} & double & \val{1e-3} & （単位時間あたりの膜厚の相対変化）$\times$（$\mathrm{EndTime}-\mathrm{StartTime}$）に対するしきい値。無次元。値は任意で、$\le 0$なら判定を無効にする。$\mathrm{EndTime}\le\mathrm{StartTime}$のときは時間幅を1に置き換える。 \\
+\key{SteadyStateSteps} & int & \val{10} & 判定条件が連続して成り立つべきステップ数。範囲は$[1:1000000]$。判定は\code{count > SteadyStateSteps}なので、実際には指定より1ステップ多く必要である。 \\
+\end{keytable}
+
+\begin{warn}[\key{EndTime}の既定値は0であり、「無期限」ではない]
+  \key{EndTime}を既定値のままにすると、計算は1ステップで止まり、定常状態判定の時間幅は1に
+  置き換わる。「無制限」を表す設定はない。\textbf{\key{EndTime}は必ず明示的に設定する。}
+  計算が止まる経路はほかに二つあり、乾燥判定（\key{Physics.Evaporation.EndConcValue}）と
+  上記の定常状態判定である。
+\end{warn}
+
+\section{\key{Numerics.TimeStepControl}}
+\label{sec:ref-numerics:tsc}
+
+必須のブロックである。時間刻みが適応的になるのは\key{Enable}が真のときに限る。時間刻みは膜厚方程式で
+決まり、濃度方程式はそれに従う。連続する二つの時間差分を比べて誤差を推定し、
+推定値が\key{Criterion}を超えたら時間刻みを縮める。\cref{ch:timeintegration}を参照されたい。
+
+\begin{keytable}{\key{Numerics.TimeStepControl}のキー\label{tab:tsc-keys}}\key{Enable} & bool & \val{false} & 時間刻みを適応的にする。偽のときは、$\Delta t$は\key{InitialDt}のまま変わらない。 \\
+\key{MaxDtFactor} & double & \val{10000} & $\Delta t$の上限を、四階拡散のスケーリングに合わせて$\mathrm{MaxDtFactor}\cdot\Delta x_{\min}^4$とし、無次元時間で与える。正の値。\key{Enable}の真偽によらず適用する。 \\
+\key{MinDt} & double & \val{1e-15} & $\Delta t$の下限。無次元時間で与え、正の値。これより小さい時間刻みが必要になると、計算は異常終了する。\key{Enable}の真偽によらず適用する。 \\
+\key{Criterion} & double & \val{0.01} & 1ステップあたりに許す局所打ち切り誤差。無次元、正の値。 \\
+\key{ScaleFloor} & double & \val{0.0} & 誤差を正規化する重みの下限。全体の最大膜厚に対する割合で与え、範囲は$[0:1]$。\val{0}では局所の膜厚で割るので、薄い前駆膜の領域が支配的になる。\val{1}では全体の最大値だけで正規化する。 \\
+\key{KeepSteps} & int & \val{50} & $\Delta t$を再び増やすまでに必要な、連続して成功したステップ数。1以上。 \\
+\key{ChangeFactor} & double & \val{0.5} & 縮めるときは$\Delta t$に掛け、増やすときは$\Delta t$を割る係数。範囲は$(0:1)$。 \\
+\end{keytable}
+
+\begin{note}[\key{Enable}が効くキーと効かないキー]
+  \key{Enable = false}のとき、\key{Criterion}、\key{ScaleFloor}、\key{KeepSteps}、\key{ChangeFactor}は
+  読み込まれるだけで適用されない。一方、\key{MaxDtFactor}と\key{MinDt}は引き続き適用される。
+  したがって固定時間刻みでも、上下の制限は効いている。\val{"CZ"}モデルは
+  この二つをどちらも適用しない。時間刻みの上限は出力間隔だけで決まり、
+  下限は組み込みの\val{1e-15}である。固定時間刻みでは、収束しないステップをより短い時間刻みでやり直せないため、
+  計算は理由を示して停止する。対象は鉛直一様モデルのニュートン反復
+  （収束から遠いところで修正量が停滞する場合を含む。\cref{sec:convergence:stagnation}）と、
+  どちらのモデルでも膜厚または濃度の線形求解である。\key{Enable = true}であれば、そうしたステップは時間刻みを
+  縮めて解き直す。
+\end{note}
+
+\section{\key{Numerics.HeightEquation}}
+\label{sec:ref-numerics:height}
+
+必須のブロックである。膜厚方程式は移動度が未知量に依存するので非線形であり、各ステップを
+外側のニュートン・カントロビッチ反復で解く。次の五つのキーがこの反復を制御する。
+ほかの設定に手を付ける前に、まずここを理解しておくことが望ましい。計算がなかなか進まない原因として
+最も多いのは、満たしようのない収束判定であり、これが時間刻みをつぶしてしまう。
+この機構は\Cref{ch:convergence}で詳しく説明する。修正量がある下限（フロア）を下回れない理由と、
+フロアが格子と時間刻みで決まるのはどういうときかは\cref{sec:convergence:floor}で説明する。
+
+\begin{keytable}{\key{Numerics.HeightEquation}のキー\label{tab:heighteq-keys}}\key{NewtonEpsilon} & double & \val{1e-10} & ニュートン・カントロビッチ修正量に対する絶対収束しきい値。無次元、正の値。修正量のフロアより小さくすると、すべてのステップが「失敗」し、時間刻みがつぶれる。 \\
+\key{NewtonEpsilonRel} & double & \val{1e-6} & 相対しきい値。修正量を、そのステップの\emph{最初の}修正量に比べてどこまで下げるかを与える。範囲は$[0:1]$。$\le 0$で無効になり、絶対判定だけが残る。解のスケールにも$\Delta t$にも依存しない。 \\
+\key{NewtonMaxIterations} & int & \val{30} & ニュートン求解の反復回数の上限。実用上は1以上。超えるとステップの失敗とみなし、適応時間刻みなら$\Delta t$を縮め、固定時間刻みなら計算を停止する。収束から遠いところで修正量が停滞した場合（\cref{sec:convergence:stagnation}）も同じ扱いである。 \\
+\key{NewtonMinIterations} & int & \val{1} & 1ステップあたりのニュートン反復の最小回数。範囲は$[1:100]$。\val{1}なら判断を収束判定だけに任せる。\val{6}にすると、どのステップも六回以上反復する。 \\
+\key{JacobianUpdateInterval} & int & \val{1} & 修正ニュートン法の間隔、つまりヤコビアンを作り直す頻度。範囲は$[1:100]$。\val{1}では反復ごとに作り直す。 \\
+\end{keytable}
+
+\begin{tip}[\key{NewtonEpsilon}を下げるより相対判定を使う]
+  計算が停滞したときに\key{NewtonEpsilon}を下げるのは逆効果である。修正量に$\Delta t$に比例する
+  フロアがあると、絶対しきい値を下げれば時間刻みが小さくなり、時間刻みが小さくなればフロアが下がる。
+  結局、計算は両者が釣り合う時間刻みに張り付く。絶対判定はそのままにして、
+  \key{NewtonEpsilonRel}で判定させるのが適切である（\cref{sec:convergence:floor}）。
+\end{tip}
+
+\begin{warn}[\val{"CZ"}モデルはこの五つのキーをすべて無視する]
+  \key{Physics.ConcField.Model = "CZ"}では膜厚方程式を半陰的に解き、対応する設定関数は
+  一度も呼ばれない。そのため\key{NewtonMaxIterations}、\key{NewtonMinIterations}、\key{NewtonEpsilon}、
+  \key{NewtonEpsilonRel}、\key{JacobianUpdateInterval}は効かず、代わりにニュートンソルバーに
+  組み込まれた既定値を使う。このモデルは\key{Physics.DisjoiningPressure}と
+  \key{Physics.Source}ブロック全体も無視する。
+\end{warn}
+
+\section{\key{Numerics.ConcEquation}}
+\label{sec:ref-numerics:conceq}
+
+必須のブロックだが、\textbf{固有のキーは持たない}。濃度方程式の
+\key{LinearSolver}ブロックを入れるためだけにある。濃度方程式を解かない場合も省略できない。
+たとえば\key{Model = "None"}でもこのブロックは必須であり、中身は無視される。
+
+\section{\key{Numerics.Convection}}
+\label{sec:ref-numerics:convection}
+
+任意のブロックで、記述するのは一度までである。対流項のセル界面補間を選ぶ（\cref{sec:disc:convection}）。
+
+\begin{yzntable}{\key{Numerics.Convection}のキー\label{tab:ref-numerics:convection}}{@{}L{0.20\textwidth} L{0.08\textwidth} L{0.14\textwidth} L{0.50\textwidth}@{}}
+\textsf{\bfseries キー} & \textsf{\bfseries 型} & \textsf{\bfseries 既定値} & \textsf{\bfseries 意味}\\ \midrule
+\key{Concentration} & string & \val{"UTOPIA"} & $c$の移流。$x$方向と$y$方向に適用し、\val{"CZ"}では$\zeta$方向にも適用する。 \\
+\key{Height} & string & \val{"Koren"} & 鉛直一様モデルの膜厚方程式で風上化する流束（面内重力、遠心力項、マランゴニ流束）。\val{"CZ"}の膜厚方程式は何も風上化しないので、\val{"CZ"}では受け付けない。 \\
+\end{yzntable}
+
+値はどちらも次から選ぶ。三次風上の\val{"UTOPIA"}、同じスキームで散逸を三倍にした\val{"KK"}（河村・桑原）、
+リミッター付きで有界な\val{"Koren"}と\val{"VanLeer"}、そして\val{"Central4"}、\val{"QUICK"}、
+\val{"Upwind1"}、\val{"Upwind2"}、\val{"Central2"}である。それ以外の名前を指定すると、
+選択肢の一覧を示してエラーになる。使用中のスキームはログと\file{JobInfo.txt}に書き出される。
+既定値を決める根拠とした比較は\Cref{sec:verification:schemes}に示す。膜厚に\val{"Koren"}を用いるのは、
+セル界面の膜厚が隣接セルの値の間に収まり、薄い前駆膜上の急峻な前線にも耐えるからである。
+濃度に\val{"UTOPIA"}を用いるのは、滑らかな分布で最も精度が高いからである。
+急峻な前線を持つ濃度に\val{"Koren"}を使うと、滑らかな極値での精度と引き換えに$c$を範囲内に保てる。
+\val{"Central2"}と\val{"Central4"}は何も散逸させない。そのため、モデル自体が解像できる最短波長で不安定な場合には、
+その波を成長させてしまう（\cref{sec:verification:schemes}）。たとえば\val{"CZ"}で$\sigma_c\,\partial c/\partial\zeta > 0$の向きに成層し、
+拡散係数が小さい液膜がこれにあたる。
+
+\paragraph{リミッター付きスキームのクーラン数チェック。} \val{"Koren"}と\val{"VanLeer"}が有界になるのは、
+クーラン数が1以下の場合に限る（\cref{sec:disc:convection}）。いずれかを使っていると、
+ソルバーは各ステップの後にそのステップのクーラン数を計算する。クーラン数は、ステップ開始時と
+終了時の状態の速さ（レート）のうち大きい方に$\Delta t$を掛けたものである。レートは、セルごとの
+$\sum_\text{axes} \max(\text{speed on the two faces})/\Delta$の最大値とする。
+\begin{itemize}
+  \item \key{Concentration}、鉛直一様モデル：速さは$c$を移流させる速度の$|u|$であり、
+    $\Delta x$と$\Delta y$で割る。
+  \item \key{Concentration}、\val{"CZ"}：各層の体積流束を用いる。$x$方向と$y$方向には
+    $|Q|/(h\,\Delta x)$、$\zeta$方向のセル界面には$|W|/(h\,\Delta\zeta)$とし、
+    値はそのステップの最後の組み立てから取る。
+  \item \key{Height}：風上化する流束の特性速度$\partial Q/\partial h$である。
+    面内重力と遠心力項の$3|u|$（$Q \propto h^3$）に、マランゴニ流束の$2|u|$（$Q \propto
+    h^2$）を加える。各$u$はその項の速度である。毛管圧と分離圧の流束は
+    風上化しないので数えない。
+\end{itemize}
+1を超えた最初のステップは\file{Warnings.txt}に報告され
+（\file{numerics/\bk CourantCheck.h}。\code{Courant number}でgrepできる）、
+計算終了時には、該当したステップの数と最大値が報告される。
+\begin{plain}
+Courant number 1.43 at step 1 (t = 0.00143 s) with Numerics.Convection.Concentration = "Koren": a limited scheme keeps the concentration free of over- and undershoots only up to 1. Reported once; the count of such steps is given at the end of the run.
+Courant number above 1 in 7 of 7 steps (largest 1.43) with Numerics.Convection.Concentration = "Koren".
+\end{plain}
+計算中の最大値は、1を超えたかどうかによらず、ログと\file{JobInfo.txt}に書き出される
+（\code{Largest Courant number <conc>}、\code{<height>}）。それ以外の処理は何もしない。
+ステップを縮めることも棄却することもなく、結果はチェックのない計算と同じである。1未満に保つには時間刻みを短くする。
+具体的には、\key{Numerics.InitialDt}か、\key{Numerics.TimeStepControl.MaxDtFactor}が
+時間刻みに課す上限を変える（\cref{sec:ref-numerics:tsc}）。
+
+\paragraph{$c = 1$を超えるオーバーシュート。} 有界でないスキームや、クーラン数が1を超えたときの
+リミッター付きスキームは、濃度の急峻な前線でオーバーシュートする。$c$が1近くまで乾いた液膜の隣では、
+オーバーシュートが1を超える。鉛直一様モデルは、1を超えた分の溶質を周囲のセルに移して
+保持する（\cref{sec:disc:convection}）。計算全体で移した量はステップごとに合計し、
+初期溶質量に対する割合として\file{JobInfo.txt}に書き出す（\code{Solute moved from c > 1 [-]}）。
+ゼロでなければログにも書き出す。$c = 0.99$から0.3への前線が100セルの領域を一度横切ると、
+UTOPIA、KK、QUICKでは1.7〜\SI{2.3}{\percent}、Central4では\SI{4}{\percent}を移す。
+これはスキームの誤差の大きさを表すもので、収支の誤差ではない。クーラン数1以下の\val{"Koren"}は
+何も移さず、格子を細かくすると移す量は減る。同梱のケースでは、どれも何も移さない。
+液膜全体として液体より多くの溶質を含む場合に限り、溶質を引き取るセルがない。その残りは切り捨て、
+発生時に\file{Warnings.txt}に一度報告する（\code{cut at c = 1}でgrepできる）。
+計算終了時には合計を報告し、\file{JobInfo.txt}に書き出す（\code{Solute cut at c = 1 [-]}）。
+
+\paragraph{$c = 0$を下回るアンダーシュート。} 同じスキームは前線の反対側でアンダーシュートし、
+溶質をほとんど含まない液膜の隣では0を下回る。どちらのモデルも、0を下回ったセルを
+溶質を持つ周囲のセルから埋め合わせる（\cref{sec:disc:convection}）。そのため$c$は0以上に保たれ、
+溶質も保存される。移した量は初期溶質量に対する割合として\file{JobInfo.txt}に書き出し
+（\code{Solute moved to c < 0 [-]}）、ゼロでなければログにも書き出す。$c = 0.7$から0.005への
+前線が100セルの領域を一度横切ると、UTOPIA、KK、QUICKでは3.2〜\SI{4.4}{\percent}、
+Central4では\SI{7.7}{\percent}を移す。クーラン数1以下の\val{"Koren"}と\val{"VanLeer"}は
+何も移さない。同梱のケースでは、どれも何も移さない。液膜全体で溶質が負になる場合に限り、埋め合わせが
+できない。その不足分は補い、\file{Warnings.txt}に一度報告する（\code{made up at c = 0}でgrepできる）。
+計算終了時には合計を報告し、\file{JobInfo.txt}に書き出す（\code{Solute made up at c = 0 [-]}）。
+
+\section{二つの\key{LinearSolver}ブロック}
+\label{sec:ref-numerics:linearsolver}
+
+\key{Numerics.HeightEquation.LinearSolver}と\key{Numerics.ConcEquation.LinearSolver}はどちらも必須であり、
+同じ五つのキーを、同じ既定値と同じ許容範囲でとる。パーサーのコードもそのまま複製してある。
+したがって二つの求解は独立に設定でき、膜厚方程式と濃度方程式で異なるバックエンドを使ってもよい。
+バックエンドとそのコストの比較は\Cref{ch:linearsolver}に示す。
+
+\begin{keytable}{\key{Numerics.HeightEquation.LinearSolver}および\key{Numerics.ConcEquation.LinearSolver}のキー\label{tab:linsolver-keys}}\key{MaxIterations} & int & \val{5000} & BiCGStab求解の反復回数の上限。1以上。 \\
+\key{Epsilon} & double & \val{1e-13} & 相対残差（スケーリングする場合もある）に対する収束許容値。正の値。鉛直一様モデルの膜厚では、ニュートンの各パスを解く許容値のうち最も厳しいものとなる。それより前のパスは、反復に必要な程度まで緩く解く（\cref{sec:linsolve:ew}）。 \\
+\key{RowScaling} & bool & \val{true} & 求解の前に、行列の各行と右辺を対角成分で割る。解は変わらないが、条件数は大きく変わる。どちらのバックエンドでも有効である。 \\
+\key{PreconditionType} & string & \val{"ILU"} & 前処理。\val{"None"}、\val{"Jacobi"}、\val{"ILU"}のいずれか。各バックエンドは、これを自身の仕組みに対応づける（\cref{ch:linearsolver}）。\val{"ILU"}では、より安価な前処理をまず試し、ILUは予備の手段として使う（\cref{sec:linsolve:eigen,sec:linsolve:conc}）。 \\
+\key{Backend} & string & \val{"auto"} & 実装。\val{"auto"}、\val{"eigen"}、\val{"amgcl"}のいずれか。\val{"auto"}は、バイナリがamgclを組み込んでビルドされていれば2次元の液膜にamgclを選び、それ以外ではeigenを選ぶ。\val{"eigen"}はスレッド数によらずビット単位で再現するが、\val{"amgcl"}は再現しない。それ以外の値はエラーになる。 \\
+\end{keytable}
+
+
+\begin{warn}[AMGCLを含まないビルドでは\val{"amgcl"}を指定しても黙って代替される]
+  AMGCLなしでビルドしたバイナリは、\key{Backend = "amgcl"}に対して警告を出し、
+  \val{"eigen"}を使う。計算は続き、結果も正しい。ただし要求したものとは別の結果であり、
+  AMGCLを含むビルドで同じ入力を実行した結果とは、線形ソルバーの許容値程度の差が出る。
+  計算中にこのことを文章で示すのは、\file{Warnings.txt}の警告だけである。
+  ただし\file{JobInfo.txt}の\code{Solver Info}節には、
+  実際に動いたバックエンドとして\val{"eigen"}が記録される。警告文は
+  \code{LinearSolver: Backend="amgcl" was requested, but this build has no
+  AMGCL. Falling back to "eigen".}である。\code{has no AMGCL}でgrepすれば検出できる
+  （\cref{sec:output:warnings}）。
+\end{warn}
+
+\begin{note}[\file{JobInfo.txt}には実際に動いたバックエンドが残る]
+  \code{C\_ImplicitSolver::\bk BackendName()}は方程式の\emph{解決後の}バックエンドを返す。
+  各モデルのドライバーは、これをモデル名とともに\file{JobInfo.txt}の
+  \code{\#\#\#\#\#\# Solver Info \#\#\#\#\#\#}節に書き出す。
+  膜厚方程式に1行、濃度方程式があれば2行目が加わる。解決後の名前なので、
+  \val{"auto"}は実際に選ばれたバックエンドとして、代替は実際に動いた実装として記録される。
+  したがって、どの線形ソルバーが結果を出したかは結果ディレクトリから判別できる。
+  同じ2行は標準出力にも出る。この節の内容は\Cref{sec:output:jobinfo}に示す。
+  比較を行うなら、両方の入力ファイルで\key{Backend}を明示する方がやはり見通しがよいが、
+  記録はそれだけではない。
+\end{note}
+
+\section{\key{Numerics.ManufacturedSolution}}
+\label{sec:ref-numerics:mms}
+
+検証専用の任意のブロックである。\key{Enable}を設定すると、計算は
+\[
+  h = \key{Mean} + \key{Amplitude}\,\cos(k_x x - \Omega t)\cos(k_y y),\qquad
+  k = 2\pi/\key{Wavelength},
+\]
+から始まる。基板は$s = \key{SubstrateMean} + \key{SubstrateAmplitude}\,
+\cos(2\pi x/L_{s,x})\cos(2\pi y/L_{s,y})$、濃度は$c = \key{ConcMean} + \key{ConcAmplitude}\,\cos(k_{c,x} x
+- \Omega_c t + \phi_c)\cos(k_{c,y} y)$とし（1次元ではすべての$k_y = 0$）、これらが厳密解となるような
+生成項を方程式に加える。そのため、厳密解と計算した場との差は離散化誤差だけ
+になる。\file{tools/mms.py}がこの機能を使う（\cref{sec:verification:mms}）。
+鉛直一様モデルでは、すべての項が生成項に入る。\val{"CZ"}では濃度は液膜内のどの高さでも同じとし、
+蒸発と分離圧は受け付けない。ノズルはどちらのモデルでも受け付けない。基板はこのブロックで与えるので、
+\key{Substrate}での形状指定も受け付けない。膜厚、基板、濃度は、\key{Initial}の内容によらず、
+開始時にこれらの式で設定する。境界は周期とし、領域の幅は波長の整数倍でなければならない。
+
+\begin{keytable}{\key{Numerics.ManufacturedSolution}のキー\label{tab:mms-keys}}\key{Enable} & bool & \val{false} & 製造解の生成項を加える。 \\
+\key{Mean} & double & \val{0} & 平均膜厚〔m〕。\key{Amplitude}より大きくする。 \\
+\key{Amplitude} & double & \val{0} & 振幅〔m〕。0以上。 \\
+\key{Omega} & double & \val{0} & 角周波数〔rad/s〕。波は$+x$方向に速さ$\Omega/k_x$で進む。 \\
+\key{Wavelength} & array & \val{[1, 1]} & 波長$(L_x, L_y)$〔m〕。長さはちょうど~2。 \\
+\key{ConcMean} & double & \val{0.5} & 平均濃度。\val{"CZ"}では\key{ConcAmplitude}か\key{ConcStratAmplitude}がゼロでない場合に限って使い、それ以外では\key{Initial.Concentration.Value}のままとする。 \\
+\key{ConcAmplitude} & double & \val{0} & 濃度の振幅。濃度は$(0, 1)$の内側に収まらなければならない。\val{"CZ"}では液膜内のどの高さでも同じ値であり、高さ方向に変化する部分は\key{ConcStratAmplitude}で加える。 \\
+\key{ConcOmega} & double & \val{0} & 濃度の角周波数〔rad/s〕。 \\
+\key{ConcPhase} & double & \val{0} & 濃度の位相$\phi_c$〔rad〕。 \\
+\key{ConcWavelength} & array & \val{[1, 1]} & 濃度の波長〔m〕。 \\
+\key{ConcStratAmplitude} & double & \val{0} & \val{"CZ"}専用。液膜内で変化する部分$A_s\cos(2\pi x/L_x - \Omega_s t)\cos(2\pi y/L_y)\cos\pi\zeta$の振幅$A_s$。$|\key{ConcAmplitude}| + |A_s|$は、$c$が$(0, 1)$の内側に収まる大きさでなければならない。鉛直一様モデルでは受け付けない。 \\
+\key{ConcStratOmega} & double & \val{0} & この部分の角周波数$\Omega_s$。 \\
+\key{ConcStratWavelength} & array & \val{[1, 1]} & この部分の波長$L_x$、$L_y$〔m〕。 \\
+\key{SubstrateMean} & double & \val{0} & 基板の平均高さ〔m〕。 \\
+\key{SubstrateAmplitude} & double & \val{0} & 基板の起伏の振幅〔m〕。 \\
+\key{SubstrateWavelength} & array & \val{[1, 1]} & 基板の起伏の波長$(L_{s,x}, L_{s,y})$〔m〕。 \\
+\end{keytable}
+
+\section{\key{Restart}}
+\label{sec:ref-numerics:restart}
+
+任意のブロックで、記述するのは一度までである。リスタートでは、\key{Initial}から液膜を作る代わりに、
+以前の結果から計算を継続する。ASCIIの場ファイルは手で編集できるので、このブロックを使えば、
+解析的に作った分布（たとえば\file{tools/make\_equilibrium\_1d.py}が書き出したもの）を
+計算に与えることもできる。
+
+\begin{keytable}{\key{Restart}のキー\label{tab:restart-keys}}\key{Enable} & bool & \val{false} & \key{Initial}ブロックの代わりに、以前の結果から継続する。偽のときは、ほかのキーはすべて読み込まれるが無視される。 \\
+\key{ASCII} & bool & \val{false} & バイナリの\file{.vts}形式ではなく、ASCIIの中立形式\file{.dat}を読む。 \\
+\key{FileName} & string & \val{"restartfile"} & 読み込むファイルのパス。作業ディレクトリからの相対パスで指定する。拡張子は補わないので、完全な名前を与える。ファイルが存在しなければ、結果ディレクトリを作る前に計算は停止する。 \\
+\key{RestartTime} & double & \val{0} & 継続計算を開始する物理時刻〔秒〕。非負。内部で$T_0$で割る。\key{EndTime}はずらさ\textbf{ない}。 \\
+\key{FileIndex} & int & \val{0} & 出力ファイルの番号をこの値から再開する。非負。新しい場ファイルが古いものを上書きしないようにするためのキーである。 \\
+\end{keytable}
+
+リスタートを使う前に、知っておくべき性質が三つある。
+
+\begin{warn}[リスタートファイルの読み方は\key{Output.Dimensioned}で決まる]
+  \key{Restart}には、ファイルの単位を指定するキーがない。膜厚の換算係数は
+  \key{Output.Dimensioned}から決まる。有次元出力ならファイルはマイクロメートル単位とみなし、
+  無次元出力なら係数は1である。\textbf{一方の設定で書いたファイルを、他方の設定で読み戻すことはできない}。
+  設定が食い違っても膜厚が黙って$h_0/10^{-6}$倍ずれるだけで、エラーにはならない。
+\end{warn}
+
+読み込み処理はどちらも、両方の濃度モデルと1次元・2次元のいずれでも動作する。どちらも格子サイズ
+（\file{field*.dat}の行数、\file{.vts}のヘッダーにある点数）を検査し、一致しなければ計算を
+異常終了させる。したがって、異なる格子へはリスタートできない。失敗の理由は\file{FatalErrors.txt}と
+端末に出る。種類の違うファイル（たとえば\key{ASCII = false}で\file{field*.dat}を与えた場合）は、
+すぐにその旨が報告される。鉛直一様モデルでは読み込み後に境界条件を適用し直すので、ファイルの
+ゴースト値はどんな値でも上書きされる。\val{"CZ"}の\file{.vts}はゴースト層を含み、
+書かれた値をそのまま使う。ASCIIからのリスタートでは、最初の求解時に境界条件で設定する。
+
+リスタートは、与えた状態を最後の桁まで、あるいは最後の桁で1単位の差で再現する。\code{ctest}では
+\code{restart\_roundtrip}がこれを確かめる。各モデルを各形式からリスタートし、リスタートした計算が
+最初に書き出す場を、時刻とファイル番号も含めて出発点の場と比べる。\val{"CZ"}では、
+膜厚と基板を除いて書き直した\file{.vts}からのリスタートも試し、この場合は点の高さから液膜を復元する。
+
+場を出力するたびに、場ファイルの隣に同じ番号の\file{field*.state}も書き出す。このファイルには場ファイルにない情報を
+保存する。ビット単位の時刻、ステップ数、時間刻みとその一つ前の時間刻み、
+適応時間刻みのカウンター、出力スケジュール、\file{History.dat}の累計値、定常状態のカウント、
+前のステップの膜厚と（\val{"CZ"}では）濃度、ゴースト層を含む$h$、$s$、$c$である。
+リスタート時に\key{FileName}の隣にこのファイルがあり、同じモデルが
+\key{RestartTime}に書いたもの（時刻は\file{.pvd}の値で足り、六桁でも足りる）であれば、
+計算は中断がなかったかのように続く。場ファイル、\file{History.dat}、
+\file{CalcInfo.dat}、プローブの行、時間刻みがすべて中断しない場合と同じになる（\code{restart\_chain}、
+\cref{sec:verification:bcio}）。リスタート時刻の状態は書き出し直さないので、\key{FileIndex}は
+そのファイル番号に1を加えた値にするのが適切である。リスタートで同じディレクトリに書き出す場合
+（\key{Overwrite = true}）、\file{History.dat}、\file{CalcInfo.dat}、プローブ、\file{.pvd}は
+既存のファイルに続けて書く。リスタート時刻より後の行は削除し、書き込み中に強制終了された
+計算が残した改行のない最終行も削除する。場ファイルの内容を正とする。場ファイルを編集してあれば
+その内容を使い、警告でその旨を示す。状態ファイルが壊れているか整合しない場合は、端末と
+\file{Warnings.txt}に警告（\code{... is damaged and is not used}）を出して無視し、
+場ファイルだけから計算を始める。壊れた場ファイル（\file{field*.dat}の短い行、長さの合わないブロック、
+\code{</VTKFile>}で終わらない\file{.vts}）は、一部を未初期化のまま読むことはせず、
+該当する行やブロックを示して拒否する。ソルバー自身がこうしたファイルを残すことはない。
+場ファイルと状態ファイルはすべて一時的な名前で書き、書き終えた時点で改名する
+（\cref{sec:output:failures}）。また、Ctrl-Cや\code{SIGTERM}で止めた計算は到達した状態を書き出すので、
+そこから正確に継続できる。
+
+状態ファイルのない場ファイル（たとえば手で書いたもの）からは、場だけを読み込む。出力スケジュールは
+出力間隔の倍数で続くが、時間刻みは\key{InitialDt}に戻り、\file{History.dat}の累計はゼロから始まる。
+保存誤差もリスタート時の状態を基準にとる。このときの結果は、中断のない計算と比べて、
+適応時間刻みでは時間積分誤差の程度、固定時間刻みではファイルの桁数の程度（鉛直一様モデルで
+約$10^{-13}$、\val{"CZ"}で$10^{-9}$）だけ異なる。
+
+最後に、\key{EndTime}は絶対時刻である。\key{RestartTime = 5}、
+\key{EndTime = 4}としたリスタートはすぐに停止する。
+
+\section{パーサーが受け付けるが、どのケースも使わないキー}
+\label{sec:ref-numerics:unused}
+
+本マニュアルの記述は、照合ツール\file{tools/doc\_keys.py}（\code{ctest}では\code{doc\_keys}として
+実行する）で裏付けている。このツールは、\file{cases/}の38個の入力ファイル（\file{cases/eq/}と\file{cases/scaling/}を含む）で
+使われているブロックパスとキーをすべて集め、パーサーが受け付けるものと比べる。パーサーは受け付けるが、
+同梱のどのケースも使っていないものを\Cref{tab:unused-keys}に挙げる。これらのキーは非推奨ではなく、
+壊れているとわかっているという意味での未テストでもない。\file{cases/}が網羅していないだけである。
+ただし、これらを使う計算は回帰テストスイートが確かめていない領域に入るので、結果を鵜呑みにせず確認する。
+
+\begin{yzntable}{\file{cases/}のどのケースも使っていないパーサー機能\label{tab:unused-keys}}{@{}L{0.30\textwidth} L{0.58\textwidth}@{}}
+\textsf{\bfseries ブロック} & \textsf{\bfseries 一度も使われないキー} \\ \midrule
+ルート & \key{LengthScaleType}、\key{LengthScale}。どのケースも毛管長さスケールで実行する。 \\
+\key{Physics.Evaporation} & \key{PowerN}、\key{ConcR}、\key{EndConcType}、\key{EndConcValue}。\val{"PowerN"}濃度則と乾燥しきい値はまったく網羅していない。 \\
+\key{Physics.Slip} & ブロック全体。どのケースもすべりなしで実行する。\code{analytic}（\code{leveling\_slip\_*}、\code{eq\_slip}、\code{wall\_balance\_slip}）、\code{mms}（\code{wm\_slip\_1d}、\code{wm\_all\_slip\_1d}）、\code{yuzen\_tests}が使う。 \\
+\key{Physics.Source} & \key{ConcType}。ノズルのケースはすべて局所濃度で液体を供給する。\val{"supplied"}は\code{analytic}が使う（\code{nozzle\_supplied}、\code{nozzle\_mixing}）。 \\
+\key{Numerics} & \key{SteadyStateCriterion}、\key{SteadyStateSteps}。定常状態判定は常に既定値で動く。 \\
+\key{Numerics.TimeStepControl} & \key{ScaleFloor}。 \\
+\key{Numerics.HeightEquation} & \key{NewtonEpsilonRel}、\key{NewtonMinIterations}、\key{JacobianUpdateInterval}。 \\
+\key{Numerics.Convection} & \key{Concentration}。どのケースも既定の\val{"UTOPIA"}で実行する。\key{Height}を指定するのは\file{wet\_coupled}だけである（\val{"UTOPIA"}）。ほかのスキームは\code{ctest}が使う（\code{advection}）。 \\
+両方の\key{LinearSolver}ブロック & \key{Backend}。バックエンドを固定するケースはなく、どれも\val{"auto"}の選択で実行する。 \\
+\key{Output.FieldData} & \key{Times}、\key{ExactTimes}、\key{WritePotential}（\code{analytic}と\code{restart\_roundtrip}が使う）。出力時刻のリストは\key{LogSchedule}経由で使い（\file{leveling\_1d\_logout}）、\key{Times}は\code{input\_guards}が使う。 \\
+\key{Output.Energy} & ブロック全体。\code{analytic}（\code{energy\_*}）と\code{restart\_roundtrip}が使う。 \\
+\key{Output.ProbeList} & \key{Probe}サブブロック全体（\key{X}、\key{Y}、\key{Z}）。ただし、どのケースも\key{TimeInterval}付きの空の\key{ProbeList}を宣言している。 \\
+\key{Initial.SurfaceShape} & \key{RectBump}、\key{FlatPlane}、\key{MexicanHat}、\key{SmoothConvex}、\key{EdgeBump}。使うのは\key{EllipseBump}と\key{PeriodicWave}（\file{leveling\_1d\_logout}）だけである。 \\
+\key{Substrate} & \key{RectBump}、\key{PeriodicWave}、\key{FlatPlane}、\key{MexicanHat}、\key{SmoothConvex}。こちらも使うのは\key{EllipseBump}だけである。 \\
+\key{Numerics.ManufacturedSolution} & ブロック全体。検証専用であり、\code{mms}と\code{input\_guards}がこれを使う入力を独自に書く。 \\
+\end{yzntable}
+
+\key{Substrate.EllipseBump.Order}も一度も指定されない（指定するのは\key{Initial}側だけである）。
+そのため、基板側の次数を扱う処理はテストされていない。同じ照合から、さらに二つのことが明らかになる。
+\key{Physics.DisjoiningPressure}が現れるのは\file{cases/eq/}と\file{cases/wet\_*}だけである。
+また、どのケースも\key{Physics.Evaporation}、\key{Physics.ConcField}、\key{Output.ProbeList}、
+\key{Substrate}、\key{Restart}を与えているので、省略可能なブロックを省いたときの意味
+（\cref{ch:ref-physics}）に依存する同梱ケースはない。省略した場合の動作は\code{input\_guards}で確かめている。
+
+\section{\key{InputFormatVersion}}
+\label{sec:ref-numerics:formatversion}
+
+同梱のケースファイルは、どれもルートレベルで\key{InputFormatVersion = "1.0"}を設定している。
+このキーは、ファイルがどのバージョンの入力形式を想定して書かれたかを記録する。今のところ形式は一つしかないので
+省略してよいが、指定する場合は\val{"1.0"}でなければならない。より新しい形式を想定したファイルは、
+中途半端に解釈せずに拒否する。
+
+バージョンの関門はもう一つあり、\key{SolverName}は正確に\val{"Yuzen-1.0"}でなければならない。
+これはバージョンの\emph{系列}\code{MAJOR.MINOR}を表し、バイナリの完全なバージョンではない。
+ソルバーは受け付ける文字列を\code{C\_Yuzen::\bk VersionSeries()}から作るので、
+パッチリリースでも同じ入力ファイルをそのまま読める。この約束の内容は\Cref{ch:policy}に示す。

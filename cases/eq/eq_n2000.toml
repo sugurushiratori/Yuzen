@@ -1,0 +1,185 @@
+#  eq_n2000 -- The same at dx = 0.3 um; with eq_n1000 and eq_n4000 it gives the order.
+SolverName = "Yuzen-1.0"
+InputFormatVersion = "1.0"
+JobName = "eq_n2000"
+
+[Grid]
+Dimension = "xh"
+Xmin = -0.3e-3
+Xmax = 0.3e-3
+Ymin = -1
+Ymax = 1
+Nx = 2000
+Ny = 1
+Nz = 1
+
+[Initial]
+
+[Initial.Concentration]
+Type = "uniform"
+Value = 0.5
+
+[Initial.SurfaceShape]
+TotalHeight = 10e-6
+PrecursorRatio = 0.02
+
+[Initial.SurfaceShape.EllipseBump]
+Order = 2
+CreateType = "stack"
+Base = 0.0
+Height = 1.0
+Center = [0.0, 0]
+Width = [100e-6, 1.0]
+SlopeWidth = 80e-6
+
+[Substrate]
+TotalHeight = 0.0
+
+[Fluid]
+Name = "resist"
+
+[Fluid.Density]
+Value = 1000.0
+
+[Fluid.SurfaceTension]
+BaseValue = 30.0e-3
+BaseConc = 0.5
+Coef = 10e-3
+
+[Fluid.Viscosity]
+BaseValue = 100.0e-3
+BaseConc = 0.5
+Exponent = 10.0
+
+[Fluid.Diffusivity]
+BaseValue = 1.0e-9
+BaseConc = 0.5
+Exponent = -7.0
+
+[Fluid.MolarMass]
+Solvent = 100
+Resin = 2000
+
+[Physics]
+
+[Physics.ConcField]
+Model = "WM"
+EnableConvection = false
+EnableDiffusion = false
+
+[Physics.LaplacePressure]
+Enable = true
+
+[Physics.SolutoCapillarity]
+Enable = false
+
+[Physics.DisjoiningPressure]
+Enable = true
+ContactAngle = 10.0
+ExponentN = 3.0
+ExponentM = 2.0
+
+[Physics.VerticalGravity]
+Enable = false
+Acceleration = 9.80665
+
+[Physics.HorizontalGravity]
+Enable = false
+Acceleration = [4.903, 0]
+
+[Physics.Centrifugal]
+Enable = false
+RotationRate = 41.89
+RotationAxis = [0e-3, 0e-3]
+
+[Physics.Evaporation]
+Enable = false
+Coef = 1e-7
+ConcFunc = "Raoult"
+SpatialFunc = "uniform"
+NegPowExponent = 0.25
+NegPowRmax = 75e-3
+
+[Physics.Source]
+Enable = false
+Radius = 2e-3
+InletRate = 1.33
+Conc = 0.2
+TimeConstant = 0.5
+ArmLength = 395e-3
+ArmCenter = [-395e-3, 0e-3]
+RotationRate = 0.0
+StartAngle = 0
+RampTime = 0.0
+PlateauTime = 100
+SubRegions = 10
+
+[Boundary]
+
+[Boundary.XminBC]
+Type = "Symmetry"
+
+[Boundary.XmaxBC]
+Type = "Symmetry"
+
+[Boundary.YminBC]
+Type = "Symmetry"
+
+[Boundary.YmaxBC]
+Type = "Symmetry"
+
+[Output]
+Dimensioned = true
+Overwrite = true
+
+[Output.FieldData]
+TimeInterval = 5
+NeutralFile = true
+VTKFile = true
+
+[Output.GeneralHistory]
+TimeInterval = 0.3
+
+[Output.CalcInfo]
+TimeInterval = 0.3
+
+[Output.ProbeList]
+TimeInterval = 0.3
+
+[Numerics]
+InitialDt = 1e-6
+MaxSteps = 4000000000
+EndTime = 60
+
+[Numerics.TimeStepControl]
+Enable = true
+MaxDtFactor = 1.0e10
+MinDt = 1.0e-15
+Criterion = 1e-2
+KeepSteps = 50
+ChangeFactor = 0.75
+
+[Numerics.HeightEquation]
+NewtonMaxIterations = 50
+NewtonEpsilon = 1e-12
+
+[Numerics.HeightEquation.LinearSolver]
+MaxIterations = 8000
+Epsilon = 1e-13
+RowScaling = true
+PreconditionType = "ILU"
+
+[Numerics.ConcEquation]
+
+[Numerics.ConcEquation.LinearSolver]
+MaxIterations = 5000
+Epsilon = 1e-13
+RowScaling = true
+PreconditionType = "ILU"
+
+[Restart]
+Enable = true
+ASCII = true
+FileName = "eq_n2000.dat"
+RestartTime = 0
+FileIndex = 0

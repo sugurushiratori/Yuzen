@@ -1,0 +1,186 @@
+#  nozzle_1d_rotating -- Liquid supplied through a nozzle on a rotating arm.
+SolverName = "Yuzen-1.0"
+InputFormatVersion = "1.0"
+JobName = "nozzle_1d_rotating"
+
+[Grid]
+Dimension = "xh"
+Xmin = -0.5e-3
+Xmax = 0.5e-3
+Ymin = -1
+Ymax = 1
+Nx = 300
+Ny = 1
+Nz = 1
+
+[Initial]
+
+[Initial.Concentration]
+Type = "uniform"
+Value = 0.5
+
+[Initial.SurfaceShape]
+TotalHeight = 10e-6
+PrecursorRatio = 0.5
+
+[Initial.SurfaceShape.EllipseBump]
+Order = 2
+CreateType = "stack"
+Base = 0.0
+Height = 0.5
+Center = [0.5, 0]
+Width = [1.0, 0.5]
+SlopeWidth = 0.1e-3
+
+[Substrate]
+TotalHeight = 10e-6
+
+[Substrate.EllipseBump]
+CreateType = "add"
+Base = 0.0
+Height = 0.5
+Center = [0.5, 0]
+Width = [1.0, 0.5]
+SlopeWidth = 0.1e-3
+
+[Fluid]
+Name = "resist"
+
+[Fluid.Density]
+Value = 1000.0
+
+[Fluid.SurfaceTension]
+BaseValue = 30.0e-3
+BaseConc = 0.5
+Coef = 10e-3
+
+[Fluid.Viscosity]
+BaseValue = 100.0e-3
+BaseConc = 0.5
+Exponent = 10.0
+
+[Fluid.Diffusivity]
+BaseValue = 1.0e-9
+BaseConc = 0.5
+Exponent = -7.0
+
+[Fluid.MolarMass]
+Solvent = 100
+Resin = 2000
+
+[Physics]
+
+[Physics.ConcField]
+Model = "WM"
+EnableConvection = true
+EnableDiffusion = true
+
+[Physics.LaplacePressure]
+Enable = true
+
+[Physics.SolutoCapillarity]
+Enable = true
+
+[Physics.VerticalGravity]
+Enable = true
+Acceleration = 9.80665
+
+[Physics.HorizontalGravity]
+Enable = true
+Acceleration = [4.903, 0]
+
+[Physics.Centrifugal]
+Enable = true
+RotationRate = 41.89
+RotationAxis = [0e-3, 0e-3]
+
+[Physics.Evaporation]
+Enable = false
+Coef = 1e-7
+ConcFunc = "Raoult"
+SpatialFunc = "uniform"
+NegPowExponent = 0.25
+NegPowRmax = 75e-3
+
+[Physics.Source]
+Enable = true
+Radius = 0.2e-3
+InletRate = 1.33
+Conc = 0.2
+TimeConstant = 0.5
+ArmLength = 395e-3
+ArmCenter = [-395e-3, 0e-3]
+RotationRate = 0.0
+StartAngle = 0
+RampTime = 0.0
+PlateauTime = 100
+SubRegions = 10
+
+[Boundary]
+
+[Boundary.XminBC]
+Type = "Symmetry"
+
+[Boundary.XmaxBC]
+Type = "Symmetry"
+
+[Boundary.YminBC]
+Type = "Symmetry"
+
+[Boundary.YmaxBC]
+Type = "Symmetry"
+
+[Output]
+Dimensioned = true
+Overwrite = true
+
+[Output.FieldData]
+TimeInterval = 1e-1
+NeutralFile = true
+VTKFile = true
+
+[Output.GeneralHistory]
+TimeInterval = 1e-2
+
+[Output.CalcInfo]
+TimeInterval = 1e-2
+
+[Output.ProbeList]
+TimeInterval = 1e-2
+
+[Numerics]
+InitialDt = 1e-3
+MaxSteps = 4000000000
+EndTime = 0.05
+
+[Numerics.TimeStepControl]
+Enable = true
+MaxDtFactor = 1.0e10
+MinDt = 1.0e-15
+Criterion = 1e-3
+KeepSteps = 50
+ChangeFactor = 0.75
+
+[Numerics.HeightEquation]
+NewtonMaxIterations = 50
+NewtonEpsilon = 1e-12
+
+[Numerics.HeightEquation.LinearSolver]
+MaxIterations = 8000
+Epsilon = 1e-13
+RowScaling = true
+PreconditionType = "ILU"
+
+[Numerics.ConcEquation]
+
+[Numerics.ConcEquation.LinearSolver]
+MaxIterations = 5000
+Epsilon = 1e-13
+RowScaling = true
+PreconditionType = "ILU"
+
+[Restart]
+Enable = false
+FileName = "Stage1_fin.dat"
+RestartTime = 0
+FileIndex = 0

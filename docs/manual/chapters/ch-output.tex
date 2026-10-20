@@ -1,0 +1,701 @@
+% ch-output.tex -- what a run writes and how to read it
+\chapter{Output files}
+\label{ch:output}
+
+Every run writes into one directory, named after \key{JobName}. This chapter
+says what each file contains, in what units, and which of them you should look
+at when something goes wrong. The keys that control them are in
+\cref{sec:ref-bcout:output}.
+
+\section{The result directory}
+\label{sec:output:dir}
+
+\begin{yzntable}{Contents of a result directory\label{tab:resultdir}}{@{}L{0.30\textwidth} L{0.62\textwidth}@{}}
+\textsf{\bfseries File} & \textsf{\bfseries Contents}\\ \midrule
+\file{<input file name>}          & a verbatim copy of the input file that produced the run \\
+\file{JobInfo.txt}                & version, build, machine, start and end time, and the linear-solver backend of each equation \\
+\file{Warnings.txt}               & warnings raised during the run; zero-length if there were none \\
+\file{FatalErrors.txt}            & why the run aborted; zero-length if it did not, see \cref{sec:output:warnings} \\
+\file{field00000.vts}, \dots\     & VTK structured grid, one per field output \\
+\file{field00000.dat}, \dots\     & the same field as tab-separated text; also the ASCII restart format \\
+\file{<JobName>.pvd}              & ParaView time series referencing the \file{.vts} files \\
+\file{History.dat}                & integral quantities and extrema against time \\
+\file{CalcInfo.dat}               & solver diagnostics against time \\
+\file{Probe00.dat}, \dots\        & time series at the points listed in \key{Output.ProbeList} \\
+\end{yzntable}
+
+The input file is copied in deliberately: a result directory carries the
+complete description of the run that made it, so it stays interpretable after
+you have edited the case twelve more times.
+
+One thing you may expect here is not here: the scales, the dimensionless
+groups, the progress log and the termination message are written to
+\textbf{standard output}, not to a file in this directory
+(\cref{sec:output:running}). Redirect if you want to keep them.
+
+\key{JobName} is a path relative to the working directory, and the
+directories on the way to it are made as needed: \val{"runs/sweep/case1"}
+writes into \file{runs/sweep/case1/}, and the \file{.pvd} in it is named after
+the last part, \file{case1.pvd}. Spaces and non-ASCII characters (Japanese,
+say) are allowed in it, as in the name of the input file and in
+\key{Restart.FileName}.
+
+Before anything is computed the run makes sure the directory can be used, and
+stops with exit code 1 and a message naming the path and \key{JobName} when it
+cannot: when it already exists and \key{Output.Overwrite} is \val{false}, when
+something other than a directory has its name, when it cannot be made (a
+parent that is a file, no permission) and when no file can be written in it
+(a read-only directory, no permission). Nothing is written then, and the
+message is on standard error only, since \file{FatalErrors.txt} would be in
+the directory that failed.
+
+\begin{note}[Two runs can share a directory]
+  The directory is named after \key{JobName}, not after the input file. Two
+  input files with the same \key{JobName} write to the same place, and with
+  \key{Output.Overwrite} set to \val{true} the second replaces the files of
+  the first that it writes again: \file{History.dat}, \file{CalcInfo.dat}, the
+  probes, the \file{.pvd}, \file{JobInfo.txt} and the field files of the
+  numbers it reaches. Field files it does not reach --- \file{field00012.*}
+  of a first run longer than the second --- are left as they were, and the
+  new \file{.pvd} does not list them. This is convenient for a parameter sweep
+  run in separate working directories and a trap for one run in the same
+  directory; remove the directory to start clean.
+\end{note}
+
+\section{\file{JobInfo.txt}}
+\label{sec:output:jobinfo}
+
+Six sections: program info (version, build time, compiler, the versions of the
+input reader, grid and utility layers), solver info, machine info (OS, host,
+CPU, processor count, the OpenMP thread count \code{OMP\_MAX\_THREADS} the run
+used, the count the runtime offered \code{OMP\_THREADS\_REQUESTED} and the
+cells per thread of the thread limit \code{OMP\_THREAD\_CAP}
+(\cref{sec:parallel:cap}), the algorithms in force \code{YUZEN\_OPT}
+(\cref{tab:envvars}), the kind of OpenMP runtime \code{OMP\_RUNTIME} and the
+grain of the linear solves \code{YUZEN\_GRAIN} (\cref{sec:parallel:runtime}),
+memory, process id), starting
+info (date, time, working directory, result directory), performance (the
+wall-clock time of the time-step loop alone, \code{Time loop [s]}, the steps
+taken, the Newton and linear iterations (the Newton count is 0 in \val{"CZ"},
+which has no Newton loop, \cref{sec:output:calcinfo}), in the well-mixed model the steps
+failed because the Newton correction stagnated far from convergence
+(\cref{sec:convergence:stagnation}), in \val{"CZ"} the coupling passes
+taken again and the steps failed because they did not settle
+(\cref{sec:verification:czpasses}), the largest Courant number of each
+limited convection scheme, in a well-mixed run with a concentration the
+solute moved from above $c = 1$ and the solute cut there, in either model
+the solute moved into cells below $c = 0$ and the solute made up there
+(\cref{sec:ref-numerics:convection}), and the sum of the steps solved
+against the times the loop started and ended at) and ending info (elapsed
+time, date, time, and the termination type). The termination type is
+\code{normal} for a run that ended on one of the stops of
+\cref{tab:termination}, \code{interrupted (SIGINT)} or
+\code{interrupted (SIGTERM)} for one stopped by a signal
+(\cref{sec:output:failures}) and \code{abort} for one stopped by a fatal
+error. A run killed outright (\code{SIGKILL}, a power cut) has no ending info
+at all: the file ends after the starting info.
+
+\code{\#\#\#\#\#\# Solver Info \#\#\#\#\#\#} is the section that depends on
+your input. It names the model, and the linear-solver backend and the
+convection scheme that each equation actually used:
+
+\begin{plain}
+###### Solver Info ######
+Model :                      Well-Mixed-1D
+Linear solver <height> :     eigen
+Linear solver <conc> :       eigen
+Convection scheme <height> : Koren
+Convection scheme <conc> :   UTOPIA
+\end{plain}
+
+The \code{<conc>} lines appear only when the model solves a concentration
+field, and the \val{"CZ"} model, which takes the flux of the film height
+centered, has no \code{Convection scheme <height>} line. \textbf{These are resolved names, not the strings you wrote}: with
+\key{Backend} at its default \val{"auto"} the line reports whichever
+implementation was chosen, and after the silent \val{"amgcl"} fall-back
+(\cref{sec:ref-numerics:linearsolver}) it reports \val{"eigen"}, the one that
+ran. The backend lines (and, in the well-mixed model, the scheme lines) are
+echoed to standard output under the heading
+\code{\#\#\#\#\#\# Solver \#\#\#\#\#}. \Cref{ch:linearsolver} compares the
+backends.
+
+Everything else in the file describes the program, the machine and the wall
+clock. The rest of what the solver computed from your input --- the scales, the
+dimensionless groups, the grid --- goes to standard output
+(\cref{sec:output:running}).
+
+\section{The run log on standard output}
+\label{sec:output:running}
+
+Everything the solver has to say while it runs goes to \textbf{standard
+output}: it is a terminal log, not a file, and no result directory contains it.
+Keep it by redirecting:
+
+\begin{shell}
+yuzen case.toml > run.log
+\end{shell}
+
+\file{tools/run\_case.sh} already does this, capturing standard output and
+standard error together into \file{stdout.txt} inside the run directory
+(\cref{sec:env:tools}), which is the easiest way to end up with a log you can
+read later without thinking about it.
+
+This is where the solver reports what it built from your input, and then how
+the run progressed. It opens with the linear-solver backend and the convection
+scheme of each equation and the grid, then the scales
+used to non-dimensionalize the problem ($L_0$, $H_0$, $T_0$, $U_0$ under the
+heading \code{Scaling factors}), then the dimensionless groups $\As$, $\Ma$,
+$\Bo$, $\Pgx$, $\Pgy$, $\Spn$, $\Dpn$, $\Pen$, $\Df$, $\Ev$ and $\Mr$ under
+\code{Nondimensional numbers}, then the non-dimensional time and output
+intervals, and the model name.
+
+Read the scales here when a result is wrong by orders of magnitude rather than
+by a few percent: compare $L_0$, $T_0$ and $U_0$ against what you expected
+before looking anywhere else, because a mis-set
+\key{Fluid.\bk SurfaceTension.\bk BaseValue} or
+\key{Initial.\bk SurfaceShape.\bk TotalHeight} shows up here immediately and
+nowhere else for a long time. \Cref{sec:governing:scales} defines each scale
+and \cref{sec:governing:groups} each group.
+
+Below that block comes the progress log, written as the run goes:
+
+\begin{plain}
+.....................Field file 4, Time = 1.285130e-05
+.............................dt+ (1.013153e-07)
+..........
+############## Time reached to the EndTime. #############
+Field file 5, Time = 1.606806e-05
+Largest Courant number of Numerics.Convection.Height = "Koren": 0.000469
+
+############## Program normally terminated. #############
+\end{plain}
+
+One dot is one time step. \code{dt+} and \code{dt-} mark the adaptive step
+growing and shrinking, with the new value in parentheses. \code{Field file
+$n$} marks a field written, with its non-dimensional time.
+
+The line that says why the loop ended is the one that matters; after it come
+the field of the last step, the largest Courant number of each limited
+convection scheme (\cref{sec:ref-numerics:convection}) and the closing line.
+There are three normal terminations:
+
+\begin{yzntable}{Termination messages\label{tab:termination}}{@{}L{0.33\textwidth} L{0.59\textwidth}@{}}
+\textsf{\bfseries Message} & \textsf{\bfseries Meaning}\\ \midrule
+\code{Time reached to the EndTime.} & The run reached \key{Numerics.EndTime}. \\
+\code{Dry out.}                     & The concentration test selected by \key{Physics.\bk Evaporation.\bk EndConcType} passed \key{EndConcValue}. \\
+\code{Steady state.}                & The change rate stayed below \key{Numerics.\bk SteadyStateCriterion} for \key{SteadyStateSteps} consecutive steps. \\
+\end{yzntable}
+
+A run stopped by Ctrl-C or \code{SIGTERM} ends instead with
+\code{Program stopped by SIGINT; its output is complete.} (or
+\code{SIGTERM}), and a run that diverged with \code{Program terminated after
+divergence.}; \cref{sec:output:failures} lists the exit codes.
+
+A long alternation of \code{dt-} and \code{dt+} is worth investigating: it
+usually means the time step has locked onto the level at which the Newton
+convergence test is just satisfiable, which is a convergence problem and not a
+time-stepping one (\cref{sec:convergence:absolute}). A run that reports
+\code{Steady state.} after a handful of steps on a fine mesh is likewise
+suspicious; \cref{sec:convergence:termination} explains why, and why the
+criterion is a rate rather than a per-step change.
+
+\section{\file{Warnings.txt} and \file{FatalErrors.txt}}
+\label{sec:output:warnings}
+
+Both files are opened as soon as the result directory is created, and
+\textbf{neither carries a banner}. A zero-length \file{Warnings.txt} means no warning
+was raised, and a zero-length \file{FatalErrors.txt} means the run did not
+abort. Testing the two files for emptiness is a valid check on a finished run,
+and it is the cheapest one there is.
+
+The warnings you are most likely to meet are the Newton stagnation notice
+(\cref{sec:convergence:stagnation}), the linear-solver iteration-limit notice, and
+the notice that \val{"amgcl"} was requested in a build without it. A limited
+convection scheme run past a Courant number of one adds two lines, grep for
+\code{Courant number} (\cref{sec:ref-numerics:convection}); so does a
+well-mixed film that holds more solute than liquid and has some cut at
+$c = 1$, grep for \code{cut at c = 1}, and a film with less than no solute
+that has some made up at $c = 0$, grep for \code{made up at c = 0}. None of
+them stops the run. The stagnation notice is written once, for the first
+step cut for it; \file{JobInfo.txt} counts them all.
+
+\begin{note}[Three messages, verbatim, and what to grep for]
+  Three messages are worth having in full, because a finished run is usually
+  diagnosed by grepping \file{Warnings.txt} or \file{FatalErrors.txt} for one
+  of them. A short distinctive substring is the right thing to search for, and
+  one is given with each:
+
+  \begin{itemize}
+    \item \textbf{Newton stagnation}
+      (\file{numerics/\bk NewtonKantorovich.cpp}): the line gives the iteration
+      the correction stagnated at, the correction reached and the first one,
+      and says the step is cut, as in
+      \code{Newton-Kantorovich: the Newton correction stagnated far from
+      convergence (iteration 7, correction 6.586796e-01 against 4.827437e-01
+      in the first); the step is cut and solved again (JobInfo.txt counts the
+      steps cut for this; later ones are not reported here).} At a fixed step
+      the same cause is the fatal error that stops the run. Grep for
+      \code{correction stagnated}.
+    \item \textbf{The \val{"amgcl"} fall-back}
+      (\file{numerics/\bk LinearSolverBackend.cpp}):
+      \code{LinearSolver: Backend="amgcl" was requested, but this build has no
+      AMGCL. Falling back to "eigen".} Grep for \code{has no AMGCL}.
+    \item \textbf{The precursor-ratio abort}
+      (\file{model/\bk NonDimensionalNumbers.cpp}), which is fatal and goes to
+      \file{FatalErrors.txt}: \code{Physics.DisjoiningPressure requires
+      Initial.SurfaceShape.PrecursorRatio > 0.} Grep for
+      \code{PrecursorRatio}, which appears verbatim.
+  \end{itemize}
+\end{note}
+
+A fatal error does. It is written through a tee (\code{TeeStream} in
+\file{yuzen/src/util/YuzenUtil.h}) that duplicates it into
+\file{FatalErrors.txt} \emph{and} standard error, so the message reaches the
+terminal and the result directory at once. The file holds the reason and then
+the abort marker:
+
+\begin{plain}
+TimeStepAdjustment(). Under flow: the requested step fell below Numerics.TimeStepControl.MinDt.
+
+####### Aborting ############
+\end{plain}
+
+The conditions that end a run this way are: disjoining pressure enabled with
+\key{Initial.\bk SurfaceShape.\bk PrecursorRatio} left at \val{0}
+(\file{model/\bk NonDimensionalNumbers.cpp}); the adaptive step falling below
+\key{Numerics.\bk TimeStepControl.\bk MinDt}
+(\file{numerics/\bk ImplicitSolver.cpp}); a step that does not converge
+with the time-step control off, so that it cannot be retried at a shorter
+step --- the well-mixed Newton iteration, or a linear solve of the film or
+of the concentration, the message naming which
+(\file{numerics/\bk NewtonKantorovich.cpp},
+\file{model/\bk ConcZ/\bk CZ2D/\bk CZ\_HeightEquation\_2D.cpp}); a
+\val{"Pinning"} edge meeting a \val{"FreshInlet"} or an \val{"Outlet"} edge
+at a 2-D corner, which is not implemented
+(\file{model/\bk BoundaryCondition.cpp}); a zero denominator in the Laplace
+pressure kernel (\file{model/\bk well\_mixed/\bk LaplacePressureKernel.h}); and
+a model that does not exist, from an unsupported combination of
+\key{Physics.\bk ConcField.\bk Model} and \key{Grid.Dimension}
+(\file{Yuzen.cpp}); an output file that cannot be written
+(\cref{sec:output:failures}); and running out of memory, which names the
+grid as the likely cause (\file{mainProg.cpp}).
+
+\begin{warn}[An input-file error leaves no result directory at all]
+  \code{ReadInputFile()} runs before \code{CreateDirAndFiles()}, so an input
+  that fails the consistency check --- or a \key{SolverName} the parser
+  rejects --- aborts with the message on \textbf{standard error only}. The
+  same holds for a command line the solver does not accept, an input file
+  that is missing, a directory, empty or not readable, a result directory
+  that cannot be used (\cref{sec:output:dir}) and a \key{Restart.FileName}
+  that is not there. No result directory is created, and there is therefore
+  no \file{FatalErrors.txt} to look in. If you go hunting for one after a
+  rejected input and find nothing, this is why: read the terminal, or the
+  \file{stdout.txt} of \file{tools/run\_case.sh} (\cref{sec:env:tools}).
+\end{warn}
+
+\section{A full disk, an interrupted run, and the exit code}
+\label{sec:output:failures}
+
+\paragraph{Every file is whole or absent.} A field file (\file{.vts},
+\file{field*.dat}), its \file{field*.state} and the \file{.pvd} are written
+under their name with \file{.tmp} added and renamed when the last byte is on
+the disk. Whatever stops the run while one is being written --- a full disk,
+a quota, a file size limit, a kill --- leaves at worst a \file{*.tmp} beside
+the files, which nothing reads; a file under its real name is never cut
+short. The \file{.pvd} is rewritten whole, closing tags included, after every
+field file, so ParaView opens it while the run is going on and after it was
+killed. \file{History.dat}, \file{CalcInfo.dat} and the probes are appended
+one row at a time; a run killed in the middle of a row leaves that row without
+its newline, and a restart into the same directory drops it.
+
+\paragraph{A file that cannot be written stops the run.} When a write fails ---
+no space left on the device, a file grown past a limit
+(\code{ulimit -f}), the directory made read-only under the run --- the run
+stops with exit code 1, after naming the file and the reason on standard
+error and in \file{FatalErrors.txt}:
+
+\begin{plain}
+Could not write run/field00007.vts: No space left on device.
+The run is stopped: its output could not be written into run (full disk, ...
+\end{plain}
+
+It is not continued without its output, and it does not write the
+\file{.state} of a field file that failed. The field files already in the
+directory are complete, and the last one that has its \file{.state} beside it
+can be restarted from (\cref{sec:ref-numerics:restart}) once there is room.
+
+\paragraph{Ctrl-C and \code{SIGTERM} end the run cleanly.} The first
+\code{SIGINT} (Ctrl-C) or \code{SIGTERM} --- what a batch scheduler sends
+at the end of a job's time --- lets the step in progress finish, writes the
+outputs of the state reached as at the end of a run (a field file and its
+\file{.state}, the rows of \file{History.dat}, \file{CalcInfo.dat} and the
+probes), records \code{interrupted (SIGINT)} in \file{JobInfo.txt} and ends
+with exit code $128$ plus the signal number: 130 for \code{SIGINT}, 143 for
+\code{SIGTERM}, which is what the shell reports for a process the signal
+killed. The run continued from that field file and its \file{.state} is,
+bit for bit, the run that was not interrupted (\code{error\_paths}). A second
+Ctrl-C ends the process at once; so does \code{SIGKILL}, and the files are
+then still whole --- restart from the last field file that has its
+\file{.state} beside it (the newest one lacks it when the run was killed
+between writing the two).
+
+\begin{yzntable}{Exit codes\label{tab:exitcodes}}{@{}L{0.12\textwidth} L{0.80\textwidth}@{}}
+\textsf{\bfseries Code} & \textsf{\bfseries Meaning}\\ \midrule
+0   & The run ended on one of the stops of \cref{tab:termination}; \code{--check-input}, \code{--help} and \code{--version} succeeded. \\
+1   & Anything that went wrong: the command line, the input file, the result directory, the restart file, a write, a fatal error during the run, a diverged run, running out of memory. \\
+130, 143 & Stopped by \code{SIGINT} or \code{SIGTERM}; the output of the state reached is complete. \\
+\end{yzntable}
+
+\section{\file{field*.dat}}
+\label{sec:output:field}
+
+Tab-separated text with a one-line header naming each column and its unit
+(\code{xx[mm]}, \code{HS[um]}, \code{Ux[m/s]}, \code{CC[-]}, and so on, or
+\code{[-]} throughout when \key{Output.Dimensioned} is \val{false}). The
+\val{"CZ"} header is additionally prefixed with \code{\#}. The columns depend
+on the model:
+
+\begin{yzntable}{Columns of \file{field*.dat}\label{tab:field-columns}}{@{}L{0.16\textwidth} L{0.76\textwidth}@{}}
+\textsf{\bfseries Model} & \textsf{\bfseries Header}\\ \midrule
+1-D well-mixed & \code{xx}\quad\code{HS}\quad\code{Ux}\quad\code{CC}\quad\code{HH}\quad\code{SS}\quad(\code{PHI}) \\
+2-D well-mixed & \code{xx}\quad\code{yy}\quad\code{HS}\quad\code{Ux}\quad\code{Uy}\quad\code{CC}\quad\code{HH}\quad\code{SS}\quad(\code{PHI}) \\
+\val{"CZ"}, 1-D & \code{xx}\quad\code{zz}\quad\code{CC}\quad\code{Ux}\quad\code{Uz}\quad\code{HS}\quad\code{HH}\quad\code{SS} \\
+\val{"CZ"}, 2-D & \code{xx}\quad\code{yy}\quad\code{zz}\quad\code{CC}\quad\code{Ux}\quad\code{Uy}\quad\code{Uz}\quad\code{HS}\quad\code{HH}\quad\code{SS} \\
+\end{yzntable}
+
+Every field file carries a header naming each column and its unit, and every
+one of them follows \key{Output.Dimensioned}.
+
+The rows are points, not cells. Along each in-plane axis there is one point on
+each wall and one at every cell center, so a 2-D file has $(N_x+2)(N_y+2)$
+points per layer; the value on a wall is the mean of the cell next to it and
+the ghost cell beyond, and a velocity component there is the one on that face.
+A \val{"CZ"} file does the same through the thickness: one layer on the
+substrate, one at each of the $N_z$ cell centers, one on the free surface,
+$(N_x+2)(N_y+2)(N_z+2)$ rows in 2-D and $(N_x+2)(N_z+2)$ in 1-D. Its top layer
+is therefore the concentration at the free surface. The data run $x$ fastest,
+then $y$, then $z$.
+
+\code{HS} is the free-surface height $h+s$ and \code{HH} is the film thickness
+$h$; over a flat substrate they coincide. \code{Ux} is the \emph{mixed}
+velocity, the sum of the contributions of every active term, which is also what
+advects the concentration --- \cref{sec:verification:velocity} is the test that
+pins that composition rule down.
+
+With \key{Output.Dimensioned} set to \val{true} the units are
+\textbf{not all the same}: the in-plane coordinates \code{xx} and \code{yy} are
+in \si{\milli\metre}, while \code{HS}, \code{HH} and \code{SS} are in
+\si{\micro\metre} and \code{Ux}, \code{Uy} and \code{Uz} are in
+\si{\metre\per\second} --- \code{Uz}, the vertical velocity $w$ of a \val{"CZ"}
+file from continuity, as well: it is made dimensionless with $H_0/T_0$ rather than $L_0/T_0$,
+and is converted back with that scale.
+\code{CC} is a mass fraction and has no unit. The mixed in-plane and
+out-of-plane scaling is easy to miss when you plot column 2 against column 1:
+the aspect ratio of such a plot is exaggerated by a factor of $10^{3}$.
+
+In a \val{"CZ"} file the \code{zz} column is the \textbf{height} of the point,
+\begin{equation*}
+  z = s + h\,\zeta ,
+\end{equation*}
+not the mapped coordinate $\zeta \in [0,1]$ the model works in
+(\cref{sec:conc:cz}). It therefore runs from \code{SS} to \code{HS} at each
+$(x,y)$ and takes a different set of values in each column of the film, which
+is the same thing the matching \file{field*.vts} carries in its point
+coordinates. Plot \code{CC} against \code{zz} and the vertical axis is
+\si{\micro\metre} above the datum, like \code{HS} and \code{SS} beside it.
+
+\subsection{The driving potential}
+\label{sec:output:potential}
+
+With \key{Output.\bk FieldData.\bk WritePotential} set to \val{true} (well-mixed
+model only), a well-mixed field file has one more column, last, \code{PHI},
+and its \file{.vts} one more array, \code{Potential}: the driving potential
+\begin{equation*}
+  \varphi = \hat\sigma(c)\,\nabla^2(H+S) + \Dpn\,\Pihat(H) - \Bo\,(H+S),
+  \qquad \Pihat(H) = \Bigl(\frac{H_*}{H}\Bigr)^{n} - \Bigl(\frac{H_*}{H}\Bigr)^{m},
+\end{equation*}
+whose gradient drives the flux through the mobility, $\Qvec =
+\tfrac{H^3}{3\hat\mu}\nabla\varphi$ plus the body forces and the Marangoni
+stress (\cref{ch:governing}): a uniform $\varphi$ carries no flux, which is
+the equilibrium condition. $\nabla^2$ is the second difference the capillary
+term differences once more at each face, so that the flux of the scheme is
+the mobility times the difference of \code{PHI} across the face. The in-plane
+gravity, the centrifugal force and the Marangoni stress are not gradients of
+it and are left out. Each term is zero when its \key{Physics} block is off.
+
+With \key{Output.Dimensioned} \val{true} \code{PHI} is in pascals, on the
+pressure scale $\sigma_0 h_0/L_0^2$:
+\begin{equation*}
+  \code{PHI} = \frac{\sigma_0 h_0}{L_0^2}\,\varphi
+  = \sigma\,\nabla^2(h+s) + \Pi(h) - \rho g\,(h+s),
+\end{equation*}
+the pressure in the film being $p = -\code{PHI}$ (up to a constant); with
+\val{false} it is $\varphi$. A wall row takes the value of the cell next to
+it. The restart reads past the column, and the \code{Potential} array is
+written after the point coordinates, where a restart from the \file{.vts}
+does not reach. \code{analytic} checks it (\code{potential\_1d}).
+
+Values are written with 18 significant digits whatever \key{Output.Dimensioned}
+says, because this file is also the ASCII restart input. Six digits is not
+enough: passing the height through a second difference divides by $\Delta x^2$,
+and on a contact-line mesh at $\Delta x = \SI{0.3}{\micro\metre}$ the output
+precision alone shifted the pressure by a few percent and the velocity derived
+from it by three orders of magnitude.
+
+\section{\file{History.dat}}
+\label{sec:output:history}
+
+One row per \key{Output.\bk GeneralHistory.\bk TimeInterval}, with time in the first
+column and then:
+
+\begin{yzntable}{Columns of \file{History.dat}\label{tab:history-columns}}{@{}L{0.22\textwidth} L{0.70\textwidth}@{}}
+\textsf{\bfseries Column} & \textsf{\bfseries Meaning}\\ \midrule
+\code{Volume}         & total liquid volume \\
+\code{ResinVol}       & total solute volume \\
+\code{AveC}           & mean concentration \\
+\code{EvaporatedVol}  & cumulative volume lost to evaporation \\
+\code{OutflowedVol}   & cumulative volume that left through the open edges,
+                        \val{"FreshInlet"} and \val{"Outlet"} (negative for
+                        what came in; in 1-D with the centrifugal term, also
+                        what it flings sideways) \\
+\code{OutflowedResin} & cumulative solute that left with it, carried and
+                        diffused \\
+\code{VolErr}         & volume conservation error \\
+\code{ResinVolErr}    & solute conservation error \\
+\code{maxHS}, \code{minHS} & extrema of the free surface \\
+\code{maxH}, \code{minH}   & extrema of the film thickness \\
+\code{maxC}, \code{minC}   & extrema of the concentration \\
+\code{SuppliedVol}    & cumulative volume the nozzle supplied \\
+\code{SuppliedResin}  & cumulative solute that came with it, at the concentration \key{Physics.Source.ConcType} gives it (last column) \\
+\end{yzntable}
+
+With \key{Output.Dimensioned} set to \val{true} the time column is in
+\si{\second}, but the lengths and volumes here are in \si{\metre} and
+\si{\metre\cubed} --- \emph{not} in the \si{\micro\metre} of the field files.
+\file{ProbeNN.dat} follows the field files instead. \Cref{sec:ref-bcout:output} says which
+writer applies which scaling. A 1-D film is a strip \SI{1}{\metre} wide in $y$:
+its volumes are per meter of width, $\sum h\,\Delta x$, and the header gives
+their unit as \si{\metre\cubed\per\metre}. The width does not depend on
+\key{Grid.Ymin} and \key{Grid.Ymax}, which a 1-D film does not use, nor on the
+length scale, and the two concentration models write the same volume for the
+same film. With \key{Output.Dimensioned} set to \val{false} the volumes are
+dimensionless, $\sum h\,\Delta x$ in 1-D and $\sum h\,\Delta x\,\Delta y$ in 2-D,
+on the scales of \cref{sec:governing:scales}.
+
+\code{VolErr} and \code{ResinVolErr} are the residual of the balance between
+what is in the domain, what evaporated, what left through the boundaries and
+what the nozzle supplied: $\code{VolErr} = (\code{Volume} + \code{OutflowedVol}
++ \code{EvaporatedVol} - \code{SuppliedVol})/\code{Volume}_0 - 1$ and
+$\code{ResinVolErr} = (\code{ResinVol} + \code{OutflowedResin} -
+\code{SuppliedResin})/\code{ResinVol}_0 - 1$, with the volume the sum over the
+cells. The sums use the time step each step was solved with. By default
+(\key{Physics.Source.ConcType = "local"}) the nozzle's
+liquid arrives at the concentration already where it lands
+(\cref{sec:terms:source}), so \code{SuppliedResin} adds up, over each step,
+the supply of every cell times its concentration, the mean of the start and
+the end of the step; with a concentration uniform in the plane, as in the
+shipped nozzle cases, \code{ResinVolErr} is then \code{VolErr}. With
+\val{"supplied"} it arrives at \key{Physics.Source.Conc}, and
+\code{SuppliedResin} adds up the supply of every cell times \key{Conc},
+$\int c_S S$. Either way that is
+the solute the concentration equation itself takes in with the supply
+(\cref{sec:disc:wm-conservative}), so on a closed film the solute balances
+to rounding, with evaporation or without (\code{conc\_drying},
+\cref{sec:verification:analytic}), and with a nozzle in either mode
+(\code{nozzle\_solute}, \code{nozzle\_supplied}). The
+centrifugal term flings a 1-D film sideways, out through the two long sides of the strip (the
+$\partial_y$ of the flux that the 1-D equation keeps,
+\cref{sec:terms:centrifugal}); that liquid, and the solute it carries, is
+counted in \code{OutflowedVol} and \code{OutflowedResin} as the film-height
+equation takes it out, so that a spinning 1-D film between walls balances to
+rounding (\code{spin\_balance}, \cref{sec:verification:analytic}). The
+solute a convection scheme carries past $c = 1$ is moved to the cells around,
+not removed, and a cell it carries below $c = 0$ is filled from the cells
+around (\cref{sec:disc:convection}), so neither leaves a trace here
+(\code{conc\_overshoot}, \code{conc\_undershoot}). What crosses a
+\val{"FreshInlet"} or an \val{"Outlet"} is counted, step by step, from the
+face fluxes the step itself put through the edge faces: the volume flux of
+the film-height equation and the solute flux of the concentration equation
+(the convective flux with the scheme's face value and the diffusive flux), at
+the Crank--Nicolson weighting of the step, over the committed steps only, so
+that an open film balances to rounding as a closed one does
+(\code{inlet\_outlet}, \code{solute\_balance}; the running totals are in the
+state file, so a restarted run continues the same balance). Counted from the
+velocities and the face values of the field after each step instead, the
+balance was found off by the error of the scheme, $6\times10^{-7}$ on 100
+cells and falling at order 1.8 in $\Delta x$; corrected.
+
+A \val{"CZ"} run writes \code{Volume}, \code{ResinVol}, \code{AveC}, the
+extrema (\code{maxHS} to \code{minC}), and then \code{EvaporatedVol},
+\code{OutflowedVol}, \code{OutflowedResin}, \code{VolErr} and
+\code{ResinVolErr}, formed as above; it has no nozzle and no open edge, so
+\code{OutflowedVol} is the sideways outflow of 1-D alone.
+\code{VolErr} and \code{ResinVolErr} are the cheapest continuous check that a case is behaving: they should
+stay small and they should not drift. Note that they sit near zero, so a
+\emph{relative} comparison of them between two runs amplifies rounding --- this
+is why they show the largest relative difference in the backend comparison of
+\cref{sec:verification:backends} while every physical quantity agrees to
+$10^{-10}$.
+
+\section{\file{Energy.dat}}
+\label{sec:output:energy}
+
+With \key{Output.Energy.Enable} set to \val{true} (well-mixed model only) the
+run writes \file{Energy.dat}, a row with every row of \file{History.dat}: the
+time, then
+%
+\begin{description}
+  \item[\code{FreeEnergy}] the free energy of the film,
+    \begin{equation*}
+      \mathcal F = \int\Bigl[\tfrac12\hat\sigma\,|\nabla(H+S)|^2
+        + \tfrac{\Bo}{2}(H+S)^2 + \Dpn\,w(H)\Bigr]\,\mathrm dA,
+      \qquad w(H) = -\int_{H_*}^{H}\Pihat(s)\,\mathrm ds,
+    \end{equation*}
+    the functional whose variation is the driving potential with its sign
+    turned, $\delta\mathcal F/\delta H = -\varphi$
+    (\cref{sec:output:potential}). Discretely the gradient term is a sum
+    over the faces of $\tfrac12\hat\sigma_f(\Delta(H+S)/\Delta x)^2$, so that
+    the derivative of $\mathcal F$ with respect to a cell's $H$ is minus
+    \code{PHI} of that cell, exactly.
+  \item[\code{Dissipation}] $\mathcal D$, the power the potential does
+    against the face fluxes of the scheme, $\sum_i\varphi_i R_i\,\Delta A$
+    with $R_i$ the rate the face fluxes give cell $i$. For the capillary
+    pressure alone it is $\sum_f D_f(\Delta\varphi/\Delta x)^2\Delta A \ge 0$,
+    the integral of $\frac{M}{\hat\mu}|\nabla\varphi|^2$ with the face mobility of
+    the scheme, and of slip with \key{Physics.Slip}; it is what the
+    discretized equations dissipate, so that $\mathrm d\mathcal F/\mathrm dt =
+    -\mathcal D$ holds for them exactly in time.
+  \item[\code{Dissipated}] $\int_0^t\mathcal D\,\mathrm dt$, by the trapezoidal rule over the
+    steps (the Crank--Nicolson weighting).
+  \item[\code{Balance}] the discrete energy balance of the step that
+    ended at the row, $(\mathcal F^{n+1} - \mathcal F^n)/\Delta t +
+    (\mathcal D^n + \mathcal D^{n+1})/2$: zero to $O(\Delta t^2)$ relative
+    to $\mathcal D$ with Crank--Nicolson. The first row has 0. Summed over
+    the steps it is $\mathcal F(t) - \mathcal F(0) + \code{Dissipated}$,
+    which \code{analytic} checks at second order (\code{energy\_*}).
+\end{description}
+%
+With \key{Output.Dimensioned} \val{true} the energies are in joules (per
+meter of width in 1-D, J/m), on the scale
+$\sigma_0 h_0^2$ ($\sigma_0 h_0^2/L_0$ in 1-D), and the powers in watts (per
+meter) on that over $T_0$. The values have 18 significant digits. A run
+continued from a state file continues \code{Dissipated} and gives every row
+what the uninterrupted run gives it (\code{restart\_roundtrip}); from a field
+file alone \code{Dissipated} starts afresh.
+
+\begin{warn}[$\mathcal F$ falls only for the gradient flows]
+  $\mathcal F$ is a Lyapunov function --- it never rises --- when the flux
+  is the mobility times $\nabla\varphi$ and nothing else: the capillary
+  pressure, the vertical gravity and the disjoining pressure, a uniform
+  concentration ($\hat\sigma$ and $\hat\mu$ constant), and \val{"Symmetry"}
+  or \val{"Periodic"} edges. The in-plane gravity, the centrifugal force,
+  the Marangoni stress, evaporation, the nozzle and open edges put energy
+  in or take it out; \file{Energy.dat} is written for them too, and
+  \code{Dissipation} is then the power of $\varphi$ against the flux, not a
+  dissipation. A \val{"Pinning"} edge holds the film with a ghost that
+  follows the cell beside it, which $\mathcal F$ does not account for.
+  The three terms share one face mobility
+  (\cref{sec:disc:positivity-one}), so for them $\mathcal D$ is a sum of
+  squares, the disjoining pressure included, and $\mathcal F$ has risen in
+  none of the checks. \code{analytic} checks the balance and the fall
+  (\code{energy\_*}).
+\end{warn}
+
+\section{\file{CalcInfo.dat}}
+\label{sec:output:calcinfo}
+
+The solver's own diagnostics, one row per
+\key{Output.\bk CalcInfo.\bk TimeInterval}: \code{NK\_iter} and \code{NK\_resid} (the
+Newton outer iteration count and final correction), \code{BCG\_iter} and
+\code{BCG\_resid} (the linear solver), \code{deltaT}, and \code{ChangeRate}.
+A \val{"CZ"} run has no Newton loop of its own and writes \code{Time},
+\code{BCG\_iter}, \code{BCG\_resid}, \code{deltaT} and \code{ChangeRate}.
+A well-mixed run whose field breaks down --- a NaN, a concentration outside
+$[-0.1, 1.1]$, a film below $-10^{-3}$ of its scale, a negative volume ---
+stops with \code{terminated after divergence} and writes no final field, as a
+\val{"CZ"} run does.
+
+This is the file to open when a run is slow. \code{NK\_iter} sitting at
+\key{NewtonMaxIterations} means the Newton loop is not converging --- go to
+\cref{ch:convergence}. \code{BCG\_iter} in the thousands where another backend
+needs tens means the preconditioner, not the problem
+(\cref{sec:linsolve:choosing}). \code{deltaT} collapsing means either a genuine
+stiffness or, far more often, the interaction between an absolute convergence
+test and the correction floor (\cref{sec:convergence:absolute}).
+
+\code{ChangeRate} is the relative change of the film thickness per unit time,
+in \si{\per\second}. It is what the steady-state test is built on, so look at
+this column before choosing \key{Numerics.\bk SteadyStateCriterion} rather than
+guessing a threshold and finding out later that the run stopped at step twelve.
+
+\section{VTK output and ParaView}
+\label{sec:output:vtk}
+
+\file{field*.vts} are VTK structured-grid files and \file{<JobName>.pvd} is a
+collection referencing them with their time stamps. Open the \file{.pvd}: you
+get the whole series with the correct physical times, rather than a numbered
+sequence ParaView has to guess the timing of. The times are written to 12
+significant digits, so field files $10^{-4}$\,s apart stay distinct up to
+$t = 10^{7}$\,s. The \file{.pvd} lists every field file and is rewritten whole
+after each one (\cref{sec:output:failures}), so its cost grows with the
+number of outputs: after 30{,}000 field outputs it is 1.6\,MB, and on a
+two-core \SI{2.1}{\giga\hertz} Xeon rewriting it took about
+\SI{10}{\milli\second} per output. That matters only for a run that writes
+tens of thousands of fields.
+
+A \val{"CZ"} \file{.vts} is a three-dimensional structured grid whose points
+sit at the heights of the cells, $z = s + h\,\zeta$ for each cell's own
+$\zeta$, ghost layers included --- so the two outermost layers at the top and
+the bottom lie just outside the film, and the real cells fill it from substrate
+to free surface. \code{Velocity} is given at those points, each component the
+mean of the two faces of the cell it is stored on. Besides \code{Conc} and
+\code{Velocity} it carries
+\code{FilmThickness} and \code{Substrate}, each repeated down its column; these
+are what a restart from the \file{.vts} reads the film back from.
+
+A well-mixed \file{.vts} carries \code{Conc}, \code{Height} (the free surface
+$h+s$, the \code{HS} of the field file), \code{Substrate} and the mixed
+\code{Velocity}, and beside it the velocity of each term on its own:
+\code{V\_Ca} (capillary pressure), \code{V\_Ma} (Marangoni), \code{V\_Bo}
+(vertical gravity), \code{V\_Pg} (in-plane gravity) and \code{V\_Sp}
+(centrifugal force). The disjoining pressure's share is in \code{Velocity}
+but has no array of its own. These are the way to see which term is moving the
+liquid at a given place (\cref{sec:governing:dimensional}). With \key{WritePotential}, \code{Potential} holds the driving potential
+(\cref{sec:output:potential}).
+
+The two output formats are independent: \key{Output.\bk FieldData.\bk VTKFile}
+and \key{Output.\bk FieldData.\bk NeutralFile}. Turning off the VTK files saves a
+significant amount of disk on long 2-D runs; turning off the text files means
+you cannot restart from the result, so it is rarely the right economy.
+
+\begin{warn}[The \file{.vts} files honor \key{Output.Dimensioned}, and mix
+  their length units]
+  Every \file{.vts} writer applies the key the way \file{field*.dat} does:
+  in-plane coordinates in \si{\milli\metre}, heights --- and therefore the
+  $z$ coordinate of the grid, which is built from them --- in
+  \si{\micro\metre}, velocities in \si{\metre\per\second}.
+  \code{Conc} is a mass fraction and is never scaled.
+
+  So a \file{.vts} is exaggerated vertically by $10^{3}$ relative to its true
+  proportions. That is usually what you want, since a film is orders of
+  magnitude thinner than it is wide and true proportions would render as a
+  flat sheet; but do not read a slope or an angle off the picture without
+  correcting for it, and set the $z$ scale explicitly in ParaView if you want
+  the real aspect ratio. With \key{Output.Dimensioned} set to \val{false},
+  everything in the file is non-dimensional and the exaggeration is gone.
+\end{warn}
+
+\section{Probes}
+\label{sec:output:probes}
+
+Each \key{Output.ProbeList.Probe} block records a time series at one point:
+free-surface height, concentration, velocity components, film thickness and
+substrate height. The coordinates you give are rounded to the nearest grid
+point at start-up. One file is written per probe, named \file{ProbeNN.dat} with
+\code{NN} a zero-padded two-digit index \textbf{counting from \code{00}} in the
+order the blocks appear in the input file --- so two probes give
+\file{Probe00.dat} and \file{Probe01.dat}. Probes are written at
+\key{Output.ProbeList.TimeInterval},
+so they are the way to get a finely resolved time history at a few locations
+without writing the whole field at that rate. No case in \file{cases/} uses
+them.

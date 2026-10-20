@@ -1,0 +1,95 @@
+% app-layout.tex -- source layout, for readers who intend to modify the solver
+\chapter{ソースの構成}
+\label{ch:layout}
+
+この付録は、ソルバーに手を加える読者を対象とする。どのファイルに何があるか、構造を支える設計判断は何かを述べる。\cref{ch:reproducibility}も併せて参照されたい。スレッド数を変えても結果をビット単位で一致させるための工夫が四つあり、どれも一見すると雑に見えるが、いずれも必要なものである。
+
+\section{ディレクトリ}
+\label{sec:layout:dirs}
+
+\begin{yzntable}{ソースのディレクトリ\label{tab:srcdirs}}{@{}L{0.30\textwidth} L{0.62\textwidth}@{}}
+\textsf{\bfseries ディレクトリ} & \textsf{\bfseries 内容}\\ \midrule
+\file{yuzen/src/grid/}     & 構造格子、配置型、場 \\
+\file{yuzen/src/numerics/} & ベクトル、CRS行列、線形ソルバー、時間積分 \\
+\file{yuzen/src/model/}    & 物理（圧力項、方程式、モデルドライバ） \\
+\file{yuzen/src/IO/}       & 入力の解析、出力、リスタート、プローブ \\
+\file{yuzen/src/util/}     & ログ、パス、ジョブ情報 \\
+\file{yuzen/src/commonFunctions/} & 形状関数と形状生成 \\
+\file{yuzen/tests/}        & テストスイート \\
+\file{third\_party/}       & doctest、toml++ \\
+\end{yzntable}
+
+\section{格子の層}
+\label{sec:layout:grid}
+
+\file{Stagger.h}は三ビットのスタガー配置を型として表す。\file{Site.h}はタグ付きの位置、\file{RectGrid.h}は矩形格子、\file{Field.h}は場を定義する。\code{Field<GRID,S,T>}は配置型をテンプレート引数にとる。そのため、セル中心の量とセル界面の量を取り違えると、誤った答えが出るのではなくコンパイルエラーになる（\cref{sec:disc:stagger}）。
+
+次元に依存する情報は、すべて\file{yuzen/src/model/well\_mixed/GridTraits.h}に集めてある。サイトから行への対応、ステンシルの大きさと順序、方向の順序付け、セル界面の膜厚と座標である。物理カーネルは次元に依存せず、必要な情報はすべてこのトレイトクラスから得る。そのため、カーネルは1-Dと2-Dで重複させずに共有できる。
+
+\section{物理項}
+\label{sec:layout:terms}
+
+すべての項は\code{PhysicsTermBase<T>}（\file{model/\bk well\_mixed/\bk PhysicsTermBase.h}で宣言）から派生し、次の七つのメンバーを共通に実装する。
+
+\begin{plain}
+Build             SetLinearCoef      NonlinearTerm
+SetMatrixA        CalVelocity        NonlinearJacobi
+SetJacobiMatrix
+\end{plain}
+
+カーネル本体は同じ場所に、一つずつヘッダとして置いてある。
+
+\begin{plain}
+LaplacePressureKernel.h     ParallelGravityKernel.h
+DisjoiningPressureKernel.h  CentrifugalKernel.h
+VerticalGravityKernel.h     SolutoCapillarityKernel.h
+BodyForceKernel.h
+\end{plain}
+
+各カーネルはトレイトクラスを引数とするテンプレートであり、一つの実装で両方の次元に対応する。
+
+項を追加するには、カーネルを一つ書いて\code{RegisterPhysics()}に登録すれば十分である。手順は分離圧を例として\Cref{sec:extending:term}に順を追って示す。
+
+\section{数値計算の層}
+\label{sec:layout:numerics}
+
+\file{ImplicitSolver.h}は、すべての方程式を共通の形$\partial\varphi/\partial t = -A\varphi - B$に書き直し、$\theta$法と局所打ち切り誤差の推定を担当する。\file{NewtonKantorovich.cpp}は膜厚の式の外側反復である。\file{SemiImplicit.cpp}は係数を固定して一回だけ解く処理で、濃度の式と\val{"CZ"}の膜厚の式に用いる。適応時間刻みは\file{TimeSteps.cpp}が担当する。
+
+\file{CRS\_Matrix.cpp}の行列には二つの段階がある。構築段階では行ごとに可変長の配列をもち、行どうしが独立なので並列に値を埋めてよい。読み出し操作を行うと、自動的に平坦なCRS段階へ切り替わる。行内の要素は対角要素を先頭とする挿入順に並ぶ。これは慣習ではなく、数値的に必要な条件である（\cref{sec:repro:crs}）。列番号の昇順を要求するライブラリには、別途保守している整列済みの写しを渡す。
+
+\file{LinearSolverBackend.h}では\code{ILinearSolverBackend}とファクトリを宣言する。具体的なバックエンド二つは\file{LinearSolverBackend.cpp}内の無名名前空間に置いてある。そのため、AMGCLの\code{\#ifdef}がヘッダに現れることはない。
+
+\section{モデルドライバ}
+\label{sec:layout:models}
+
+\file{model/\bk SolverModel.h}はインターフェース\code{ISolverModel}を宣言する。メンバーは\code{Name}、\code{Build}、\code{Run}の三つである。実装はファクトリ\code{MakeSolverModel(\bk concModel, dimension)}が選ぶ。鉛直一様モデルに共通の部分は\file{WellMixedModelBase.h}にあり、次元に固有の部分は\file{WM1D/}と\file{WM2D/}にある。\file{ConcZ/CZ2D/}は膜厚方向の濃度分布モデルである。
+
+\section{元に戻してはならない設計判断}
+\label{sec:layout:donottouch}
+
+以下の判断の根拠は、いずれも\cref{ch:reproducibility}で述べている。また、新しい物理項に制約を課す四つは、\cref{sec:extending:rules}に規則として再掲した。ソースを読む読者が一か所で確認できるよう、ここにまとめておく。
+
+\begin{warn}[整理したくなるが、してはならない五つの事柄]
+\begin{itemize}
+  \item \code{Vector}の固定ブロックによる縮約を、素の\code{reduction(+:...)}に置き換えてはならない。そのゼロ初期化も省いてはならない。
+  \item CRSの行内の要素を列番号の昇順に並べ替えてはならない。整列済みの写しを用いる。
+  \item \code{RegisterPhysics()}の順序を入れ替えてはならない。追加は末尾に行う。
+  \item 二つの方向の順序付けを一本化してはならない。\code{Dir(d)}は軸の順序、\code{StencilDir(k)}はステンシルの順序であり、意図して使い分けている。1-Dでは両者が一致するため、2-Dを実行するまで違いは表に出ない。
+  \item 前処理の三角代入を並列化してはならない。関数内の\code{static}変数に状態を保持してもならない。
+\end{itemize}
+\end{warn}
+
+\section{ソルバーに手を入れるとき}
+\label{sec:layout:workflow}
+
+手間が少なく効果の大きい手順は次のとおりである。ビルドして\code{ctest}を実行し、変更の前後でいくつかのケースを計算して\file{tools/compare.py}で比較する。リファクタリングが目的なら、比較結果はすべての列で\code{0.000e+00}でなければならない。ソルバー全体はこれを達成できるように書いてあり、現在の構造に至るリファクタリングもすべてこの方法で検証した。
+
+\begin{shell}
+cmake --build build -j && ctest --test-dir build
+./tools/run_case.sh cases/allphys_1d_reg.toml runs/after 1
+python3 tools/compare.py runs/before runs/after
+\end{shell}
+
+このときはバックエンドを固定し、各計算で実際に選ばれたバックエンドを\file{JobInfo.txt}の\code{Solver Info}節で確認する（\cref{sec:output:jobinfo}）。\key{Backend}を変えると丸め誤差が変わるため、異なるバックエンドどうしの比較は線形ソルバーの許容誤差の範囲でしか一致しない（\cref{sec:linsolve:choosing}）。
+
+この付録の内容はここまでである。この付録は何がどこにあるかを示す地図にすぎず、\textbf{変更の手順は\cref{ch:extending}で述べる}。そこでは、拡張の種類の見分け方、種類ごとの番号付きの手順、項の七つのメンバーが果たすべき役割、ヤコビアンをどこまで用意すべきか、テストの方法を説明している。新しいコードを書く前にその章を参照し、公開する前には\cref{ch:policy}を参照されたい。

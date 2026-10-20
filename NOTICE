@@ -1,0 +1,37 @@
+Yuzen - thin liquid film flow solver (lubrication approximation)
+
+Copyright 2017-2026 Suguru Shiratori, Tokyo City University
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+--------------------------------------------------------------------------
+Third-party components bundled in third_party/
+--------------------------------------------------------------------------
+
+doctest 2.4.11 - MIT License - Copyright (c) 2016-2023 Viktor Kirilov
+                 https://github.com/doctest/doctest
+                 (license text: third_party/doctest/LICENSE.txt)
+
+toml++ 3.4.0   - MIT License - Copyright (c) Mark Gillard
+                 https://github.com/marzer/tomlplusplus
+                 (license text: third_party/toml++/LICENSE)
+                 Modified for Yuzen in one function; the change is marked
+                 in third_party/toml++/toml.hpp and described in
+                 THIRD_PARTY_NOTICES.md.
+
+Dependencies fetched at build time (not bundled, used unmodified):
+
+Eigen          - MPL-2.0     - https://eigen.tuxfamily.org     (required)
+AMGCL 1.4.4    - MIT License - https://github.com/ddemidov/amgcl (optional)
+
+See THIRD_PARTY_NOTICES.md for details.

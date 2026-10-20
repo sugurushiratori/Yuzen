@@ -1,0 +1,77 @@
+/**
+@mainpage Yuzen source reference
+
+Yuzen solves the long-wave (lubrication) equation for the height of a thin
+liquid film on a substrate, coupled to a transport equation for the solute
+concentration.
+
+@warning **This is the reference for the code, not for the solver.** What the
+equations are, how they are discretized, what has been verified and what has
+not, and how to run a case, are all in the manual under @c docs/manual/. Read
+that first. This reference answers the next question: which class does what,
+and where to look before changing something.
+
+@section mainpage_layout The shape of the tree
+
+@c yuzen/src/ divides along one line: what is general numerics, and what is
+this particular physics.
+
+| Directory | What lives there |
+|---|---|
+| @c numerics/ | Linear algebra and time integration, with no knowledge of films. The CRS matrix, BiCGSTAB and its three interchangeable backends, the semi-implicit and Newton--Kantorovich time integrators. |
+| @c grid/ | The staggered grid, the eight site types, and the ghost layers. |
+| @c model/ | The physics. @c well_mixed/ treats the concentration as uniform across the thickness; @c ConcZ/ resolves it. |
+| @c IO/ | Input parsing (TOML, and the legacy format), output writers, probes and field aggregates. |
+| @c commonFunctions/ | Shape generation and small shared utilities. |
+
+@section mainpage_models The models
+
+Four combinations of concentration model and dimension are implemented, and
+the factory MakeSolverModel() maps the two input keys onto them. All four
+satisfy the ISolverModel interface, which is all the top-level driver knows.
+
+| @c Physics.ConcField.Model | @c Grid.Dimension | Class |
+|---|---|---|
+| @c "WM" | @c "xh" | WellMixed_Model_1D |
+| @c "WM" | @c "xyh" | WellMixed_Model_2D |
+| @c "CZ" | @c "xh" | ConcZ_Model_2D (1-D film) |
+| @c "CZ" | @c "xyh" | ConcZ_Model_2D (2-D film, pseudo 3-D) |
+
+The last two are the same class: the film's dimension is decided by the grid,
+and with @c ny()==1 no @f$y@f$ term is formed at all.
+
+@section mainpage_invariants Three things that are easy to break
+
+These are properties the code holds deliberately, and each has a test that
+fails if it stops holding. They are worth knowing before changing anything
+in the numerics.
+
+@li **Results are bit-identical regardless of the OpenMP thread count.** That
+    rests on fixed-block reductions in Vector, on a fixed insertion order in
+    CRS_Matrix, and on the order in which the physics terms register
+    themselves. Changing any of those changes the last digits.
+
+@li **The mobility at a face must vanish when either side dries out.** It is
+    the positivity preserving form of Diez and Kondic (2002), and rewriting it
+    as an arithmetic mean produces negative film thickness near a contact
+    line. See CZ_HeightEquation_2D::FaceMobility() and
+    @c tests/test_positivity_mobility.cpp.
+
+@li **Both height equations are conservative.** Volume is conserved exactly in
+    the absence of evaporation and outflow, which the comparison in
+    @c tools/concz_vs_wm.py checks alongside the agreement between the two
+    models.
+
+@section mainpage_tests Where the claims are checked
+
+@c yuzen/tests/ holds the unit tests; @c ctest runs them along with two
+solver-level comparisons that run the binary and compare the two concentration
+models against each other in the limit where they should agree. The manual's
+verification chapter says which claims are backed by which test, and its
+companion chapter is explicit about what is *not* verified.
+
+@section mainpage_license License
+
+Apache-2.0. Copyright 2017-2026 Suguru Shiratori, Tokyo City University.
+Bundled third-party components and their licenses are listed in @c NOTICE.
+*/

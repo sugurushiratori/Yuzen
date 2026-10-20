@@ -1,0 +1,152 @@
+% app-layout.tex -- source layout, for readers who intend to modify the solver
+\chapter{Source layout}
+\label{ch:layout}
+
+This appendix is for readers who intend to change the solver. It says where
+things are and which design decisions are load-bearing. Read
+\cref{ch:reproducibility} alongside it: the four things that keep results
+bit-identical across thread counts all look like untidiness and none of them
+is.
+
+\section{Directories}
+\label{sec:layout:dirs}
+
+\begin{yzntable}{Source directories\label{tab:srcdirs}}{@{}L{0.30\textwidth} L{0.62\textwidth}@{}}
+\textsf{\bfseries Directory} & \textsf{\bfseries Contents}\\ \midrule
+\file{yuzen/src/grid/}     & the structured grid, site types and fields \\
+\file{yuzen/src/numerics/} & vectors, CRS matrices, linear solvers, time integrators \\
+\file{yuzen/src/model/}    & the physics: pressure terms, equations, model drivers \\
+\file{yuzen/src/IO/}       & input parsing, output, restart, probes \\
+\file{yuzen/src/util/}     & logging, paths, job information \\
+\file{yuzen/src/commonFunctions/} & shape functions and shape generation \\
+\file{yuzen/tests/}        & the test suite \\
+\file{third\_party/}       & doctest, toml++ \\
+\end{yzntable}
+
+\section{The grid layer}
+\label{sec:layout:grid}
+
+\file{Stagger.h} carries the three-bit staggering as a type. \file{Site.h} is
+the tagged position, \file{RectGrid.h} the rectangular grid and \file{Field.h}
+the field. Because \code{Field<GRID,S,T>} takes the site type as a template
+parameter, mixing up a cell-centered and a face-centered quantity is a compile
+error rather than a wrong answer (\cref{sec:disc:stagger}).
+
+\file{yuzen/src/model/well\_mixed/GridTraits.h} is the single place where
+dimension-dependent facts live: the site-to-row map, the stencil size and
+order, the direction orderings, face heights and coordinates. A
+dimension-independent physics kernel gets everything it needs from the traits
+class, which is why the kernels are shared between 1-D and 2-D rather than
+duplicated.
+
+\section{The physics terms}
+\label{sec:layout:terms}
+
+Every term derives from \code{PhysicsTermBase<T>}, declared in
+\file{model/\bk well\_mixed/\bk PhysicsTermBase.h}, and implements the same
+seven-member contract:
+
+\begin{plain}
+Build             SetLinearCoef      NonlinearTerm
+SetMatrixA        CalVelocity        NonlinearJacobi
+SetJacobiMatrix
+\end{plain}
+
+The kernels themselves sit next to it, one header each:
+
+\begin{plain}
+LaplacePressureKernel.h     ParallelGravityKernel.h
+DisjoiningPressureKernel.h  CentrifugalKernel.h
+VerticalGravityKernel.h     SolutoCapillarityKernel.h
+BodyForceKernel.h
+\end{plain}
+
+Each is a template on the traits class, so it exists once and serves both
+dimensions.
+
+Adding a term means writing one kernel and registering it in
+\code{RegisterPhysics()}. \Cref{sec:extending:term} is that procedure, step by
+step, with the disjoining pressure as the worked example.
+
+\section{The numerics layer}
+\label{sec:layout:numerics}
+
+\file{ImplicitSolver.h} casts every equation into the common
+$\partial\varphi/\partial t = -A\varphi - B$ form and owns the $\theta$ method
+and the local truncation error estimate. \file{NewtonKantorovich.cpp} is the
+outer iteration for the height equation, \file{SemiImplicit.cpp} the single
+frozen-coefficient solve used for the concentration equation and for the
+\val{"CZ"} height equation. \file{TimeSteps.cpp} owns the adaptive step.
+
+\file{CRS\_Matrix.cpp} has two phases --- a per-row variable-length build phase
+that is safe to fill in parallel because rows are independent, and a flat CRS
+phase that read operations switch it into automatically. Row order is insertion
+order with the diagonal first, and that is a numerical requirement, not a
+convention (\cref{sec:repro:crs}). Libraries that require ascending column
+indices are handed a separately maintained sorted mirror.
+
+\file{LinearSolverBackend.h} declares \code{ILinearSolverBackend} and the
+factory; the two concrete backends live in an anonymous namespace inside
+\file{LinearSolverBackend.cpp}, which is why the AMGCL \code{\#ifdef} never
+appears in a header.
+
+\section{Model drivers}
+\label{sec:layout:models}
+
+\file{model/\bk SolverModel.h} declares the interface \code{ISolverModel},
+whose three members are \code{Name}, \code{Build} and \code{Run}. The factory
+\code{MakeSolverModel(\bk concModel, dimension)} chooses the implementation. \file{WellMixedModelBase.h} holds what the
+well-mixed models share, with \file{WM1D/} and \file{WM2D/} supplying the
+dimension-specific pieces, and \file{ConcZ/CZ2D/} is the through-thickness
+concentration model.
+
+\section{Design decisions that must not be undone}
+\label{sec:layout:donottouch}
+
+Each is argued in \cref{ch:reproducibility}, and the four that constrain a new
+physics term are restated as rules in \cref{sec:extending:rules}. Collected
+here so that a reader walking the source meets them in one place.
+
+\begin{warn}[Five things that look tidy and are not]
+\begin{itemize}
+  \item Do not replace the fixed-block reductions in \code{Vector} with a bare
+    \code{reduction(+:...)}, and do not skip its zero-initialization.
+  \item Do not sort the entries within a CRS row into ascending column order.
+    Use the sorted mirror.
+  \item Do not reorder \code{RegisterPhysics()}. Append.
+  \item Do not unify the two direction orderings. \code{Dir(d)} is axis order
+    and \code{StencilDir(k)} is stencil order, they are used deliberately in
+    different places, and in 1-D they coincide so the difference is invisible
+    until someone runs 2-D.
+  \item Do not parallelize the triangular substitutions of a preconditioner,
+    and do not keep state in function-local \code{static} variables.
+\end{itemize}
+\end{warn}
+
+\section{Working on the solver}
+\label{sec:layout:workflow}
+
+The cheapest useful loop is: build, run \code{ctest}, then run a handful of
+cases before and after the change and compare them with
+\file{tools/compare.py}. If the intent was a refactoring, the comparison must
+read \code{0.000e+00} in every column --- the whole solver is written so that
+this is achievable, and the refactorings that produced the current structure
+were all validated that way.
+
+\begin{shell}
+cmake --build build -j && ctest --test-dir build
+./tools/run_case.sh cases/allphys_1d_reg.toml runs/after 1
+python3 tools/compare.py runs/before runs/after
+\end{shell}
+
+Fix the backend when you do this, and check what each run resolved to in the
+\code{Solver Info} section of its \file{JobInfo.txt}
+(\cref{sec:output:jobinfo}). Changing \key{Backend} changes the rounding, so a
+comparison across backends can only agree to the linear-solver tolerance
+(\cref{sec:linsolve:choosing}).
+
+That is as far as this appendix goes. It is a map of where things are;
+\textbf{\cref{ch:extending} is the procedure for changing them} --- which kind
+of extension you have, the numbered steps for each, what the seven members of
+a term must do, how much Jacobian it needs, and how to test it. Read it before
+writing anything new, and \cref{ch:policy} before releasing it.

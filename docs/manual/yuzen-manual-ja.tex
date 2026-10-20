@@ -1,0 +1,96 @@
+%  Copyright 2017-2026 Suguru Shiratori, Tokyo City University
+%  SPDX-License-Identifier: Apache-2.0
+% ===========================================================================
+%  The Yuzen User Manual, Japanese edition (Yuzen ユーザーマニュアル)
+%  Build with:  latexmk -lualatex yuzen-manual-ja.tex  (or  make)
+%  The English edition (yuzen-manual.tex) is the reference; the chapters in
+%  chapters-ja/ translate those in chapters/ one for one (STYLE.md).
+%  LuaLaTeX is required: the preamble uses fontspec / unicode-math.
+% ===========================================================================
+%  Check the engine before \documentclass, not after. yuzenman.sty issues
+%  \RequireLuaTeX, but that is only read once the class has loaded, so running
+%  pdflatex reported a missing scrbook.cls (or a fontspec error) instead of the
+%  real problem, which is the engine.
+\RequirePackage{iftex}
+\RequireLuaTeX
+\documentclass[11pt, a4paper, twoside, openright, numbers=noenddot,
+               parskip=half-, DIV=12, BCOR=6mm]{scrbook}
+
+\usepackage[ja]{yuzenman}
+
+\title{Yuzen}
+\subtitle{潤滑近似に基づく液膜流れソルバー}
+\author{Suguru Shiratori}
+\date{\today}
+
+\hypersetup{
+  pdftitle={Yuzen ユーザーマニュアル},
+  pdfauthor={Suguru Shiratori},
+  pdfsubject={液膜流れソルバー, 潤滑近似},
+  pdfkeywords={thin film, lubrication approximation, disjoining pressure,
+               contact line, spin coating, evaporation, Marangoni},
+}
+
+\begin{document}
+
+% --- front matter ----------------------------------------------------------
+\frontmatter
+\include{chapters-ja/titlepage}
+
+\cleardoublepage
+\pdfbookmark[0]{目次}{toc}
+\tableofcontents
+
+\include{chapters-ja/preface}
+
+% --- body ------------------------------------------------------------------
+\mainmatter
+
+\part{はじめに}
+\include{chapters-ja/ch-introduction}
+\include{chapters-ja/ch-installation}
+\include{chapters-ja/ch-firstrun}
+
+\part{Yuzen の使い方}
+\include{chapters-ja/ch-inputformat}
+\include{chapters-ja/ch-ref-domain}
+\include{chapters-ja/ch-ref-physics}
+\include{chapters-ja/ch-ref-boundary-output}
+\include{chapters-ja/ch-ref-numerics}
+\include{chapters-ja/ch-output}
+\include{chapters-ja/ch-parallel}
+
+\part{理論}
+\include{chapters-ja/ch-governing}
+\include{chapters-ja/ch-terms}
+\include{chapters-ja/ch-wetting}
+\include{chapters-ja/ch-concentration}
+
+\part{数値解法}
+\include{chapters-ja/ch-discretization}
+\include{chapters-ja/ch-timeintegration}
+\include{chapters-ja/ch-convergence}
+\include{chapters-ja/ch-linearsolver}
+\include{chapters-ja/ch-reproducibility}
+
+\part{検証}
+\include{chapters-ja/ch-verification}
+\include{chapters-ja/ch-notverified}
+
+\part{Yuzen の拡張と保守}
+\include{chapters-ja/ch-extending}
+\include{chapters-ja/ch-policy}
+
+% --- back matter -----------------------------------------------------------
+\appendix
+\part{付録}
+\include{chapters-ja/app-cases}
+\include{chapters-ja/app-environment}
+\include{chapters-ja/app-troubleshooting}
+\include{chapters-ja/app-layout}
+\include{chapters-ja/app-revisions}
+
+\backmatter
+\include{chapters-ja/bibliography}
+
+\end{document}

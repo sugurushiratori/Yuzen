@@ -1,0 +1,38 @@
+% preface.tex -- how to read this manual
+\chapter*{Preface}
+\addcontentsline{toc}{chapter}{Preface}
+\markboth{Preface}{Preface}
+
+This manual documents Yuzen, a solver for the flow of a thin liquid film on a
+substrate. It is written for several readers, and none of them has to read the
+whole of it.
+
+\begin{description}
+  \item[To run a calculation,] read \cref{ch:introduction,ch:installation,ch:firstrun},
+    then keep \crefrange{ch:inputformat}{ch:output} open beside you: they are
+    the reference for every input key and every output file.
+  \item[To know what is being solved,] read Part~III: the governing equations,
+    what each term and dimensionless group means, and the contact-line model
+    (\cref{ch:wetting}, which decides the mesh for any moving contact line).
+  \item[If a run is slow or will not converge,] read Part~IV, beginning with
+    \cref{ch:convergence}: most slow runs on a fine mesh are its floor of the
+    Newton correction meeting an absolute convergence test.
+  \item[To modify the solver,] read \cref{ch:reproducibility} first --- the
+    results are bit-identical whatever the thread count, and the code that
+    makes them so looks untidy and is not --- then \cref{ch:extending},
+    \cref{ch:layout} and \cref{ch:policy}.
+\end{description}
+
+Part~V reports what has been checked and with what numbers, distinguishing
+an analytic solution, a measured order, a conserved invariant and a regression
+test; \cref{ch:notverified} lists what has \emph{not} been checked. Keys are
+set as \key{Physics.Evaporation.Coef}, values as \val{"WM"}, files as
+\file{JobInfo.txt}, code and commands as \code{SetMatrixA()}, environment
+variables as \env{YUZEN\_DEBUG\_FLOOR}; all dimensional input is SI, and every
+measured number comes with the command that reproduces it.
+
+The name \emph{Yuzen} is written with two Japanese characters: \emph{y\=u},
+the glaze on a ceramic, and \emph{zen}, ``as it is, of itself''.
+
+\medskip
+\hfill Suguru Shiratori, Tokyo City University

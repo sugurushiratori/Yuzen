@@ -1,0 +1,222 @@
+% app-cases.tex -- the shipped example and regression cases
+\chapter{例題ケース}
+\label{ch:cases}
+
+\file{cases/}には30のケースを収めている。単なる見本ではなく、大半は回帰ケースであり、いくつかは
+\cref{ch:verification}で引用する数値を得たときの入力そのものである。\textbf{ケースの実体は\file{.toml}ファイルである}。
+読む、コピーする、実行するのはこのファイルである。
+
+ケースはすべてTOML形式で書かれている。本マニュアルが規定する入力形式である。
+
+\begin{note}[ケースごとに結果ディレクトリが分かれる]
+  \file{cases/}以下の各ケースは\key{JobName}に自身のファイル名を設定しているので、実行結果は
+  ケース名と同じ名前のディレクトリに書き込まれる。たとえば\file{leveling\_1d\_reg.toml}からは
+  \file{leveling\_1d\_reg/}が作られる。そのため、同じ作業ディレクトリで二つのケースを実行しても
+  結果が上書きされることはない。
+\end{note}
+
+\section{\file{*\_1d*}系列（1-Dの回帰ケース）}
+\label{sec:cases:case01}
+
+計算領域は\SI{1}{\milli\metre}、$N_x = 300$、膜厚スケールは\SI{10}{\micro\metre}である。楕円形の
+基板凹凸の上に楕円形の盛り上がりを置き、濃度は鉛直一様モデルで扱う。\file{allphys\_1d\_reg.toml}では、
+分離圧、すべり、ノズルを除くすべての物理項を同時に有効にしている（\key{Physics.Source}には\key{Enable = false}と
+明記してある）。ソルバーを変更したら、まずこのケースを実行するのが望ましい。
+
+\begin{yzntable}{\file{*\_1d*}系列\label{tab:cases-case01}}{@{}L{0.26\textwidth} L{0.09\textwidth} L{0.57\textwidth}@{}}
+\textsf{\bfseries ケース} & \textsf{\bfseries 終了時刻 [s]} & \textsf{\bfseries 内容}\\ \midrule
+\file{leveling\_1d\_reg.toml} & 0.2  & 毛管レベリング、マランゴニ、蒸発。基準となる回帰ケースであり、\cref{sec:verification:linalg}でバックエンドとスレッド数の比較にも用いる。 \\
+\file{allphys\_1d\_reg.toml}   & 0.2  & 同じケースで、分離圧、すべり、ノズル以外の項をすべて有効にしたもの。鉛直重力、面内重力、遠心力の項も含む。 \\
+\file{allphys\_1d\_neg\_reg.toml}& 0.2 & 上と同じで、体積力の項の符号を反転したもの。符号の誤りが打ち消し合って見逃されるのを防ぐ。 \\
+\file{periodic\_1d\_reg.toml}  & 0.2  & 境界を対称ではなく$x$方向の周期境界としたもの。基準ケースの段差を計算領域の中央の台地状に置き換え、液膜と基板が継ぎ目で反対側の端とつながるようにしている。 \\
+\file{leveling\_1d\_logout.toml} & 1.0 & 周期的な液膜上で小さな正弦波がレベリングするケース。濃度は扱わない。場は$10^{-7}$から\SI{1}{\second}まで対数間隔にとった141の時刻に、時刻ちょうどに合わせて書き出す（\cref{sec:ref-output:listed}）。減衰率は\code{analytic}で解析解と照合する。 \\
+\file{concz\_1d\_reg.toml}     & 0.5  & \val{"CZ"}モデル、$N_x = 60$。濃度を膜厚方向にも解像する。 \\
+\file{tutorial\_1d.toml}       & 0.5  & \cref{ch:firstrun}のチュートリアルケース。 \\
+\file{smoke\_1d.toml}          & 0.02 & リポジトリ中で最も短時間で終わるケース。スモークテストに使える。 \\
+\file{nozzle\_1d\_fixed.toml}  & 0.05 & 静止したアームに付けたノズルから液を供給する。 \\
+\file{nozzle\_1d\_rotating.toml}& 0.05 & 同上で、アームを回転させたもの。 \\
+\file{nozzle\_1d\_offset.toml} & 0.05 & 同上で、ノズルを計算領域の中心からずらしたもの。 \\
+\end{yzntable}
+
+\section{\file{*\_2d*}系列（2-Dの回帰ケース）}
+\label{sec:cases:case2d}
+
+同じ物理を平面内で解くケースである。13点ステンシル、二方向の順序付け
+（\cref{sec:repro:directions}）、行分割に誤りがあれば、これらのケースで検出できる。
+
+初期条件は、$x$軸に対して約\ang{20}傾いて計算領域を横切る直線状の前線である。
+\key{Center = [0.3, 0.2]}と\key{Width = [1.0, 0.5]}とすると、計算領域は、領域の千倍の大きさをもつ
+楕円の側面にあたる位置に来る。そのため領域内に入るのは、どちらの格子方向にもそろっていない平らな斜面になる。
+凹凸を$y$について対称な\key{[0.5, 0]}に置くと、解の$y$方向の変化は起伏の1パーセントを
+はるかに下回る。これでは二次元のケースが一次元の答えを再現するだけになり、ステンシルの$y$方向の半分に誤りがあっても
+見逃されかねない。上の配置なら、両方向に同程度の変化が生じる。
+
+前線は約\SI{100}{\micro\metre}の幅でなだらかにしてある。$60^2$では六セル、$40^2$では
+四セル、$120^2$では十二セルに相当する。この幅は\key{SlopeWidth}で設定する。
+\key{EllipseBump}では、この値はメートルではなく正規化半径で測る（\cref{sec:ref-domain:shapes}）。
+長さのつもりで書くと前線が一、二セルの中に収まってしまい、精度が落ちるうえに時間刻みも小さくなる。
+
+\begin{yzntable}{\file{*\_2d*}系列\label{tab:cases-case2d}}{@{}L{0.24\textwidth} L{0.15\textwidth} L{0.53\textwidth}@{}}
+\textsf{\bfseries ケース} & \textsf{\bfseries 格子、終了時刻} & \textsf{\bfseries 内容}\\ \midrule
+\file{leveling\_2d\_reg.toml} & $60^2$, \SI{0.05}{\second}  & 2-Dの回帰ケース。 \\
+\file{leveling\_2d\bk\_tight\_reg.toml} & $60^2$, \SI{0.05}{\second}  & 同じ問題で許容値を厳しくしたもの。許容値を厳しくしても答えが変わらないことを確かめる。実際に変わらず、二つのケースの最終的な場はビット単位で一致する。 \\
+\file{leveling\_2d\bk\_fine\_reg.toml} & $120^2$, \SI{0.0015}{\second} & 同梱ケースの中で最大の2-Dケース。実行に最も時間がかかるので、上の二つよりずっと早い物理時刻で止めている。 \\
+\file{allphys\_2d\_reg.toml} & $40^2$, \SI{0.3}{\second}    & \file{allphys\_1d\_reg.toml}と同じ項を2次元で有効にしたもの。計算時間を抑えるため粗い格子を用いる。 \\
+\file{concz\_2d.toml}       & $60^2\times30$, \SI{0.002}{\second} & 二次元の液膜で\val{"CZ"}モデルを用いる、擬似3D（pseudo-3D）の組合せ。回帰ケースではなく実例であり、計算に約\SI{70}{\second}かかる。拡散係数は1-Dのケースより低くし、表面の蒸発層が液膜より薄くなるようにしている。ただし、蒸発層がセルより薄くなるほどには下げていない。この値を選んだ根拠となる測定結果はケースファイルに記載してある。同じ理由で、膜厚方向のセル数を通常の二倍にしている。 \\
+\end{yzntable}
+
+\section{\file{stress\_*}系列（強い連成）}
+\label{sec:cases:stress}
+
+四つとも\file{allphys\_1d\_reg.toml}をもとに、膜厚と濃度の連成を厳しくしたケースである。
+\cref{sec:verification:coupling}にある二つ目の連成の表は、これらを入力として得た。どのケースも停滞の警告を
+一度も出していない。
+
+\begin{yzntable}{\file{stress\_*}系列\label{tab:cases-stress}}{@{}L{0.26\textwidth} L{0.66\textwidth}@{}}
+\textsf{\bfseries ケース} & \textsf{\bfseries 厳しくした点}\\ \midrule
+\file{stress\_evap.toml}     & 蒸発係数を$\times 100$とする。 \\
+\file{stress\_coupling.toml} & 粘度の指数を10 $\to$ 30とし、表面張力の濃度係数を$\times 10$とする。 \\
+\file{stress\_dt.toml}       & 時間刻みを$\times 100$とし、適応時間刻みを無効にする。 \\
+\file{stress\_all.toml}      & 以上の三つを同時に適用する。 \\
+\end{yzntable}
+
+\file{stress\_wetting.toml}は性格が異なり、連成ではなくニュートン反復と時間刻み制御に負荷をかける。
+$\Delta x = \SI{1}{\micro\metre}$の格子上で、高さ\SI{10}{\micro\metre}の板状の液が$\Hstar = 0.2$の前駆膜に
+平衡から遠い状態で接している。そのため、\key{InitialDt}で始める最初のステップは停滞し、時間刻みが縮小される
+（\cref{sec:cases:warnings}）。このケースは、\code{features}の停滞チェックと\cref{sec:convergence:floor}の
+下限の測定で用いる。前駆膜が膜厚の五分の一もあるので、接触線のモデルにはならない。
+接触線を扱うのは次の\file{wet\_*}系列である。
+
+\section{\file{wet\_*}系列（接触線）}
+\label{sec:cases:wet}
+
+この系列は分離圧を有効にしているので、本物の接触線をもつ。$\Hstar = 0.01$
+（\SI{10}{\micro\metre}の液滴に対して前駆膜が\SI{0.1}{\micro\metre}）とし、接触線を解像できる
+$\Delta x = \SI{0.2}{\micro\metre}$の格子を用いる。前駆膜がこれほど薄いと、板状の液から計算を
+始めることはできない。板と前駆膜が接するところで速度が自然なスケール$U_0$より何桁も大きくなり、
+ステップが破綻するからである（\cref{sec:trouble:newton}）。そこで、この系列のケースはすべて、リスタートの仕組みで
+与えた\emph{解析的に構築した平衡液滴}から計算を始める。そのファイルを生成したコマンドは
+ケースファイルのコメントに記録してある。\file{wet\_static*}のケースは\ang{20}の液滴
+（\file{cases/wet\_static\_drop.dat}、幅\SI{117}{\micro\metre}）から始まり、指定した角度まで
+濡れ広がる。\file{wet\_coupled}は\ang{10}の液滴（\file{cases/wet\_coupled\_eq.dat}）から
+始まる。最終的な見かけの接触角は9.71、4.80、\ang{14.63}であり、
+\cref{sec:wetting:apparent}で述べる前駆膜バイアスの分だけ指定値より小さい。液滴の周囲の膜は前駆膜の厚さになる。
+
+\begin{yzntable}{\file{wet\_*}系列\label{tab:cases-wet}}{@{}L{0.24\textwidth} L{0.13\textwidth} L{0.55\textwidth}@{}}
+\textsf{\bfseries ケース} & \textsf{\bfseries $\thetae$, $N_x$} & \textsf{\bfseries 内容}\\ \midrule
+\file{wet\_static.toml}     & \ang{10}, 2000 & \ang{20}の液滴が平衡まで濡れ広がる。濃度との連成はない。 \\
+\file{wet\_static\_5.toml}  & \ang{5},  2000 & 同上で、接触角を小さくしたもの。 \\
+\file{wet\_static\_15.toml} & \ang{15}, 2000 & 同上で、接触角を大きくしたもの。 \\
+\file{wet\_coupled.toml}    & \ang{10}, 3000 & 濃度と完全に連成させた接触線（対流、拡散、マランゴニ、蒸発）。 \\
+\end{yzntable}
+
+\file{wet\_coupled.toml}は、実行しなくても例として参照されたい。平衡状態から始まるので
+初期速度は$U_0$のオーダーであり、警告を一つも出さずに最後まで計算が進む。液滴の幅が\SI{235}{\micro\metre}あるので、
+計算領域は\file{wet\_static*}のケースの$\pm\SI{0.2}{\milli\metre}$より広い$\pm\SI{0.3}{\milli\metre}$とした。
+膜厚の対流スキームには、既定の\val{"Koren"}ではなく
+\val{"UTOPIA"}を用いる。この格子では接触線でのクーラン数が3.24に達し、リミッター付きスキームの
+上限を超えるからである（\cref{sec:ref-numerics:convection}）。
+
+\begin{warn}[\file{wet\_*}のケースには\file{.dat}ファイルが必要である]
+  \file{cases/wet\_static\_drop.dat}と\file{cases/wet\_coupled\_eq.dat}は出力ではなく、ケースの一部である。
+  入力ファイルと一緒にコピーしないと、リスタートに失敗する。
+\end{warn}
+
+\section{\file{cases/eq/}（検証ケース）}
+\label{sec:cases:eq}
+
+\cref{sec:verification:disjoining,%
+sec:verification:spreading}の結果は、これらのケースから得た。
+初期状態はどのケースも平衡液滴であり、\file{tools/make\_equilibrium\_1d.py}で作る。ディレクトリ内の\file{.dat}ファイルは、このスクリプトの出力とバイト単位で一致する。
+
+\begin{yzntable}{検証ケース\label{tab:cases-eq}}{@{}L{0.22\textwidth} L{0.10\textwidth} L{0.60\textwidth}@{}}
+\textsf{\bfseries ケース} & \textsf{\bfseries $N_x$} & \textsf{\bfseries 測定対象}\\ \midrule
+\file{eq/eq\_n1000.toml} & 1000 & 解析的な平衡液滴上の残留速度、$\Delta x = \SI{0.6}{\micro\metre}$。 \\
+\file{eq/eq\_n2000.toml} & 2000 & 同上、$\Delta x = \SI{0.3}{\micro\metre}$。 \\
+\file{eq/eq\_n4000.toml} & 4000 & 同上、$\Delta x = \SI{0.15}{\micro\metre}$。三つの結果から、精度次数1.94が得られる。 \\
+\file{eq/eq\_run.toml}   & 2000 & 平衡形状からの時間発展。緩和の表に用いる。定常状態の判定を無効にしないと、すぐに止まる。 \\
+\file{eq/spread\_n500.toml} & 500 & \ang{20}の平衡液滴が\key{ContactAngle}~$=$~\val{10.0}の条件で濡れ広がる。Cox--Voinov則を測定する。 \\
+\end{yzntable}
+
+これらのケースでは$\Hstar = 0.02$とする。$\Hmax/\Hstar = 50$として、平衡液滴の見かけの接触角を
+指定した接触角の\SI{1}{\percent}以内に収めるためである。
+
+\section{実行結果の目安}
+\label{sec:cases:warnings}
+
+30のケースはすべて正常終了する。\Cref{tab:cases-runtimes}は、全ケースを単一スレッドで、
+\key{Backend}を既定値の\val{"auto"}のまま実行した結果である。実行には、Intel Xeon CPU Max 9480
+（各56コア、最大\SI{3.5}{\giga\hertz}）を二基搭載し、ほかに負荷のないノードの一コアを用いた。
+時間は絶対値ではなく相対値として解釈されたい。値はそれぞれ三回実行した中の最短値である。
+測定に用いたビルドはAMGCLを含まないので、\val{"auto"}は\val{"eigen"}になる。時間は各実行の
+CPU時間（ユーザー時間とシステム時間の和）である。単一スレッドなので、ほかに負荷のないマシンでは
+経過時間に等しい。この表は\file{tools/case\_runtimes.py}で測定した（\cref{sec:env:tools}）。
+
+\begin{yzntable}{全30ケースの単一スレッドでの実行結果\label{tab:cases-runtimes}}{@{}L{0.21\textwidth} d L{0.30\textwidth} d@{}}
+\textsf{\bfseries ケース} & \textsf{\bfseries 時間 [s]} & \textsf{\bfseries 終了理由} & \textsf{\bfseries 警告数}\\ \midrule
+\file{smoke\_1d}             &   0.27 & EndTime &    0 \\
+\file{leveling\_1d\_reg}     &   0.55 & EndTime &    0 \\
+\file{periodic\_1d\_reg}     &   0.57 & EndTime &    0 \\
+\file{leveling\_1d\_logout}  &   0.12 & EndTime &    0 \\
+\file{tutorial\_1d}          &   0.70 & EndTime &    0 \\
+\file{allphys\_1d\_reg}      &    1.0 & EndTime &    0 \\
+\file{allphys\_1d\_neg\_reg} &    1.0 & EndTime &    0 \\
+\file{concz\_1d\_reg}        &    1.0 & EndTime &    0 \\
+\file{nozzle\_1d\_offset}    &   0.91 & EndTime &    0 \\
+\file{nozzle\_1d\_fixed}     &   0.92 & EndTime &    0 \\
+\file{nozzle\_1d\_rotating}  &    3.4 & EndTime &    2 \\
+\file{allphys\_2d\_reg}      &   17.6 & EndTime &    0 \\
+\file{leveling\_2d\_reg}     &   19.9 & EndTime &    0 \\
+\file{leveling\_2d\bk\_tight\_reg} &   20.0 & EndTime &    0 \\
+\file{leveling\_2d\_fine\_reg} &   16.3 & EndTime &    0 \\
+\file{concz\_2d}             &   42.8 & EndTime &    0 \\
+\file{stress\_all}           &   0.10 & EndTime &    0 \\
+\file{stress\_dt}            &   0.08 & EndTime &    0 \\
+\file{stress\_coupling}      &    1.1 & EndTime &    0 \\
+\file{stress\_evap}          &    1.3 & EndTime &    0 \\
+\file{stress\_wetting}       &   12.2 & EndTime &    1 \\
+\file{wet\_coupled}          &     40.1 & EndTime &    0 \\
+\file{wet\_static\_5}        &     30.7 & Steady state &    0 \\
+\file{wet\_static\_15}       &     12.6 & Steady state &    0 \\
+\file{wet\_static}           &     15.2 & Steady state &    0 \\
+\file{eq/eq\_run}            &   0.12 & Steady state &    0 \\
+\file{eq/spread\_n500}       &    7.2 & EndTime &    0 \\
+\file{eq/eq\_n1000}          &    4.8 & Steady state &    0 \\
+\file{eq/eq\_n2000}          &    8.0 & Steady state &    0 \\
+\file{eq/eq\_n4000}          &   17.5 & Steady state &    0 \\
+\end{yzntable}
+
+\file{stress\_all}と\file{stress\_dt}は約十分の一秒で終わるが、黙って失敗しているわけではない。
+百倍大きな時間刻みを用い、適応時間刻みを無効にしているので、約二十ステップで
+\key{EndTime}に達するのである。
+
+二つのケースが警告を出すが、問題の兆候ではなく想定どおりの警告である。
+\file{stress\_wetting}は、前駆膜に接する板状の液という、平衡から遠い状態から計算を始める。
+この初期状態に対して\key{InitialDt}は長すぎる。最初のステップでは、ニュートン修正量が
+\cref{sec:convergence:floor}の下限よりはるかに大きい、初回の値の0.068倍から25倍の範囲で停滞する。
+ステップは失敗し、時間刻みが縮小される（\cref{sec:convergence:stagnation}）。打ち切り誤差の判定による縮小に混じって
+この縮小が十三回起こり、はるかに短い時間刻みで収束する。停滞を無視して進めたとしても、それらのステップは
+結局打ち切り誤差の判定で棄却される。したがって縮小の過程は同じになり、結果もビット単位で一致する。
+\file{Warnings.txt}には最初の縮小だけが一行で報告され、\file{JobInfo.txt}にはすべての回数が
+\code{Steps failed: the Newton
+correction stagnated}の項目に数えられる。\file{nozzle\_1d\_rotating}は、液膜が壁に向かって盛り上がる
+箇所で、風上化した膜厚流束のクーラン数が1を超えたことを報告する（\cref{sec:ref-numerics:convection}）。
+報告は、最初に超えたステップと最後の総数の二行である。変更による悪影響がないことを確かめるときは、
+警告がゼロであることを求めるのではなく、警告の数を以前の実行と比べる。
+
+\section{全ケースの実行}
+\label{sec:cases:runall}
+
+全ケースをまとめて実行するスクリプトは用意していない。ケースはテストスイートではないからである。
+テストスイートは\code{ctest}が担う。ただし、全ケースを回すループは短く書ける。
+
+\begin{shell}
+for f in cases/*.toml cases/eq/*.toml; do
+  ./tools/run_case.sh "$f" "runs/$(basename "$f" .toml)" 1
+done
+\end{shell}
+
+\file{tools/run\_case.sh}は、出力ディレクトリを空にし、スレッド数を固定し、ログを保存する
+（\cref{sec:env:tools}）。また、\file{wet\_*}と\file{eq/}のケースがリスタートに用いる
+\file{.dat}ファイルもコピーする。\key{Restart.FileName}はソルバーを実行する作業ディレクトリを
+基準に解釈されるので、このコピーが欠かせない。

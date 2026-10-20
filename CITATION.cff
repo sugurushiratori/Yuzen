@@ -1,0 +1,38 @@
+cff-version: 1.2.0
+title: "Yuzen: a thin liquid film flow solver based on the lubrication approximation"
+message: "If you use this software in work you publish, please cite it as below."
+type: software
+authors:
+  - family-names: Shiratori
+    given-names: Suguru
+    email: sshrator@tcu.ac.jp
+    affiliation: "Tokyo City University"
+    orcid: "https://orcid.org/0000-0003-0158-6798"
+repository-code: "https://github.com/sugurushiratori/Yuzen"
+abstract: >-
+  Yuzen solves the long-wave (lubrication) equation for the height of a thin
+  liquid film on a substrate, coupled to a transport equation for the solute
+  concentration. It covers capillary leveling, disjoining pressure and the
+  contact line, solutal (Marangoni) stresses, evaporation and the resulting
+  viscosity rise, gravity, centrifugal force and substrate topography, in one
+  and two horizontal dimensions. The height equation is advanced with a
+  Newton-Kantorovich iteration and Crank-Nicolson in time; the two equations
+  are coupled by block Gauss-Seidel so that the converged state is the fully
+  implicit coupled solution. Results are bit-identical regardless of the
+  OpenMP thread count, and the test suite asserts it.
+keywords:
+  - thin liquid film
+  - lubrication approximation
+  - long-wave equation
+  - coating flow
+  - spin coating
+  - wetting
+  - dewetting
+  - contact line
+  - disjoining pressure
+  - Marangoni
+  - evaporation
+  - computational fluid dynamics
+license: Apache-2.0
+version: 1.0.0
+date-released: 2026-10-20

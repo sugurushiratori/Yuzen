@@ -1,0 +1,297 @@
+% ch-output.tex -- what a run writes and how to read it
+\chapter{出力ファイル}
+\label{ch:output}
+
+実行ごとに\key{JobName}と同じ名前のディレクトリが一つ作られ、出力はすべてそこに書き込まれる。本章では、各ファイルの内容と単位、問題が起きたときにどのファイルを確認すべきかを述べる。出力を制御するキーは\cref{sec:ref-bcout:output}に示す。
+
+\section{結果ディレクトリ}
+\label{sec:output:dir}
+
+\begin{yzntable}{結果ディレクトリの内容\label{tab:resultdir}}{@{}L{0.30\textwidth} L{0.62\textwidth}@{}}
+\textsf{\bfseries ファイル} & \textsf{\bfseries 内容}\\ \midrule
+\file{<input file name>}          & 実行に用いた入力ファイルをそのまま複製したもの \\
+\file{JobInfo.txt}                & バージョン、ビルド、マシン、開始・終了時刻、各方程式の線形ソルバーのバックエンド \\
+\file{Warnings.txt}               & 実行中に出た警告。警告がなければ長さ0 \\
+\file{FatalErrors.txt}            & 実行を中断した理由。中断がなければ長さ0（\cref{sec:output:warnings}を参照） \\
+\file{field00000.vts}, \dots\     & VTK構造格子。場の出力1回につき1ファイル \\
+\file{field00000.dat}, \dots\     & 同じ場をタブ区切りテキストで書いたもの。ASCII形式のリスタート入力も兼ねる \\
+\file{<JobName>.pvd}              & \file{.vts}ファイルを時系列にまとめたParaView用ファイル \\
+\file{History.dat}                & 積分量と極値の時間変化 \\
+\file{CalcInfo.dat}               & ソルバーの診断情報の時間変化 \\
+\file{Probe00.dat}, \dots\        & \key{Output.ProbeList}で指定した点の時系列 \\
+\end{yzntable}
+
+入力ファイルは意図して複製している。結果ディレクトリだけで実行の内容をすべて把握できるので、その後ケースを十二回書き換えても結果を読み解ける。
+
+このディレクトリにありそうで、実際にはないものが一つある。スケール、無次元数、進行ログ、終了メッセージは、ディレクトリ内のファイルではなく\textbf{標準出力}に出る（\cref{sec:output:running}）。残したい場合はリダイレクトする。
+
+\key{JobName}は作業ディレクトリからの相対パスであり、途中のディレクトリは必要に応じて作成される。たとえば\val{"runs/sweep/case1"}とすると出力先は\file{runs/sweep/case1/}となり、中の\file{.pvd}は最後の要素をとって\file{case1.pvd}となる。入力ファイル名や\key{Restart.FileName}と同様、空白や非ASCII文字（日本語など）を含んでもよい。
+
+実行は計算を始める前に、ディレクトリが使えるかどうかを確認する。使えなければ、パスと\key{JobName}を示すメッセージを出して終了コード1で停止する。使えないのは、ディレクトリが既に存在し\key{Output.Overwrite}が\val{false}の場合、同じ名前でディレクトリ以外のものがある場合、作成できない場合（親がファイルである、権限がない）、中にファイルを一つも書き込めない場合（読み取り専用のディレクトリ、権限がない）である。このときは何も書き込まず、メッセージは標準エラーにだけ出す。\file{FatalErrors.txt}を置くはずの場所が、失敗したそのディレクトリだからである。
+
+\begin{note}[二つの実行が同じディレクトリに書き込むことがある]
+  ディレクトリ名は入力ファイルではなく\key{JobName}から決まる。そのため、\key{JobName}が同じ二つの入力ファイルは同じ場所に書き込む。\key{Output.Overwrite}が\val{true}であれば、二つ目の実行は自分が書き込むファイル、つまり\file{History.dat}、\file{CalcInfo.dat}、プローブ、\file{.pvd}、\file{JobInfo.txt}と、自分が到達した番号までの場ファイルについて、一つ目のものを置き換える。到達しなかった番号の場ファイル（一つ目の実行の方が長かった場合の\file{field00012.*}など）は元のまま残るが、新しい\file{.pvd}には載らない。別々の作業ディレクトリで実行するパラメータスイープでは便利だが、同じディレクトリで実行すると落とし穴になる。最初からやり直すにはディレクトリを削除する。
+\end{note}
+
+\section{\file{JobInfo.txt}}
+\label{sec:output:jobinfo}
+
+ファイルは六つのセクションからなる。プログラム情報はバージョン、ビルド時刻、コンパイラ、入力読み込み層・格子層・ユーティリティ層のバージョンである。次にソルバー情報が続く。マシン情報は、OS、ホスト、CPU、プロセッサ数、実行が使用したOpenMPスレッド数\code{OMP\_MAX\_THREADS}、ランタイムが提示したスレッド数\code{OMP\_THREADS\_REQUESTED}、スレッド数の上限を決めるスレッドあたりセル数\code{OMP\_THREAD\_CAP}（\cref{sec:parallel:cap}）、有効なアルゴリズム\code{YUZEN\_OPT}（\cref{tab:envvars}）、OpenMPランタイムの種類\code{OMP\_RUNTIME}、線形求解の粒度\code{YUZEN\_GRAIN}（\cref{sec:parallel:runtime}）、メモリ、プロセスIDである。開始情報は日付、時刻、作業ディレクトリ、結果ディレクトリである。性能のセクションには次の値が並ぶ。時間刻みループだけの経過時間\code{Time loop [s]}、進めたステップ数、ニュートン反復と線形反復の回数（ニュートンループを持たない\val{"CZ"}ではニュートン反復は0回となる。\cref{sec:output:calcinfo}を参照）。鉛直一様モデルでは、ニュートン修正量が収束から遠いところで停滞して失敗したステップ数（\cref{sec:convergence:stagnation}）。\val{"CZ"}では、やり直した連成パスの回数と、連成が落ち着かずに失敗したステップ数（\cref{sec:verification:czpasses}）。リミッター付き対流スキームごとの最大クーラン数。濃度を解く鉛直一様モデルでは、$c = 1$を超えた分として周囲へ移した溶質と、そこで切り捨てた溶質。どちらのモデルでも、$c = 0$を下回るセルへ移した溶質と、そこで補った溶質（\cref{sec:ref-numerics:convection}）。最後に、解いたステップの時間刻みの和を、ループの開始・終了時刻と並べた値である。終了情報は経過時間、日付、時刻、終了の種類である。終了の種類は、\cref{tab:termination}の停止条件のいずれかで終わった場合は\code{normal}、シグナルで停止した場合は\code{interrupted (SIGINT)}または\code{interrupted (SIGTERM)}（\cref{sec:output:failures}）、致命的エラーで停止した場合は\code{abort}である。即座に強制終了された実行（\code{SIGKILL}、停電）には終了情報がまったくなく、ファイルは開始情報の後で途切れる。
+
+\code{\#\#\#\#\#\# Solver Info \#\#\#\#\#\#}は入力によって内容が変わるセクションで、モデル名と、各方程式が実際に使った線形ソルバーのバックエンドと対流スキームを示す。
+
+\begin{plain}
+###### Solver Info ######
+Model :                      Well-Mixed-1D
+Linear solver <height> :     eigen
+Linear solver <conc> :       eigen
+Convection scheme <height> : Koren
+Convection scheme <conc> :   UTOPIA
+\end{plain}
+
+\code{<conc>}の行は、モデルが濃度場を解く場合にだけ現れる。膜厚の流束を中心差分で扱う\val{"CZ"}モデルでは、\code{Convection scheme <height>}の行は出ない。\textbf{ここに出るのは解決後の名前であり、入力に書いた文字列ではない}。\key{Backend}が既定値\val{"auto"}のときは実際に選ばれた実装を示し、\val{"amgcl"}から暗黙にフォールバックした後（\cref{sec:ref-numerics:linearsolver}）は実際に動いた\val{"eigen"}を示す。バックエンドの行（鉛直一様モデルではスキームの行も）は、見出し\code{\#\#\#\#\#\# Solver \#\#\#\#\#}の下で標準出力にも出る。バックエンドの比較は\cref{ch:linearsolver}に示す。
+
+ファイルの残りの部分には、プログラム、マシン、経過時間の情報が並ぶ。ソルバーが入力から計算したその他の情報（スケール、無次元数、格子）は標準出力に出る（\cref{sec:output:running}）。
+
+\section{標準出力の実行ログ}
+\label{sec:output:running}
+
+実行中にソルバーが出すメッセージは、すべて\textbf{標準出力}に送られる。これは端末に出るログであってファイルではなく、結果ディレクトリには残らない。保存するにはリダイレクトする。
+
+\begin{shell}
+yuzen case.toml > run.log
+\end{shell}
+
+\file{tools/run\_case.sh}はこれを済ませてあり、標準出力と標準エラーをまとめて実行ディレクトリの\file{stdout.txt}に保存する（\cref{sec:env:tools}）。特に意識しなくても後から読めるログが残るので、これが最も簡単な方法である。
+
+標準出力では、ソルバーが入力から何を組み立てたか、実行がどう進んだかを報告する。最初に各方程式の線形ソルバーのバックエンドと対流スキーム、および格子が出る。続いて、無次元化に用いたスケール（見出し\code{Scaling factors}の下の$L_0$、$H_0$、$T_0$、$U_0$）、\code{Nondimensional numbers}の下の無次元数$\As$、$\Ma$、$\Bo$、$\Pgx$、$\Pgy$、$\Spn$、$\Dpn$、$\Pen$、$\Df$、$\Ev$、$\Mr$、無次元の時間と出力間隔、モデル名の順に出る。
+
+結果が数パーセントではなく桁違いにずれているときは、まずここでスケールを確認する。ほかを調べる前に、$L_0$、$T_0$、$U_0$を予想値と比べる。\key{Fluid.\bk SurfaceTension.\bk BaseValue}や\key{Initial.\bk SurfaceShape.\bk TotalHeight}の設定ミスは、ここにはすぐ現れるが、ほかの場所にはなかなか現れないからである。スケールの定義は\cref{sec:governing:scales}に、無次元数の定義は\cref{sec:governing:groups}に示す。
+
+その下には、実行の進み具合に合わせて進行ログが出る。
+
+\begin{plain}
+.....................Field file 4, Time = 1.285130e-05
+.............................dt+ (1.013153e-07)
+..........
+############## Time reached to the EndTime. #############
+Field file 5, Time = 1.606806e-05
+Largest Courant number of Numerics.Convection.Height = "Koren": 0.000469
+
+############## Program normally terminated. #############
+\end{plain}
+
+ドット一つが1時間ステップを表す。\code{dt+}と\code{dt-}は適応時間刻みを増やした・減らしたことを示し、括弧内が新しい値である。\code{Field file
+$n$}は場を書き出したことを示し、そのときの無次元時間を添える。
+
+重要なのは、ループが終わった理由を示す行である。その後に、最終ステップの場、リミッター付き対流スキームごとの最大クーラン数（\cref{sec:ref-numerics:convection}）、最後の行が続く。正常終了には次の三種類がある。
+
+\begin{yzntable}{終了メッセージ\label{tab:termination}}{@{}L{0.33\textwidth} L{0.59\textwidth}@{}}
+\textsf{\bfseries メッセージ} & \textsf{\bfseries 意味}\\ \midrule
+\code{Time reached to the EndTime.} & \key{Numerics.EndTime}に達した。 \\
+\code{Dry out.}                     & \key{Physics.\bk Evaporation.\bk EndConcType}で選んだ濃度判定が\key{EndConcValue}を越えた。 \\
+\code{Steady state.}                & 変化率が\key{SteadyStateSteps}ステップ続けて\key{Numerics.\bk SteadyStateCriterion}を下回った。 \\
+\end{yzntable}
+
+Ctrl-Cまたは\code{SIGTERM}で停止した実行は、これらの代わりに\code{Program stopped by SIGINT; its output is complete.}（または\code{SIGTERM}）で終わる。発散した実行は\code{Program terminated after
+divergence.}で終わる。終了コードは\cref{sec:output:failures}に示す。
+
+\code{dt-}と\code{dt+}が長く交互に続くときは原因を調べる必要がある。多くの場合、時間刻みが、ニュートン法の収束判定をかろうじて満たす大きさに張り付いている。これは時間刻みではなく収束の問題である（\cref{sec:convergence:absolute}）。細かい格子でわずか数ステップのうちに\code{Steady state.}を報告する実行も疑わしい。その理由と、判定にステップごとの変化ではなく変化率を用いる理由は\cref{sec:convergence:termination}で説明する。
+
+\section{\file{Warnings.txt}と\file{FatalErrors.txt}}
+\label{sec:output:warnings}
+
+両ファイルは結果ディレクトリを作成した直後に開かれ、\textbf{どちらにも見出しは書かれない}。\file{Warnings.txt}が長さ0なら警告は一つも出ておらず、\file{FatalErrors.txt}が長さ0なら実行は中断されていない。終了した実行について二つのファイルが空かどうかを見るのは正当な確認であり、最も手軽な確認でもある。
+
+よく出会う警告は、ニュートン停滞の通知（\cref{sec:convergence:stagnation}）、線形ソルバーが反復上限に達した通知、\val{"amgcl"}を含まないビルドで\val{"amgcl"}を要求したという通知である。リミッター付き対流スキームをクーラン数1を超えて動かすと、警告が2行加わる。\code{Courant number}でgrepする（\cref{sec:ref-numerics:convection}）。鉛直一様モデルの液膜が液体より多くの溶質を抱え、$c = 1$で一部を切り捨てた場合も同様で、\code{cut at c = 1}でgrepする。溶質がゼロ未満になり、$c = 0$で一部を補った場合も同様で、\code{made up at c = 0}でgrepする。いずれも実行は止まらない。停滞の通知は、停滞によって刻みを縮めた最初のステップについて一度だけ書かれる。回数はすべて\file{JobInfo.txt}に数えられる。
+
+\begin{note}[三つのメッセージの全文とgrep用の文字列]
+  終了した実行は、\file{Warnings.txt}や\file{FatalErrors.txt}を次のいずれかでgrepして診断することが多い。そこで三つのメッセージの全文を載せる。検索には短く特徴的な部分文字列が向いているので、それぞれに一つ示す。
+
+  \begin{itemize}
+    \item \textbf{ニュートン停滞}
+      （\file{numerics/\bk NewtonKantorovich.cpp}）。修正量が停滞した反復回、そのときの修正量と最初の修正量を示し、ステップを縮めることを述べる。例：
+      \code{Newton-Kantorovich: the Newton correction stagnated far from
+      convergence (iteration 7, correction 6.586796e-01 against 4.827437e-01
+      in the first); the step is cut and solved again (JobInfo.txt counts the
+      steps cut for this; later ones are not reported here).}　固定刻みでは、同じ原因で致命的エラーとなり実行が止まる。\code{correction stagnated}でgrepする。
+    \item \textbf{\val{"amgcl"}のフォールバック}
+      （\file{numerics/\bk LinearSolverBackend.cpp}）：
+      \code{LinearSolver: Backend="amgcl" was requested, but this build has no
+      AMGCL. Falling back to "eigen".}　\code{has no AMGCL}でgrepする。
+    \item \textbf{前駆膜比による中断}
+      （\file{model/\bk NonDimensionalNumbers.cpp}）。致命的エラーであり、\file{FatalErrors.txt}に書かれる：\code{Physics.DisjoiningPressure requires
+      Initial.SurfaceShape.PrecursorRatio > 0.}　原文どおりに出る\code{PrecursorRatio}でgrepする。
+  \end{itemize}
+\end{note}
+
+致命的エラーが起きると実行は止まる。メッセージはティー（\file{yuzen/src/util/YuzenUtil.h}の\code{TeeStream}）を通して\file{FatalErrors.txt}\emph{と}標準エラーの両方に書かれるので、端末と結果ディレクトリに同時に届く。ファイルには理由が書かれ、その後に中断の目印が続く。
+
+\begin{plain}
+TimeStepAdjustment(). Under flow: the requested step fell below Numerics.TimeStepControl.MinDt.
+
+####### Aborting ############
+\end{plain}
+
+致命的エラーで実行が終わるのは次の場合である。\key{Initial.\bk SurfaceShape.\bk PrecursorRatio}を\val{0}のまま分離圧を有効にした場合（\file{model/\bk NonDimensionalNumbers.cpp}）。適応時間刻みが\key{Numerics.\bk TimeStepControl.\bk MinDt}を下回った場合（\file{numerics/\bk ImplicitSolver.cpp}）。時間刻み制御が無効で、より短い刻みで再試行できないときに、ステップが収束しなかった場合。対象は鉛直一様モデルのニュートン反復か、膜厚または濃度の線形求解であり、どちらかはメッセージに示される（\file{numerics/\bk NewtonKantorovich.cpp}、\file{model/\bk ConcZ/\bk CZ2D/\bk CZ\_HeightEquation\_2D.cpp}）。2次元の角で\val{"Pinning"}の辺が\val{"FreshInlet"}または\val{"Outlet"}の辺と接する場合。これは未実装である（\file{model/\bk BoundaryCondition.cpp}）。ラプラス圧カーネルの分母が0になる場合（\file{model/\bk well\_mixed/\bk LaplacePressureKernel.h}）。\key{Physics.\bk ConcField.\bk Model}と\key{Grid.Dimension}の組み合わせがサポートされず、存在しないモデルを指定したことになる場合（\file{Yuzen.cpp}）。出力ファイルを書き込めない場合（\cref{sec:output:failures}）。メモリが不足した場合。このときは格子が原因である可能性が高いことも示される（\file{mainProg.cpp}）。
+
+\begin{warn}[入力ファイルのエラーでは結果ディレクトリは残らない]
+  \code{ReadInputFile()}は\code{CreateDirAndFiles()}より先に動く。そのため、整合性検査に通らない入力や、パーサーが受け付けない\key{SolverName}では、メッセージを\textbf{標準エラーにだけ}出して中断する。ソルバーが受け付けないコマンドライン、入力ファイルが存在しない・ディレクトリである・空である・読めない場合、結果ディレクトリが使えない場合（\cref{sec:output:dir}）、\key{Restart.FileName}が存在しない場合も同じである。結果ディレクトリは作られないので、確かめるべき\file{FatalErrors.txt}もない。入力が拒否された後に探しても何も見つからないのはこのためである。端末か、\file{tools/run\_case.sh}の\file{stdout.txt}を確認されたい（\cref{sec:env:tools}）。
+\end{warn}
+
+\section{ディスクフル、実行の中断、終了コード}
+\label{sec:output:failures}
+
+\paragraph{どのファイルも、完全な形で残るか、まったく残らないかのどちらかである。}場ファイル（\file{.vts}、\file{field*.dat}）、対応する\file{field*.state}、\file{.pvd}は、名前に\file{.tmp}を付けて書き込み、最後のバイトをディスクに書いた時点で改名する。書き込みの途中で実行が止まっても、原因が何であれ（ディスクフル、クォータ、ファイルサイズ制限、強制終了）、残るのはせいぜいファイルの横の\file{*.tmp}であり、これを読むものはない。本来の名前のファイルが途中で切れることはない。\file{.pvd}は場ファイルを書くたびに閉じタグまで含めて丸ごと書き直すので、ParaViewは実行中でも、実行を強制終了した後でも開ける。\file{History.dat}、\file{CalcInfo.dat}、プローブは1行ずつ追記する。行の途中で強制終了すると、その行は改行なしで残る。同じディレクトリでリスタートすると、その行は捨てられる。
+
+\paragraph{ファイルを書き込めないと実行は止まる。}書き込みに失敗すると（デバイスの空き容量不足、ファイルサイズの制限超過（\code{ulimit -f}）、実行中にディレクトリが読み取り専用になった場合など）、実行は対象ファイルと理由を標準エラーと\file{FatalErrors.txt}に出し、終了コード1で停止する。
+
+\begin{plain}
+Could not write run/field00007.vts: No space left on device.
+The run is stopped: its output could not be written into run (full disk, ...
+\end{plain}
+
+出力しないまま実行を続けることはない。失敗した場ファイルの\file{.state}も書かない。ディレクトリに既にある場ファイルは完全であり、空き容量ができ次第、横に\file{.state}がある最後の場ファイルからリスタートできる（\cref{sec:ref-numerics:restart}）。
+
+\paragraph{Ctrl-Cと\code{SIGTERM}では実行はきれいに終わる。}最初の\code{SIGINT}（Ctrl-C）または\code{SIGTERM}（ジョブの時間切れ時にバッチスケジューラーが送る）を受けると、実行は進行中のステップを完了させ、到達した状態を通常の終了時と同じように出力する（場ファイルとその\file{.state}、\file{History.dat}、\file{CalcInfo.dat}、プローブの行）。さらに\file{JobInfo.txt}に\code{interrupted (SIGINT)}を記録し、$128$にシグナル番号を加えた終了コードで終わる。\code{SIGINT}では130、\code{SIGTERM}では143となり、シグナルで強制終了したプロセスについてシェルが報告する値と同じである。この場ファイルと\file{.state}から継続した実行は、中断しなかった実行とビット単位で一致する（\code{error\_paths}）。二度目のCtrl-Cではプロセスは即座に終了する。\code{SIGKILL}も同様だが、この場合もファイルは完全である。横に\file{.state}がある最後の場ファイルからリスタートする（二つのファイルを書く間に強制終了した場合、最新の場ファイルには\file{.state}がない）。
+
+\begin{yzntable}{終了コード\label{tab:exitcodes}}{@{}L{0.12\textwidth} L{0.80\textwidth}@{}}
+\textsf{\bfseries コード} & \textsf{\bfseries 意味}\\ \midrule
+0   & \cref{tab:termination}の停止条件のいずれかで終わった。または\code{--check-input}、\code{--help}、\code{--version}が成功した。 \\
+1   & 何らかの不具合（コマンドライン、入力ファイル、結果ディレクトリ、リスタートファイル、書き込み、実行中の致命的エラー、発散、メモリ不足）。 \\
+130, 143 & \code{SIGINT}または\code{SIGTERM}で停止した。到達した状態の出力は完全である。 \\
+\end{yzntable}
+
+\section{\file{field*.dat}}
+\label{sec:output:field}
+
+タブ区切りのテキストで、先頭の1行が各列の名前と単位を示すヘッダーである（\code{xx[mm]}、\code{HS[um]}、\code{Ux[m/s]}、\code{CC[-]}など。\key{Output.Dimensioned}が\val{false}のときはすべて\code{[-]}）。\val{"CZ"}ではヘッダーの先頭に\code{\#}が付く。列はモデルによって異なる。
+
+\begin{yzntable}{\file{field*.dat}の列\label{tab:field-columns}}{@{}L{0.16\textwidth} L{0.76\textwidth}@{}}
+\textsf{\bfseries モデル} & \textsf{\bfseries ヘッダー}\\ \midrule
+1次元鉛直一様 & \code{xx}\quad\code{HS}\quad\code{Ux}\quad\code{CC}\quad\code{HH}\quad\code{SS}\quad(\code{PHI}) \\
+2次元鉛直一様 & \code{xx}\quad\code{yy}\quad\code{HS}\quad\code{Ux}\quad\code{Uy}\quad\code{CC}\quad\code{HH}\quad\code{SS}\quad(\code{PHI}) \\
+\val{"CZ"}、1次元 & \code{xx}\quad\code{zz}\quad\code{CC}\quad\code{Ux}\quad\code{Uz}\quad\code{HS}\quad\code{HH}\quad\code{SS} \\
+\val{"CZ"}、2次元 & \code{xx}\quad\code{yy}\quad\code{zz}\quad\code{CC}\quad\code{Ux}\quad\code{Uy}\quad\code{Uz}\quad\code{HS}\quad\code{HH}\quad\code{SS} \\
+\end{yzntable}
+
+どの場ファイルにも各列の名前と単位を示すヘッダーがあり、単位は\key{Output.Dimensioned}に従う。
+
+行はセルではなく点に対応する。面内の各軸に沿って、壁上に一点ずつ、各セル中心に一点ずつあるので、2次元のファイルは層あたり$(N_x+2)(N_y+2)$点となる。壁上の値は、隣接セルとその外側のゴーストセルの平均である。壁上の速度成分は、そのセル界面での値である。\val{"CZ"}のファイルでは厚さ方向も同様に、基板上に一層、$N_z$個のセル中心ごとに一層、自由表面上に一層をとる。行数は2次元で$(N_x+2)(N_y+2)(N_z+2)$、1次元で$(N_x+2)(N_z+2)$となり、最上層は自由表面での濃度を表す。データは$x$が最も速く変わり、次に$y$、$z$の順に並ぶ。
+
+\code{HS}は自由表面の高さ$h+s$、\code{HH}は膜厚$h$であり、平坦な基板上では両者は一致する。\code{Ux}は\emph{合成}速度、つまり有効なすべての項の寄与の和であり、濃度を移流させるのもこの速度である。この合成則を確かめる試験は\cref{sec:verification:velocity}に示す。
+
+\key{Output.Dimensioned}を\val{true}にしても、単位は\textbf{すべて同じではない}。面内座標\code{xx}と\code{yy}は\si{\milli\metre}、\code{HS}、\code{HH}、\code{SS}は\si{\micro\metre}、\code{Ux}、\code{Uy}、\code{Uz}は\si{\metre\per\second}である。連続の式から求めた\val{"CZ"}ファイルの鉛直速度$w$、すなわち\code{Uz}も同様である。鉛直速度は$L_0/T_0$ではなく$H_0/T_0$で無次元化されており、出力時もこのスケールで有次元に戻す。\code{CC}は質量分率で、単位を持たない。面内と面外でスケールが混在していることは、2列目を1列目に対してプロットするときに見落としやすい。そうしたプロットでは縦横比が$10^{3}$倍に誇張される。
+
+\val{"CZ"}ファイルの\code{zz}列は、点の\textbf{高さ}
+\begin{equation*}
+  z = s + h\,\zeta ,
+\end{equation*}
+である。モデルが内部で用いる写像座標$\zeta \in [0,1]$ではない（\cref{sec:conc:cz}）。そのため各$(x,y)$で\code{SS}から\code{HS}までの値をとり、値の組は液膜の柱ごとに異なる。対応する\file{field*.vts}の点座標と同じものである。\code{CC}を\code{zz}に対してプロットすると、縦軸は隣の列の\code{HS}や\code{SS}と同じく、基準面から測った\si{\micro\metre}となる。
+
+\subsection{駆動ポテンシャル}
+\label{sec:output:potential}
+
+\key{Output.\bk FieldData.\bk WritePotential}を\val{true}にすると（鉛直一様モデルのみ）、場ファイルの最後に列\code{PHI}が一つ加わり、\file{.vts}には配列\code{Potential}が加わる。これは駆動ポテンシャル
+\begin{equation*}
+  \varphi = \hat\sigma(c)\,\nabla^2(H+S) + \Dpn\,\Pihat(H) - \Bo\,(H+S),
+  \qquad \Pihat(H) = \Bigl(\frac{H_*}{H}\Bigr)^{n} - \Bigl(\frac{H_*}{H}\Bigr)^{m},
+\end{equation*}
+である。この勾配が移動度を介して流束を駆動する。すなわち、$\Qvec =
+\tfrac{H^3}{3\hat\mu}\nabla\varphi$に体積力とマランゴニ応力を加えたものが流束となる（\cref{ch:governing}）。$\varphi$が一様なら流束は生じず、これが平衡の条件である。$\nabla^2$は二階差分であり、毛管項は各セル界面でこれをもう一度差分する。そのため、スキームの流束はセル界面を挟んだ\code{PHI}の差に移動度を掛けたものとなる。面内重力、遠心力、マランゴニ応力はこのポテンシャルの勾配で表せないので含まない。各項は、対応する\key{Physics}ブロックが無効なら0である。
+
+\key{Output.Dimensioned}が\val{true}のとき、\code{PHI}は圧力スケール$\sigma_0 h_0/L_0^2$で有次元化され、単位はパスカルとなる。
+\begin{equation*}
+  \code{PHI} = \frac{\sigma_0 h_0}{L_0^2}\,\varphi
+  = \sigma\,\nabla^2(h+s) + \Pi(h) - \rho g\,(h+s),
+\end{equation*}
+液膜内の圧力は（定数を除いて）$p = -\code{PHI}$である。\val{false}のときは$\varphi$そのものである。壁の行には隣接セルの値が入る。リスタート時にはこの列を読み飛ばす。\code{Potential}配列は点座標より後に書かれるので、\file{.vts}からのリスタートではそこまで読まない。\code{analytic}がこの出力を検査する（\code{potential\_1d}）。
+
+値は、\key{Output.Dimensioned}の設定によらず有効数字18桁で書く。このファイルはASCII形式のリスタート入力も兼ねるからである。六桁では足りない。膜厚の二階差分では$\Delta x^2$で割るので、$\Delta x = \SI{0.3}{\micro\metre}$の接触線用格子では、出力の桁数だけで圧力が数パーセントずれ、そこから求めた速度は三桁ずれた。
+
+\section{\file{History.dat}}
+\label{sec:output:history}
+
+\key{Output.\bk GeneralHistory.\bk TimeInterval}ごとに1行を書く。最初の列が時刻で、その後に次の列が続く。
+
+\begin{yzntable}{\file{History.dat}の列\label{tab:history-columns}}{@{}L{0.22\textwidth} L{0.70\textwidth}@{}}
+\textsf{\bfseries 列} & \textsf{\bfseries 意味}\\ \midrule
+\code{Volume}         & 液体の総体積 \\
+\code{ResinVol}       & 溶質の総体積 \\
+\code{AveC}           & 平均濃度 \\
+\code{EvaporatedVol}  & 蒸発で失った累積体積 \\
+\code{OutflowedVol}   & 開いた辺（\val{"FreshInlet"}と\val{"Outlet"}）から流出した累積体積（流入は負。1次元で遠心項がある場合は、側方へ放り出される分も含む） \\
+\code{OutflowedResin} & 同時に流出した累積溶質（移流分と拡散分） \\
+\code{VolErr}         & 体積保存誤差 \\
+\code{ResinVolErr}    & 溶質保存誤差 \\
+\code{maxHS}, \code{minHS} & 自由表面の極値 \\
+\code{maxH}, \code{minH}   & 膜厚の極値 \\
+\code{maxC}, \code{minC}   & 濃度の極値 \\
+\code{SuppliedVol}    & ノズルが供給した累積体積 \\
+\code{SuppliedResin}  & 同時に流入した累積溶質。濃度は\key{Physics.Source.ConcType}による（最終列） \\
+\end{yzntable}
+
+\key{Output.Dimensioned}を\val{true}にすると、時刻の列は\si{\second}単位となるが、長さと体積は\si{\metre}と\si{\metre\cubed}単位であり、場ファイルのような\si{\micro\metre}では\emph{ない}。\file{ProbeNN.dat}は場ファイルと同じ単位に従う。どの出力処理がどのスケーリングを適用するかは\cref{sec:ref-bcout:output}に示す。1次元の液膜は、$y$方向に幅\SI{1}{\metre}の帯として扱う。体積は幅1メートルあたりの値$\sum h\,\Delta x$であり、ヘッダーには単位\si{\metre\cubed\per\metre}が示される。この幅は、1次元では使わない\key{Grid.Ymin}と\key{Grid.Ymax}にも、長さスケールにも依存しない。二つの濃度モデルは、同じ液膜に対して同じ体積を書く。\key{Output.Dimensioned}を\val{false}にすると、体積は\cref{sec:governing:scales}のスケールで無次元化され、1次元で$\sum h\,\Delta x$、2次元で$\sum h\,\Delta x\,\Delta y$となる。
+
+\code{VolErr}と\code{ResinVolErr}は、領域内にある量、蒸発した量、境界から流出した量、ノズルが供給した量の収支の残差であり、$\code{VolErr} = (\code{Volume} + \code{OutflowedVol}
++ \code{EvaporatedVol} - \code{SuppliedVol})/\code{Volume}_0 - 1$、$\code{ResinVolErr} = (\code{ResinVol} + \code{OutflowedResin} -
+\code{SuppliedResin})/\code{ResinVol}_0 - 1$と定義する。体積はセルにわたる和である。積算には、各ステップを解いたときの時間刻みを用いる。既定（\key{Physics.Source.ConcType = "local"}）では、ノズルの液体は着地点に既にある濃度で到着する（\cref{sec:terms:source}）。そのため\code{SuppliedResin}は、ステップごとに、各セルの供給量にその濃度（ステップ開始時と終了時の平均）を掛けて積算する。同梱のノズルケースのように濃度が面内で一様なら、\code{ResinVolErr}は\code{VolErr}に等しい。\val{"supplied"}では液体は\key{Physics.Source.Conc}の濃度で到着し、\code{SuppliedResin}は各セルの供給量に\key{Conc}を掛けた$\int c_S S$を積算する。どちらの場合も、これは濃度方程式自身が供給とともに取り込む溶質に等しい（\cref{sec:disc:wm-conservative}）。そのため閉じた液膜では、蒸発の有無によらず溶質の収支が丸め誤差の範囲で合い（\code{conc\_drying}、\cref{sec:verification:analytic}）、ノズルがあってもどちらのモードでも合う（\code{nozzle\_solute}、\code{nozzle\_supplied}）。遠心項は、1次元の液膜を帯の二つの長辺から側方へ放り出す（1次元の方程式が保持する流束の$\partial_y$。\cref{sec:terms:centrifugal}）。この液体と、液体が運ぶ溶質は、膜厚の方程式から取り除かれた量どおりに\code{OutflowedVol}と\code{OutflowedResin}に計上される。そのため、壁の間で回転する1次元の液膜でも収支は丸め誤差の範囲で合う（\code{spin\_balance}、\cref{sec:verification:analytic}）。対流スキームが$c = 1$を超えて運んだ溶質は、取り除かずに周囲のセルへ移す。$c = 0$を下回ったセルには周囲のセルから補う（\cref{sec:disc:convection}）。したがって、どちらもこの収支には痕跡を残さない（\code{conc\_overshoot}、\code{conc\_undershoot}）。\val{"FreshInlet"}や\val{"Outlet"}を横切る量は、ステップごとに、そのステップ自身が辺のセル界面に通した流束から数える。対象は膜厚の方程式の体積流束と、濃度方程式の溶質流束（スキームのセル界面値による対流流束と拡散流束）であり、そのステップのクランク・ニコルソン法の重みを掛け、確定したステップについてのみ数える。これにより、開いた液膜でも閉じた液膜と同様に、収支は丸め誤差の範囲で合う（\code{inlet\_outlet}、\code{solute\_balance}。累計値は状態ファイルに保存されるので、リスタートした実行も同じ収支を引き継ぐ）。以前は各ステップ後の場の速度とセル界面値から数えていたため、収支はスキームの誤差の分だけずれ、そのずれは100セルで$6\times10^{-7}$、$\Delta x$について1.8次で減少していた。この問題は修正済みである。
+
+\val{"CZ"}の実行は、\code{Volume}、\code{ResinVol}、\code{AveC}、極値（\code{maxHS}から\code{minC}まで）に続けて、\code{EvaporatedVol}、\code{OutflowedVol}、\code{OutflowedResin}、\code{VolErr}、\code{ResinVolErr}を上と同じ構成で書く。ノズルも開いた辺も持たないので、\code{OutflowedVol}は1次元の側方流出だけである。\code{VolErr}と\code{ResinVolErr}は、ケースが正常に動いているかを常に確かめる最も手軽な手段である。値は小さいままで、ドリフトしないはずである。ただし値がゼロ近傍にあるため、二つの実行の間で\emph{相対的に}比べると丸め誤差が増幅される。\cref{sec:verification:backends}のバックエンド比較で、物理量はすべて$10^{-10}$まで一致するのに、この二つが最大の相対差を示すのはこのためである。
+
+\section{\file{Energy.dat}}
+\label{sec:output:energy}
+
+\key{Output.Energy.Enable}を\val{true}にすると（鉛直一様モデルのみ）、\file{Energy.dat}が書かれる。行は\file{History.dat}の各行に一つずつ対応し、時刻の後に次の列が続く。
+%
+\begin{description}
+  \item[\code{FreeEnergy}] 液膜の自由エネルギー
+    \begin{equation*}
+      \mathcal F = \int\Bigl[\tfrac12\hat\sigma\,|\nabla(H+S)|^2
+        + \tfrac{\Bo}{2}(H+S)^2 + \Dpn\,w(H)\Bigr]\,\mathrm dA,
+      \qquad w(H) = -\int_{H_*}^{H}\Pihat(s)\,\mathrm ds,
+    \end{equation*}
+    である。この汎関数の変分は、駆動ポテンシャルの符号を反転した$\delta\mathcal F/\delta H = -\varphi$となる（\cref{sec:output:potential}）。離散的には、勾配項はセル界面ごとの$\tfrac12\hat\sigma_f(\Delta(H+S)/\Delta x)^2$の和であり、$\mathcal F$をセルの$H$で微分したものは、そのセルの\code{PHI}の符号を反転した値に厳密に一致する。
+  \item[\code{Dissipation}] $\mathcal D$。スキームのセル界面流束に対してポテンシャルがなす仕事率$\sum_i\varphi_i R_i\,\Delta A$であり、$R_i$はセル界面流束によるセル$i$の変化率である。毛管圧のみの場合は$\sum_f D_f(\Delta\varphi/\Delta x)^2\Delta A \ge 0$となる。これは、スキームのセル界面移動度（\key{Physics.Slip}があればすべりを含む）を用いた$\frac{M}{\hat\mu}|\nabla\varphi|^2$の積分である。離散化した方程式が散逸させるのはこの量であり、離散化した方程式について$\mathrm d\mathcal F/\mathrm dt =
+    -\mathcal D$が時間に関して厳密に成り立つ。
+  \item[\code{Dissipated}] $\int_0^t\mathcal D\,\mathrm dt$。各ステップで台形則（クランク・ニコルソン法の重み）により積算する。
+  \item[\code{Balance}] その行で終わったステップの離散エネルギー収支$(\mathcal F^{n+1} - \mathcal F^n)/\Delta t +
+    (\mathcal D^n + \mathcal D^{n+1})/2$。クランク・ニコルソン法では、$\mathcal D$に対して相対的に$O(\Delta t^2)$の精度でゼロとなる。最初の行は0である。ステップにわたって和をとると$\mathcal F(t) - \mathcal F(0) + \code{Dissipated}$となり、\code{analytic}がこれを二次精度で検査する（\code{energy\_*}）。
+\end{description}
+%
+\key{Output.Dimensioned}が\val{true}のとき、エネルギーはスケール$\sigma_0 h_0^2$（1次元では$\sigma_0 h_0^2/L_0$）で有次元化され、単位はジュール（1次元では幅1メートルあたりのJ/m）となる。仕事率はこれを$T_0$で割ったスケールで有次元化され、単位はワット（幅1メートルあたり）となる。値は有効数字18桁で書く。状態ファイルから継続した実行は\code{Dissipated}を引き継ぎ、どの行も中断しなかった実行と同じ値になる（\code{restart\_roundtrip}）。場ファイルだけから継続した場合、\code{Dissipated}はゼロから数え直す。
+
+\begin{warn}[$\mathcal F$が減少するのは勾配流の場合に限る]
+  $\mathcal F$がリャプノフ関数となる（決して増加しない）のは、流束が移動度と$\nabla\varphi$の積だけで表される場合、すなわち毛管圧、鉛直重力、分離圧、一様な濃度（$\hat\sigma$と$\hat\mu$が一定）、\val{"Symmetry"}または\val{"Periodic"}の辺の場合である。面内重力、遠心力、マランゴニ応力、蒸発、ノズル、開いた辺は、エネルギーを注入または除去する。これらがあっても\file{Energy.dat}は書かれるが、そのときの\code{Dissipation}は流束に対する$\varphi$の仕事率であり、散逸ではない。\val{"Pinning"}の辺では隣のセルに追従するゴーストで液膜を保持するが、$\mathcal F$はこれを考慮しない。三つの項は同じセル界面移動度を共有する（\cref{sec:disc:positivity-one}）ので、これらに対しては$\mathcal D$は分離圧を含めて二乗和となり、どの検査でも$\mathcal F$は増加していない。収支と減少は\code{analytic}が検査する（\code{energy\_*}）。
+\end{warn}
+
+\section{\file{CalcInfo.dat}}
+\label{sec:output:calcinfo}
+
+ソルバー自身の診断情報で、\key{Output.\bk CalcInfo.\bk TimeInterval}ごとに1行を書く。列は\code{NK\_iter}と\code{NK\_resid}（ニュートン法の外側反復の回数と最終修正量）、\code{BCG\_iter}と\code{BCG\_resid}（線形ソルバー）、\code{deltaT}、\code{ChangeRate}である。\val{"CZ"}の実行は独自のニュートンループを持たず、\code{Time}、\code{BCG\_iter}、\code{BCG\_resid}、\code{deltaT}、\code{ChangeRate}を書く。鉛直一様モデルの実行で場が破綻した場合（NaN、$[-0.1, 1.1]$の外の濃度、スケールの$-10^{-3}$を下回る膜厚、負の体積）は、\val{"CZ"}の実行と同様に\code{terminated after divergence}で停止し、最終の場は書かない。
+
+実行が遅いときは、まずこのファイルを開く。\code{NK\_iter}が\key{NewtonMaxIterations}に張り付いていれば、ニュートンループが収束していないので、\cref{ch:convergence}へ進む。ほかのバックエンドなら数十回で済むところで\code{BCG\_iter}が数千回に達していれば、原因は問題そのものではなく前処理にある（\cref{sec:linsolve:choosing}）。\code{deltaT}が急落した場合、問題が本当に硬いこともあるが、はるかに多いのは絶対的な収束判定と修正量の下限との干渉である（\cref{sec:convergence:absolute}）。
+
+\code{ChangeRate}は膜厚の単位時間あたりの相対変化で、単位は\si{\per\second}である。定常状態の判定はこの値に基づく。\key{Numerics.\bk SteadyStateCriterion}は、しきい値を当て推量で決めて後から実行が十二ステップ目で止まっていたと気づくのではなく、この列を見てから選ぶ。
+
+\section{VTK出力とParaView}
+\label{sec:output:vtk}
+
+\file{field*.vts}はVTK構造格子ファイルであり、\file{<JobName>.pvd}はそれらを時刻とともにまとめたコレクションである。開くのは\file{.pvd}の方が適している。正しい物理時刻を持つ系列全体が得られ、番号付きのファイル列のようにParaViewに時刻を推測させずに済む。時刻は有効数字12桁で書くので、$10^{-4}$\,s離れた場ファイルは$t = 10^{7}$\,sまで区別できる。\file{.pvd}はすべての場ファイルを列挙し、場ファイルを書くたびに丸ごと書き直す（\cref{sec:output:failures}）ので、そのコストは出力回数とともに増える。場の出力30{,}000回の後には1.6\,MBとなり、2コアの\SI{2.1}{\giga\hertz} Xeonでは書き直しに出力1回あたり約\SI{10}{\milli\second}かかった。問題になるのは、数万個の場を書く実行に限られる。
+
+\val{"CZ"}の\file{.vts}は三次元の構造格子であり、点はセルの高さ、すなわち各セルの$\zeta$に対する$z = s + h\,\zeta$に置く。ゴースト層も含むので、上下の最も外側の二層は液膜のすぐ外にあり、その間の実セルが基板から自由表面までを埋める。\code{Velocity}はこれらの点での値で、各成分は格納されたセルの二つのセル界面の平均である。配列としては\code{Conc}と\code{Velocity}のほか、\code{FilmThickness}と\code{Substrate}を柱に沿って繰り返して持つ。\file{.vts}からリスタートするときは、これらから液膜を読み戻す。
+
+鉛直一様モデルの\file{.vts}は、\code{Conc}、\code{Height}（自由表面$h+s$、場ファイルの\code{HS}）、\code{Substrate}、合成した\code{Velocity}に加え、各項単独による速度\code{V\_Ca}（毛管圧）、\code{V\_Ma}（マランゴニ）、\code{V\_Bo}（鉛直重力）、\code{V\_Pg}（面内重力）、\code{V\_Sp}（遠心力）を持つ。分離圧の寄与は\code{Velocity}には含まれるが、専用の配列はない。ある場所でどの項が液体を動かしているかは、これらの配列で確かめられる（\cref{sec:governing:dimensional}）。\key{WritePotential}を指定すると、\code{Potential}に駆動ポテンシャルが入る（\cref{sec:output:potential}）。
+
+二つの出力形式は独立しており、\key{Output.\bk FieldData.\bk VTKFile}と\key{Output.\bk FieldData.\bk NeutralFile}で個別に制御する。長い2次元の実行では、VTKファイルを無効にするとディスクをかなり節約できる。テキストファイルを無効にすると結果からリスタートできなくなるので、節約の方法として適切なことはまれである。
+
+\begin{warn}[\file{.vts}ファイルも\key{Output.Dimensioned}に従い、長さの単位が混在する]
+  \file{.vts}の出力処理はどれも、\file{field*.dat}と同じようにこのキーを適用する。面内座標は\si{\milli\metre}、高さ（したがって高さから作る格子の$z$座標も）は\si{\micro\metre}、速度は\si{\metre\per\second}である。\code{Conc}は質量分率であり、スケーリングしない。
+
+  そのため\file{.vts}は、真の比率に比べて鉛直方向に$10^{3}$倍誇張される。液膜は幅に比べて桁違いに薄く、真の比率では平らなシートにしか見えないので、通常はこの方が都合がよい。ただし、補正しないまま図から傾きや角度を読み取ってはならない。実際の縦横比が必要なら、ParaViewで$z$方向のスケールを明示的に設定する。\key{Output.Dimensioned}を\val{false}にすると、ファイル内はすべて無次元となり、誇張はなくなる。
+\end{warn}
+
+\section{プローブ}
+\label{sec:output:probes}
+
+各\key{Output.ProbeList.Probe}ブロックは、一点での時系列（自由表面の高さ、濃度、速度成分、膜厚、基板の高さ）を記録する。指定した座標は、起動時に最も近い格子点に丸められる。ファイルはプローブごとに一つで、名前は\file{ProbeNN.dat}である。\code{NN}は、入力ファイルにブロックが現れる順に\textbf{\code{00}から数えた}2桁のゼロ埋め番号である。したがってプローブが二つなら\file{Probe00.dat}と\file{Probe01.dat}ができる。プローブは\key{Output.ProbeList.TimeInterval}ごとに書かれるので、場全体をその頻度で書かなくても、少数の位置で時間的に細かい履歴が得られる。\file{cases/}のケースにはプローブを使うものはない。

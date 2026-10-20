@@ -1,0 +1,176 @@
+% app-troubleshooting.tex -- symptom-driven index into the rest of the manual
+\chapter{トラブルシューティング}
+\label{ch:troubleshooting}
+
+この付録は、症状から引く索引である。各項目では、確認すべき点と、マニュアル中の説明箇所を示す。
+新しい内容は含まない。
+
+\section{計算がすぐに止まる}
+\label{sec:trouble:stops}
+
+\begin{description}
+  \item[一時間刻みだけで止まる。] \key{Numerics.EndTime}が既定値の\val{0}のままになっている。
+    この値は「$t = 0$で停止」を意味し、「制限なし」ではない。終了時刻を設定する必要がある。
+
+  \item[ログに\code{Steady state.}が出る。] 定常状態の判定が成立した。細かく解像したケースでは、
+    物理的に定常に達したというより、判定基準のために止まっていることが多い。判定は変化率に対して行う。
+    \key{SteadyStateCriterion}の既定値は$10^{-3}$で、「現在の変化率のまま計算の全期間にわたって
+    変化し続けても、形状は\SI{0.1}{\percent}しか変わらない」ことを意味する。値を決める前に
+    \file{CalcInfo.dat}の\code{ChangeRate}列を確認されたい。判定を無効にするには、判定基準を
+    非正の値にする。\cref{sec:convergence:termination}を参照されたい。
+
+  \item[ログに\code{Dry out.}が出る。] \key{Physics.\bk Evaporation.\bk EndConcType}で選んだ
+    濃度の判定値が\key{EndConcValue}を超えた。この判定は、蒸発が有効かどうかにかかわらず
+    行われる。
+
+  \item[結果ディレクトリの名前を含むメッセージが出る。] 原因は次のいずれかである。ディレクトリが存在し、
+    \key{Output.Overwrite}が\val{false}になっている。同名のファイルがある。ディレクトリを作成できない、
+    または書き込めない。どれに当たるかは、メッセージがパスとともに示す。この時点では何も書き込まれて
+    いない（\cref{sec:output:dir}）。
+
+  \item[\code{Could not write}とファイル名が出る。] ディスクやクォータが一杯になったか、
+    ファイルサイズの制限に達したか、ディレクトリに書き込めなくなった。すでに書き出したファイルは
+    完全である。空き容量を確保し、最後の場ファイルとその\file{.state}からリスタートする
+    （\cref{sec:output:failures}）。
+
+  \item[終了コード 130 または 143 で終わる。] 計算が Ctrl-C または\code{SIGTERM}で停止された。
+    多くの場合、ジョブの制限時間に達したバッチスケジューラーによるものである。出力は完全であり、
+    最後の場ファイルから正確に続行できる（\cref{sec:output:failures}）。
+
+  \item[計算を始める前に止まる。] 設定段階で入力が拒否された。理由は結果ディレクトリの
+    \file{FatalErrors.txt}と標準エラー出力に書かれる。ただし、入力ファイル自体が拒否された場合は
+    結果ディレクトリを作る前なので、理由は端末でしか確認できない（\cref{sec:output:warnings}）。
+    よくある原因の一つは、\key{Initial.\bk SurfaceShape.\bk PrecursorRatio}を\val{0}のままにして
+    分離圧を有効にした場合である。このときのメッセージは\code{Physics.\bk DisjoiningPressure requires
+    Initial.\bk SurfaceShape.\bk PrecursorRatio > 0.}で、\code{PrecursorRatio}で grep すれば
+    見つかる（\cref{sec:output:warnings}）。もう一つは、分離圧の指数が$n > m > 1$の検査を満たさない
+    場合である。対になる辺の片方だけに指定した\val{"Periodic"}と、\val{"Symmetry"}でも
+    \val{"Periodic"}でもない辺をもつ\val{"CZ"}ケースは、それより早い整合性検査の段階で、
+    \code{Input mismatch}と辺の名前を示して止まる。膜厚がゼロにならない膜に面した\val{"Pinning"}辺は、
+    最初の時間刻みの直前に、壁での膜厚を示して止まる。
+    \cref{ch:ref-physics}と\cref{sec:ref-bcout:boundary}を参照されたい。
+\end{description}
+
+\section{時間刻みが極端に小さくなる}
+\label{sec:trouble:dt}
+
+標準出力の実行ログに\code{dt-}と\code{dt+}が交互に現れる場合や、\file{CalcInfo.dat}の
+\code{deltaT}が減り続けて計算が\key{MinDt}で中断する場合は、次の項目を順に確認する。
+
+\begin{enumerate}
+  \item \textbf{ニュートン反復が反復回数の上限に達していないか。}\file{CalcInfo.dat}の
+    \code{NK\_iter}を確認する。これが\key{NewtonMaxIterations}に等しければ、反復は失敗を報告しており、
+    呼び出し側がそれを受けて時間刻みを半分にしている。
+  \item \textbf{修正量の下限が\key{NewtonEpsilon}を上回っていないか。}\env{YUZEN\_DEBUG\_FLOOR}を
+    設定して実行する。上回っている場合、\key{NewtonEpsilon}を下げると状況はかえって悪化する。
+    下限が$\Delta t$に比例する領域では、絶対値の判定と時間刻みが互いを追いかけるように小さくなっていく。
+    代わりに相対値の判定\key{NewtonEpsilonRel}を用いる。接触線を含むケースが必要より
+    二桁遅くなる原因として、これが最も多い。このフィードバックの仕組みは
+    \cref{sec:convergence:absolute}で詳しく説明している。
+  \item \textbf{膜厚の方程式と濃度の方程式のどちらが原因か。}\env{YUZEN\_DEBUG\_RESIDUAL}を設定すると、
+    反復ごとに両方の修正量を表示する（\cref{sec:time:coupling}）。
+  \item \textbf{線形ソルバーが NaN を返していないか。}解ベクトルにいったん NaN が入ると、
+    次の求解はそこから始まるので、時間刻みを小さくしても効果がない。
+    \cref{sec:linsolve:contract}を参照されたい。\env{YUZEN\_ILUT\_FILL}を設定している場合は、値を元に戻す。
+  \item \textbf{以上を確認してから}、\key{Numerics.TimeStepControl}を検討する。\key{ScaleFloor}を
+    既定値の\val{0}から上げると、薄い前駆膜が誤差評価を支配するのを防げる。$\Hstar = 0.02$では、
+    前駆膜は液滴本体の五十倍の重みをもつ。\cref{sec:time:dt}を参照されたい。
+\end{enumerate}
+
+\section{ニュートン反復が収束しない}
+\label{sec:trouble:newton}
+
+\begin{description}
+  \item[修正量の停滞の警告が出る。] \file{Warnings.txt}を\code{correction stagnated}で grep する。
+    該当行は\code{Newton-Kantorovich: the Newton correction stagnated far from
+    convergence}で始まり、反復番号、到達した修正量、最初の修正量が続く
+    （\cref{sec:output:warnings}）。この警告は、停滞の判定が成立した時点で、修正量が\key{NewtonEpsilon}
+    未満でも、最初の値より四桁小さくもなく、膜厚の$1000\,\epsmach$倍以内でもなかったことを示す。
+    つまり下限ではなく本当の非収束であり、時間刻みを縮めて解き直している。その回数は
+    \file{JobInfo.txt}に記録される。計算の開始時や急な変化の際に数回起きる程度なら、時間刻み制御が
+    正常に働いているだけである。多数起きる場合や、計算が\key{MinDt}で中断する場合、（固定時間刻みで）
+    停滞そのもので中断する場合は、滑らかでない要素を疑う。風上化の切り替わり、蒸発、濃度のクランプ、
+    あるいはノズル下での濃度に強く依存する粘度である。\cref{sec:convergence:stagnation}を参照されたい。
+  \item[分離圧を有効にすると反復回数が増える。] $\Pihat \sim H^{-n}$は確かに硬い項だが、そのヤコビアンは
+    厳密である。測定した接触線のケースは、この項がない場合と同じく三回の外側反復で収束する。
+    反復回数の測定値は\cref{sec:verification:coupling}に示す。
+  \item[収束するが、不自然な解になる。] まず初期状態を確認する。前駆膜に接する形状関数を初期条件に
+    使うと、自然なスケール$U_0$より何桁も大きな速度で計算が始まることがある。解析的に構成した
+    平衡液滴ならこの問題は起きない。\cref{sec:wetting:equilibrium}と
+    \file{tools/make\_equilibrium\_1d.py}を参照されたい。
+\end{description}
+
+\section{計算が遅い}
+\label{sec:trouble:slow}
+
+\begin{description}
+  \item[BiCGStab の反復が数千回に及ぶ。] \file{CalcInfo.dat}の\code{BCG\_iter}を確認する。数千回に
+    達するなら、前処理が役に立っていない。開発中に試した自前のバックエンドは
+    \file{leveling\_1d\_reg}で 3676 回の反復を要したが、同じ問題で\val{"eigen"}は 21 回で済む
+    （\cref{sec:verification:backends}）。この差が、そのバックエンドを採用しなかった理由である。
+    \val{"eigen"}でこれほど多い場合は、ILUT のフィルファクター（\env{YUZEN\_ILUT\_FILL}、
+    \cref{ch:environment}を参照）か、線形求解が苦戦するような時間刻みを疑う。
+    \val{"amgcl"}を試すのも一つの手である（\cref{sec:linsolve:choosing}）。
+  \item[\val{"eigen"}を用いた 2 次元の計算だけが遅い。] 有効なアルゴリズムの組（\code{YUZEN\_OPT}）を
+    \file{JobInfo.txt}で確認する。\val{bilu}が無効だと、Eigen は求解のたびに行列全体の ILUT を
+    逐次的に分解し、2 次元ではそれだけで計算時間の大半を使う。既定のブロック・ヤコビ ILUT
+    （\cref{sec:linsolve:eigen}）であれば、測定した 2 次元の膜で\val{"eigen"}は\val{"amgcl"}の
+    二倍以内の時間に収まる。\cref{sec:linsolve:choosing}を参照されたい。
+  \item[格子を細かくしたら遅くなった。] ある程度は当然である。しかし、セル数から予想されるよりはるかに
+    遅くなった場合は\cref{sec:trouble:dt}に戻る。積として形成される項から生じる
+    \cref{eq:floor}のような修正量の下限は、$\Delta x^{-4}$に比例して大きくなる。
+  \item[スレッドを増やしても速くならない。] 小さなケースでは、一時間刻みの仕事を細かく分けすぎて、
+    スレッドの起動と同期のコストに見合わなくなる。\code{Vector}の縮約は、512 要素以上のブロックを
+    決まった個数だけ用いる。そのため、スレッドあたりの未知数が 512 を下回ると、余分なスレッドには
+    割り当てるブロックがない（\cref{sec:parallel:kit}）。また、使える数より多くのスレッドを要求すると、
+    \cref{sec:parallel:cap}のスレッド上限によって計算が止まる。一つのソケットを超えると、測定したどの
+    サイズでも遅くなった。AMGCL の最も粗いレベルの直接求解は逐次的だが、小さく抑えている
+    （\cref{sec:parallel:what}）。このような場合は、代わりに複数のケースを並べて実行するのが望ましい。
+\end{description}
+
+\section{一致するはずの二つの計算が一致しない}
+\label{sec:trouble:diff}
+
+\begin{enumerate}
+  \item 両方が同じ\key{Backend}を使っているか。二つの\file{JobInfo.txt}の
+    \code{\#\#\#\#\#\# Solver Info \#\#\#\#\#\#}節を比較する（\cref{sec:output:jobinfo}）。
+    この節には各方程式で実際に選ばれたバックエンドが書かれるので、両方の入力ファイルが
+    \val{"auto"}であっても判別できる。バックエンドが違うと丸め方が変わり、結果はビット単位では一致せず、
+    線形ソルバーの許容誤差の範囲で一致するだけになる。\cref{sec:linsolve:choosing}を参照されたい。
+  \item どちらかが\val{"amgcl"}を使っていないか。AMGCL の内部の縮約は順序が固定されていないので、
+    スレッド数によって結果が変わることがある。\file{leveling\_1d\_reg}での測定値は、物理量で
+    $6.089\times10^{-11}$である（このケースの誤差指標は丸め誤差の大きさなので、相対差は一の程度になる）
+    （\cref{sec:verification:amgclthreads}）。
+  \item 上のどちらでもなく\val{"eigen"}を用いている場合、スレッド数だけが異なる二つの計算は\emph{厳密に}
+    一致しなければならない。一致しなければ、\cref{ch:reproducibility}で述べた前提のどれかが崩れている。
+    そこに挙げた四つの依存関係を調べる必要がある。本来は、まずテストスイートがこれを検出するはずである。
+  \item 比較には\code{diff}ではなく\file{tools/compare.py}を使う。列ごとの最大相対差を報告するので、
+    差が丸めによるものか、答えが変わったのかを判断できる。
+\end{enumerate}
+
+\section{結果が桁違いにずれているように見える}
+\label{sec:trouble:scales}
+
+実行ログ（端末、または\file{tools/run\_case.sh}の\file{stdout.txt}）を読み、$L_0$、$T_0$、
+$U_0$が想定どおりかを確認する（\cref{sec:governing:scales}）。これらはログの先頭付近、進行ログより
+上の\code{Scaling factors}ブロックにあり、\file{JobInfo.txt}には書かれない。\file{JobInfo.txt}のうち
+入力から導かれる節は、モデルと線形ソルバーのバックエンドだけである。
+\key{Fluid.\bk SurfaceTension.\bk BaseValue}や
+\key{Initial.\bk SurfaceShape.\bk TotalHeight}の入力ミスは、このブロックを見れば容易に発見できるが、
+ほかの場所では長い間気づきにくい。
+
+パーサーは、綴りを誤ったキーやブロック、変換できない値を拒否する
+（\cref{sec:inputformat:unknown,sec:inputformat:types}）。
+\code{yuzen --check-input FILE}を使えば、計算を始めずにこれらの検査だけを実行できる。検出できないのは、
+綴りは正しいが値が誤っているキーと、\key{[Physics.*]}ブロック全体の書き忘れである。後者の場合、その項は
+無効になる。ある項が効いていないように見えるときは、結果ディレクトリ内にある入力ファイルの写しを確認する。
+
+\section{接触角が指定した値にならない}
+\label{sec:trouble:angle}
+
+これは通常バグではなく、モデルの性質である。有限の前駆膜をもつ液滴の見かけの接触角は
+$\thetacap = \thetae(1 - \Hstar/(2\Hmax))$である。そのため$\Hmax/\Hstar = 2$では、指定した
+\ang{10}は実際には\ang{7.5}になり、形状の最大勾配は\ang{0.63}にとどまる。ケースの寸法は二つの目安で
+決める。接触線を解像するための$\Delta x
+\le \ell/5$（$\ell = \hstar/\thetae$）と、接触角の誤差を\SI{1}{\percent}以内に収めるための
+$\Hmax/\Hstar \ge 50$である。表と計算例は\cref{sec:wetting:apparent,sec:wetting:sizing}に示す。

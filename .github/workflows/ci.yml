@@ -1,0 +1,167 @@
+#  Copyright 2017-2026 Suguru Shiratori, Tokyo City University
+#  SPDX-License-Identifier: Apache-2.0
+
+name: CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: ${{ matrix.os }} / ${{ matrix.cxx }} / amgcl=${{ matrix.amgcl }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            cxx: g++
+            amgcl: 'OFF'
+          - os: ubuntu-latest
+            cxx: clang++
+            amgcl: 'OFF'
+          # GCC 11, the system compiler of
+          # RHEL 9 and of many clusters. Newer compilers forgive a header
+          # that is missing (size_t without <cstddef>); this one does not.
+          - os: ubuntu-22.04
+            cxx: g++-11
+            amgcl: 'OFF'
+          - os: windows-latest
+            cxx: msvc
+            amgcl: 'OFF'
+          - os: macos-latest
+            cxx: clang++
+            amgcl: 'OFF'
+          # AMGCL is an optional dependency, but there is a code path that is
+          # only taken when it is enabled (the amgcl implementation in
+          # LinearSolverBackend). Always exercise it in at least one job.
+          - os: ubuntu-latest
+            cxx: g++
+            amgcl: 'ON'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Use Eigen if present; otherwise CMake fetches it with FetchContent.
+      # libomp too: clang++ has no OpenMP runtime of its own, and without one
+      # CMake builds serially, so the threaded code would go untested. A g++
+      # build links it in place of libgomp, as the README recommends.
+      - name: Install Eigen and libomp (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libeigen3-dev libomp-dev
+
+      - name: Install Eigen and libomp (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install eigen libomp
+          echo "OpenMP_ROOT=$(brew --prefix libomp)" >> "$GITHUB_ENV"
+
+      # AMGCL is optional. Most jobs leave it out to exercise the plain
+      # configuration; just one turns it ON (if it is not found, CMake
+      # fetches it with git).
+      - name: Configure
+        run: >
+          cmake -S . -B build
+          -DCMAKE_BUILD_TYPE=Release
+          -DYUZEN_WITH_AMGCL=${{ matrix.amgcl }}
+          -DYUZEN_BUILD_TESTS=ON
+          ${{ matrix.cxx != 'msvc' && format('-DCMAKE_CXX_COMPILER={0}', matrix.cxx) || '' }}
+
+      - name: Build
+        run: cmake --build build --config Release -j 2
+
+      - name: Test
+        run: ctest --test-dir build --build-config Release --output-on-failure
+
+      # Regression: run one representative case and check that it exits cleanly.
+      # (Numerical comparison is done locally with tools/compare.py.)
+      #
+      # The parser for the legacy .inp format is still there, but we do not
+      # ship samples of it, so only TOML is run here. The interpretation of
+      # .inp is pinned by tests/test_config.cpp, which writes a temporary file.
+      - name: Smoke run
+        shell: bash
+        run: |
+          # Single-config generators put the binary in build/bin; multi-config
+          # ones (MSVC) put it in build/bin/<Config>. Find it rather than guess.
+          EXE=$(find build/bin -maxdepth 2 -name 'yuzen' -o -maxdepth 2 -name 'yuzen.exe' | head -1)
+          test -n "$EXE" || { echo "yuzen executable not found under build/bin"; ls -R build/bin; exit 1; }
+          EXE=$(cd "$(dirname "$EXE")" && pwd)/$(basename "$EXE")
+          echo "using $EXE"
+          run() {   # $1 = input file, $2 = working directory
+            mkdir -p "$2" && cp "cases/$1" "$2/$1"
+            ( cd "$2" && "$EXE" "$1" )
+            test -s "$2"/*/History.dat
+            test ! -s "$2"/*/FatalErrors.txt   # no fatal errors were reported
+          }
+          run tutorial_1d.toml smoke_toml
+
+      # The Windows manifest is read only by MSVC's mt.exe, which rejects XML
+      # that is not well formed (a "--" inside a comment, say). Check it on
+      # Linux, so that such a mistake shows up without a Windows build.
+      - name: Windows manifest is well-formed XML
+        if: runner.os == 'Linux'
+        run: python3 -c "import xml.etree.ElementTree as ET; ET.parse('yuzen/src/yuzen.manifest')"
+
+      # cases/scaling/ is generated. If the generator is changed and the cases
+      # are not regenerated, what we measure and the cases on disk drift apart.
+      # Catch that here.
+      - name: Scaling cases match their generator
+        if: runner.os == 'Linux'
+        run: python3 tools/scaling/make_cases.py --check
+
+      # Only check that the measurement kit runs (not the numbers: timings on
+      # CI runners are unreliable, and one thread versus two tells us nothing).
+      # What we check is that every status column reads ok, i.e. each run took
+      # the requested number of steps and finished cleanly.
+      - name: Scaling kit smoke run
+        if: runner.os == 'Linux' && matrix.amgcl == 'ON'
+        shell: bash
+        run: |
+          # Invoked through bash rather than directly: a checkout that has not
+          # kept the executable bit (a Windows clone, an unzip, a copy through
+          # a filesystem without permissions) would otherwise fail here with
+          # "Permission denied" rather than for any reason to do with the code.
+          bash tools/scaling/scaling.sh \
+            --cases bench1d_n02000 --threads "1 2" --backends eigen \
+            --repeats 1 --out ci.tsv
+          cat ci.tsv
+          # On every line except the header and # lines, the status column (13th) must be ok
+          bad=$(awk -F'\t' '!/^#/ && $1 != "case" && $13 != "ok"' ci.tsv | wc -l)
+          test "$bad" -eq 0
+          python3 tools/scaling/summarize.py ci.tsv
+
+  # A read or a write one past the end of an array usually finds a plausible
+  # value and changes no answer the tests look at: of the faults deliberately
+  # put into the physics sources to measure the test suite, 13 were of that
+  # kind, and no test of the answers can see them. A sanitizer build is the
+  # tool for them. Run the quicker solver tests under AddressSanitizer and
+  # UndefinedBehaviorSanitizer. With GCC's libgomp: LLVM's libomp keeps its
+  # thread structures to the end of the process, which LeakSanitizer reports
+  # as leaks.
+  sanitizers:
+    name: ubuntu / g++ / ASan+UBSan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Eigen
+        run: sudo apt-get update && sudo apt-get install -y libeigen3-dev
+      - name: Configure
+        run: >
+          cmake -S . -B build-san
+          -DCMAKE_BUILD_TYPE=RelWithDebInfo
+          -DYUZEN_WITH_AMGCL=OFF
+          -DYUZEN_BUILD_TESTS=ON
+          -DYUZEN_PREFER_LIBOMP=OFF
+          "-DCMAKE_CXX_FLAGS=-fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=undefined"
+      - name: Build
+        run: cmake --build build-san -j 2
+      - name: Test
+        env:
+          OMP_NUM_THREADS: '1'
+        run: >
+          ctest --test-dir build-san --output-on-failure
+          -R "yuzen_tests|input_guards|equivalence|features|restart_roundtrip"

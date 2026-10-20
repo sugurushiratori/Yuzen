@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  Yuzen: thin liquid film flow solver (lubrication approximation)
+
+  yuzen.manifest : Windows application manifest (MSVC builds only)
+
+  Makes UTF-8 the code page of the process (Windows 10 version 1903 and
+  later), so that the narrow strings the solver handles paths in (the
+  command line, JobName and Restart.FileName from the TOML file, which is
+  UTF-8, std::filesystem::path, std::fstream) are taken as UTF-8, as on
+  Linux and macOS. Without it they are taken in the ANSI code page, and a
+  path with Japanese characters in a UTF-8 input file names the wrong file.
+
+  Copyright 2017-2026 Suguru Shiratori, Tokyo City University
+  SPDX-License-Identifier: Apache-2.0
+-->
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <assemblyIdentity type="win32" name="Yuzen" version="1.0.0.0"/>
+  <application xmlns="urn:schemas-microsoft-com:asm.v3">
+    <windowsSettings>
+      <activeCodePage xmlns="http://schemas.microsoft.com/SMI/2019/WindowsSettings">UTF-8</activeCodePage>
+      <longPathAware xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">true</longPathAware>
+    </windowsSettings>
+  </application>
+</assembly>

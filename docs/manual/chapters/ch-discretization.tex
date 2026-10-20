@@ -1,0 +1,570 @@
+% ch-discretization.tex -- numerical method: the grid, the ghost layers and the matrix rows
+\chapter{Discretization}
+\label{ch:discretization}
+
+This chapter describes the mesh Yuzen works on: where a quantity is allowed to
+sit, how the boundary is padded, and how a point on the grid becomes a row of
+the matrix. It is the vocabulary the rest of \cref{ch:timeintegration,%
+ch:convergence,ch:linearsolver,ch:reproducibility} is written in, and it is the
+first thing to read if you intend to add a physical term. The equations being
+discretized are \cref{eq:height,eq:flux} of \cref{ch:governing}; the keys that
+size the mesh are in \cref{sec:ref-domain:grid}.
+
+\section{The staggered grid and the eight site types}
+\label{sec:disc:stagger}
+
+Yuzen uses a uniform rectangular grid. Given the grid lines
+$x = x_{\min} + i_x\,\Delta x$, there are only two places along each axis at
+which a quantity can be stored:
+
+\begin{center}
+\begin{tabular}{@{}l l@{}}
+\code{0} & on the grid line, at $x = x_{\min} + i_x\,\Delta x$ \\
+\code{1} & halfway between two grid lines, at $x = x_{\min} + i_x\,\Delta x + \Delta x/2$ \\
+\end{tabular}
+\end{center}
+
+Three axes, two choices each: the list of possible positions is therefore
+exactly three bits long and has exactly eight entries. Those three bits are the
+type \code{Stagger<SX,SY,SZ>} (\file{yuzen/src/grid/Stagger.h}), and
+\cref{tab:site-types} names them.
+
+\begin{yzntable}{The eight site types and their three-bit encoding\label{tab:site-types}}{@{}l l L{0.46\textwidth}@{}}
+\textsf{\bfseries Bits $(x,y,z)$} & \textsf{\bfseries Name} &
+\textsf{\bfseries Position} \\ \midrule
+0,0,0 & \code{Node}  & the grid point \\
+1,0,0 & \code{Xedge} & the edge along $x$ \\
+0,1,0 & \code{Yedge} & the edge along $y$ \\
+0,0,1 & \code{Zedge} & the edge along $z$ \\
+0,1,1 & \code{Xface} & the face with normal $x$ \\
+1,0,1 & \code{Yface} & the face with normal $y$ \\
+1,1,0 & \code{Zface} & the face with normal $z$ \\
+1,1,1 & \code{Cell}  & the cell center \\
+\end{yzntable}
+
+The reason for encoding the positions this way rather than tabulating them is a
+single observation: \textbf{moving half a cell along an axis flips that axis's
+bit, and nothing else changes}. Every change of site type in the whole code is
+that one operation, and the accompanying movement of the index follows from the
+same bit in one line --- moving $+\tfrac12$ cell raises the index by one when
+the bit was already \code{1}, and moving $-\tfrac12$ cell lowers it by one when
+the bit was \code{0}. There is no hand-written table of offsets to keep in step
+with anything.
+
+In 1-D only the $x$ bit carries meaning, and in 2-D the $x$ and $y$ bits do.
+The unknowns sit on \code{Xedge} in 1-D, on \code{Zface} in 2-D, and the
+concentration of the \val{"CZ"} model (\cref{sec:conc:cz}) sits on \code{Cell}
+--- in each case half a cell along every in-plane axis, which is what
+\cref{ch:governing} calls the cell center.
+
+A field is declared as \code{Field<GRID,S,T>}, with the site type \code{S} as a
+template parameter rather than as runtime data. A stagger mismatch is therefore
+a compile error, not a wrong answer: you cannot pass a cell-centered field where
+an edge-centered one is expected. The overloads of
+\code{C\_FiniteDifferences::GradX} and its relatives, one per site type, exist
+for the same reason --- the derivative of a field knows which way it has moved
+by half a cell, because the type says so.
+
+\section{Ghost layers}
+\label{sec:disc:ghost}
+
+Outside the boundary the grid carries \textbf{two ghost layers on each side}
+(\code{C\_Grid*::NumGhostX()}). Two, not one, because the thickness equation is
+fourth order: evaluating it at a boundary point reaches two neighbors away.
+
+\key{Grid.Nx} counts interior points only, so a grid declared with
+\key{Nx = 300} holds $\mathrm{Nx} + 4 = 304$ points along $x$. Remember this
+when you estimate memory or read a row count out of a debug print.
+
+\code{CheckGhost(s)} sorts every point into one of three classes:
+
+\begin{description}
+  \item[\code{Inside}] within the computational domain. This is the only place
+    a physical term adds a contribution.
+  \item[\code{bXmin}, \code{bXmax}, \dots] the boundary itself, where the
+    boundary condition fixes the value. In 2-D the corners join this set, and
+    in 3-D the edges as well.
+  \item[\code{Outside}] the outermost ghost layer.
+\end{description}
+
+\section{From a point to a matrix row}
+\label{sec:disc:rows}
+
+The number of rows is the \textbf{total number of points including the ghosts},
+$\mathrm{imax()} - \mathrm{imin()} + 1$ --- not the number of interior points.
+The map from a point to its row number is collected in one place per dimension,
+\code{Index()} in \file{GridTraits.h}, and is given in \cref{tab:row-index}.
+
+\begin{yzntable}{The point-to-row map, one per dimension\label{tab:row-index}}{@{}l l@{}}
+\textsf{\bfseries Dimension} & \textsf{\bfseries Row} \\ \midrule
+1-D & $\mathrm{row} = i_x$ \\
+2-D & $\mathrm{row} = n_x\,i_y + i_x$ \\
+3-D & $\mathrm{row} = n_x n_y\,i_z + n_x\,i_y + i_x$ \\
+\end{yzntable}
+
+Ghost rows are marked as boundary-condition rows with
+\code{CRS\_Matrix::SetAsBC()}. A marked row is excluded from the time
+integration --- \code{MakeMatrix\_IA()} and \code{MakeRHS()} skip it --- and the
+physical terms consult \code{IsBC()} and do not add to it either. The
+coefficients of a boundary-condition row are written once at initialization and
+survive every subsequent zeroing of the matrix, so they never have to be
+rebuilt.
+
+The stencil is five points in 1-D, written \code{M m o p P}: the point itself
+and two neighbors on each side. In 2-D it is thirteen points --- the
+nine-point cross, plus the four diagonals \code{mm}, \code{pm}, \code{mp},
+\code{pp}. \textbf{The diagonals are not optional.} They are there because the
+biharmonic operator contains the cross term
+$\partial^4/\partial x^2\partial y^2$, whose difference coefficient is of order
+$1/(\Delta x^{2}\Delta y^{2})$ and whose stencil is precisely the four
+diagonal neighbors. Drop them and you are no longer discretizing
+$\nabla^{2}\nabla^{2}$.
+
+The order in which the columns of a row are inserted is fixed by the ordering
+of \code{T::FullIdx(k)} and its relatives. That ordering is not cosmetic: it
+sets the order of the floating-point additions in the matrix--vector product,
+and changing it breaks bit-level reproducibility. See \cref{ch:reproducibility}.
+
+\section{The mobility at a face, and why its form is not free}
+\label{sec:disc:positivity}
+
+The film-height equation is a fourth-order \emph{degenerate} diffusion: the
+mobility $D(h) = h^{3}$ vanishes where the film does. That degeneracy is what
+makes a contact line possible at all, and it is also what makes a careless
+discretization produce negative film thickness. A face between two cells needs
+a single mobility built from the two thicknesses on either side, and the choice
+of how to build it decides whether the scheme can go negative.
+
+The well-mixed model uses the positivity preserving interpolation of Diez and
+Kondic (2002), their Eq.~(23):
+%
+\begin{equation}
+  D_{k}^{(x)} \;=\; \frac{2\,h_{k}^{2}\,h_{k+1}^{2}}{h_{k} + h_{k+1}},
+  \qquad
+  D_{k}^{(y)} \;=\; \frac{2\,h_{k}^{2}\,h_{k+n_x}^{2}}{h_{k} + h_{k+n_x}} .
+  \label{eq:disc:pps}
+\end{equation}
+%
+This is not an ad-hoc average. It is the general prescription
+%
+\begin{equation}
+  D_{i} \;=\; \frac{h_{i+1} - h_{i}}{g_{i+1} - g_{i}},
+  \qquad
+  g(h) \;=\; \int \frac{\mathrm{d}h}{D(h)} ,
+  \label{eq:disc:pps-general}
+\end{equation}
+%
+evaluated for $D(h) = h^{s}$ at $s = 3$. The implementation is
+\code{NonlinearTerm()} in \file{model/well\_mixed/LaplacePressureKernel.h}.
+
+Why this form and not another: \cref{eq:disc:pps} factorizes as the product
+$h_k h_{k+1}$ with the harmonic mean $2h_k h_{k+1}/(h_k + h_{k+1})$, so when one
+side thins it vanishes as $O(h^{2})$, and it is exactly zero when one side is.
+The face flux therefore switches itself off at the edge of a dry region. The
+obvious alternative, the arithmetic mean $(h_k^{3} + h_{k+1}^{3})/2$, retains a
+mobility of $h_k^{3}/2$ against a completely dry neighbor, draws liquid out of
+the dry region, and drives $h$ negative.
+
+\begin{warn}[Do not simplify this expression]
+Rewriting \cref{eq:disc:pps} as an arithmetic mean --- or as anything else that
+does not vanish with the thinner side --- removes the positivity guarantee. The
+symptom is not a crash but negative film thickness near a contact line, which
+then poisons the viscosity and the concentration equation downstream. The
+property is pinned by
+\file{yuzen/tests/test\_positivity\_mobility.cpp}, which checks
+\cref{eq:disc:pps} against \cref{eq:disc:pps-general}, checks that the mobility
+falls as $O(h^{2})$ and reaches zero, and checks that the arithmetic mean fails
+both.
+\end{warn}
+
+\subsection{One face mobility for the terms of the potential}
+\label{sec:disc:positivity-one}
+
+The disjoining pressure and the vertical gravity take the same face mobility,
+\cref{eq:disc:pps} to the bit (\code{Mobility::Face}; zero when either side is
+dry or is the ghost $-h$ of a \val{"Pinning"} edge). The flux of a face is
+then one mobility times the difference of the whole potential
+$\varphi = \hat\sigma\nabla^2(H+S) + \Dpn\,\Pihat(H) - \Bo\,(H+S)$
+(\cref{sec:output:potential}), so the dissipation of the scheme,
+$\sum_f D_f(\Delta\varphi)^2/\Delta x$, is a sum of squares: the discrete free
+energy never rises (\cref{sec:output:energy}), and a steady film is one with
+$\varphi$ uniform, the minimum of the discrete energy. The vertical gravity's
+term over a relief, $D_f\,\Delta s$, enters $A$ as $K(h_a + h_b)\,\Delta s$
+with $K = D_f/(h_a + h_b)$, the same share for the two cells of the face. The
+two terms took the arithmetic mean $(h_a^3 + h_b^3)/2$ until \file{Energy.dat}
+showed the free energy rising near a steady film; that mean also left a
+disjoining-pressure flux of $h^3/2$ against a dry neighbor.
+
+\subsection{The face mobility with Navier slip}
+\label{sec:disc:positivity-slip}
+
+With \key{Physics.Slip} (\cref{sec:ref-physics:slip}) the mobility is
+$D(h) = h^{3} + a h^{2}$, $a = 3\Lambda$, and \cref{eq:disc:pps-general}
+applies with
+%
+\begin{equation}
+  g(h) = -\frac{1}{a h} + \frac{1}{a^{2}}\ln\frac{h+a}{h}
+       = -\frac{x - \ln(1+x)}{a^{2}}, \qquad x = \frac{a}{h} .
+  \label{eq:disc:pps-slip}
+\end{equation}
+%
+Both forms cancel somewhere, and \file{model/Mobility.h} switches to a series
+there: $x - \ln(1+x)$ is summed as $\sum_{n=2}^{18}(-1)^n x^n/n$ below
+$x = 0.1$ (remainder below $5\times10^{-19}$ relative), and where the two
+heights differ by less than $10^{-3}$ of their mean $\bar h$ the face mobility
+is $D(\bar h)/(1 + \delta^{2}K/24)$, $\delta = h_{k+1} - h_k$,
+$K = D\,(1/D)''$, with a truncation error $O((\delta/\bar h)^4) < 10^{-12}$.
+Against a reference free of cancellation the largest relative error is
+$4\times10^{-13}$, and the value is continuous to $10^{-12}$ across each switch.
+Without slip none of this is reached: \cref{eq:disc:pps} is
+evaluated as written. The disjoining pressure and the vertical gravity take
+the same face mobility with slip as without (\cref{sec:disc:positivity-one}).
+
+The face mobility still vanishes on a dry side, but near it
+$D \sim a h^{2}$, so it vanishes as $O(h)$ rather than $O(h^{2})$.
+
+\begin{warn}[Slip weakens the positivity guarantee]
+With slip the degeneracy that keeps the film positive is one order weaker.
+Where the film is held up by a disjoining pressure, or does not thin below a
+fraction of its height (about $0.1\,h_0$), this has no visible effect; a film
+driven toward zero thickness with no disjoining pressure can go negative where
+it would not without slip. Watch \code{HHmin} in \file{History.dat}.
+\end{warn}
+
+\subsection{The same mobility in the \texorpdfstring{\val{"CZ"}}{CZ} model}
+\label{sec:disc:positivity-concz}
+
+The \val{"CZ"} model resolves concentration, and hence viscosity, through the
+thickness, so its in-plane velocity is not analytic: \code{CalVelocity()} in
+\file{model/ConcZ/CZ2D/CZ\_HeightEquation\_2D.cpp} integrates $1/\mu$ and
+$z/\mu$ across the film by Simpson's rule, and the concentration equation
+advects with the result.
+
+The film height itself, however, is advanced in the same conservative form as
+the well-mixed model,
+%
+\begin{equation}
+  \frac{\partial h}{\partial t} = -\frac{\partial Q}{\partial x} - E ,
+  \label{eq:disc:cz-conservative}
+\end{equation}
+%
+with the flux at a face carrying the same mobility \cref{eq:disc:pps}, divided
+by three because the depth-integrated flux is $h^{3}/3\mu$ rather than $h^{3}$.
+Integrating the \val{"CZ"} velocity profile through the thickness reproduces that
+factor exactly in the uniform-viscosity limit. The implementation is
+\code{FaceMobility()}, and the well-mixed counterpart of the same $1/3$ is the
+\code{\_Magnitude} of its capillary term.
+
+\begin{note}[The resolved viscosity at the face]
+The flux through a face is the depth integral of the resolved velocity
+profile,
+$Q = h^3 b\int_0^1 (1-\zeta)^2/\mu\,d\zeta + h^2\tau\int_0^1 (1-\zeta)/\mu\,d\zeta$,
+with $b$ the driving pressure gradient and body force and $\tau$ the
+Marangoni stress. The mobility therefore carries the mean of $1/\mu(c(\zeta))$
+weighted by $3(1-\zeta)^2$, the Marangoni flux the mean weighted by
+$2(1-\zeta)$, and the surface tension is that of the surface concentration
+(\code{FaceInvViscosity()}, \code{FaceSurfConc()}). The positivity-preserving
+$h$ factors are unchanged, and a uniform viscosity gives $h^3/3\mu$ exactly.
+A mobility that takes one viscosity and one surface tension per face at the
+depth-mean concentration would move the film with a flux that is not the
+integral of the profile which carries its solute, and with a stratified
+concentration its error does not fall with refinement
+(\cref{sec:verification:mms}).
+\end{note}
+
+Because both models are conservative and share the mobility, they agree in the
+limit where the concentration is uniform through the thickness --- and that
+agreement is a genuine check, since the two reach it by different routes. The
+comparison is run by \file{tools/concz\_vs\_wm.py} and is part of the test
+suite as \code{concz\_vs\_wm}: setting \key{Fluid.Viscosity.Exponent} to \val{0}
+and switching off evaporation and solutocapillarity leaves the concentration
+unable to affect $h$, and the peak film thickness of the two models then agrees
+to within $10^{-6}$ relative, with the volume of each conserved exactly and
+the same in the two \file{History.dat}.
+
+\begin{note}[Two traps when running this comparison]
+Leave the adaptive time step on and the two models choose different step
+histories, so their output times drift apart; comparing the last row of each
+\file{History.dat} then compares two different instants, which produces a
+difference of a few percent that moves around non-monotonically under
+refinement and looks exactly like a discretization error. Fix the step. Second,
+the output interval must be well below \key{EndTime}, or the only shared
+instant is the initial condition and the models appear to agree perfectly.
+\end{note}
+
+\section{The convection schemes}
+\label{sec:disc:convection}
+
+Three kinds of term are convective: the advection of the concentration, and
+in the well-mixed film-height equation the in-plane body forces and the
+Marangoni flux, which enter as a film height carried by a velocity rather than
+as the gradient of a mobility. Each needs the value of a field at a face, and
+takes it from the four cells $f_{LL}, f_L, f_R, f_{RR}$ about the face. For
+the fixed schemes this value is
+%
+\begin{equation}
+  f_{\text{face}} = \sum_j c_{1,j} f_j + \operatorname{sign}(u)\sum_j c_{2,j} f_j ,
+  \label{eq:disc:face}
+\end{equation}
+%
+with $c_1 = (-1, 7, 7, -1)/12$ and $c_2 = (-1, 3, -3, 1)/12$ for UTOPIA, and
+$c_2$ three times larger for Kawamura--Kuwahara. Both are third order; the
+leading error of the advection they give is $-|u|\Delta x^3/12\,\partial^4 f$
+and $-|u|\Delta x^3/4\,\partial^4 f$. \val{"Central4"} has no $c_2$: its face
+value is fourth order, the divergence only second, with no dissipation.
+UTOPIA is the uniformly third-order polynomial interpolation of Leonard,
+MacVean and Lock (1993), the Kawamura--Kuwahara scheme that of Kawamura,
+Takami and Kuwahara (1986) written as a face value, and \val{"QUICK"} the
+quadratic upstream interpolation of Leonard (1979); all are listed in Further
+reading.
+
+At the face of a \val{"Symmetry"} or \val{"Pinning"} edge the three
+upwinded terms of the film-height equation carry no flux: their mobility there
+is set to zero in $A$, in the Jacobian and in the velocity
+(\code{UpwindKernelBase::WallFace}). Their flux is not a gradient, and a
+mirrored ghost does not make the face value zero.
+
+The limited schemes write the face value from the upwind side. With
+$(UU, U, D)$ the cells $(LL, L, R)$ for a flow in $+x$ and $(RR, R, L)$ for one
+in $-x$, and the two differences $a = f_U - f_{UU}$, $b = f_D - f_U$,
+%
+\begin{equation}
+  f_{\text{face}} = f_U + \tfrac12\,\Phi(a, b), \qquad
+  \Phi_{\text{Koren}} = \operatorname{sign}(b)\min\!\left(2|a|,\ \tfrac{2|b| + |a|}{3},\ 2|b|\right), \qquad
+  \Phi_{\text{vL}} = \frac{2ab}{a + b},
+  \label{eq:disc:limited}
+\end{equation}
+%
+and $\Phi = 0$ unless $a$ and $b$ have the same sign: the limiters of Koren
+(1993) and van Leer (1974). Nothing is divided by a gradient that may vanish. Koren's is UTOPIA wherever $0.4 \le a/b \le 4$ and
+bounded elsewhere: the face value never leaves the interval between $f_U$ and
+$f_D$, and at an extremum it falls back to $f_U$. That is the price of the
+bound: a smooth extremum is clipped to first order locally, which costs the
+accuracy of a smooth solution, and the maximum error converges at about 1.5
+rather than 3 on a sine. The mirror image of a stencil gives the same value
+to the last bit, so the checks of \cref{sec:verification:equivalence} hold for
+every scheme.
+
+In the concentration equation, which is linear in $c$ once its coefficients
+are fixed, a limited face value is frozen at the latest iterate: in the row of
+the face's upwind cell it is written $f_U + \chi/2\,(f_U - f_{UU})$ with
+$\chi = \Phi/a$, elsewhere $f_U + \psi/2\,(f_D - f_U)$ with $\psi = \Phi/b$. The
+frozen matrix is then an M-matrix, and the explicit half of Crank--Nicolson is
+positive for a Courant number up to one, so the step keeps $c$ within its
+bounds there. The step is not held to that; a step past it is reported in
+\file{Warnings.txt}, for this equation and for the film height alike
+(\cref{sec:ref-numerics:convection}). The well-mixed concentration is re-solved on every Newton pass,
+so the frozen values converge with the film; the step is completed with the
+limiter frozen at its own answer (\cref{sec:disc:wm-conservative}), and the
+explicit half of each step is formed from the state the step starts from,
+with the limiter at that state. In \val{"CZ"} each
+stage uses the concentration it is evaluated at, which is the midpoint rule of
+the limited operator.
+
+\paragraph{$0 \le c \le 1$ without cutting or making solute.} The
+concentration is a mass fraction, and each completed step is brought into
+$0 \le c \le 1$. With the evaporation limited to the solvent there is
+(\cref{sec:terms:evaporation}) only rounding passes 1 --- and the over- and
+undershoot of an unbounded scheme at a sharp front: KK, UTOPIA, Central4 and
+QUICK at any Courant number, Koren and van Leer above one. In the well-mixed
+model what a real cell holds above 1, $h(c-1)$, goes to its face neighbors in
+proportion to the room they have, $h(1-c)$; what they cannot take goes on in
+a further pass from the cells it then sits in, up to four, and what is left
+after them is spread over every cell with room, in proportion to it. A cell
+below 0 is filled the same way the other way round: what it lacks, $-hc$, is
+taken from its face neighbors in proportion to the solute $hc$ they hold, in
+up to four passes, and then from every cell holding solute. The cells have
+equal area, so the sum of $hc$ that \code{ResinVolErr} balances
+(\cref{sec:output:history}) is kept to rounding, and the ghosts are formed
+again from the cells as moved. Each pass takes the room of every cell before
+it moves anything, so the result does not depend on the order of the cells,
+and where no cell leaves $[0, 1]$ nothing is touched. Only a film holding more
+solute than liquid in all, or less than none, would leave a remainder; it
+would be cut, or made up, and reported in \file{Warnings.txt}.
+\file{JobInfo.txt} gives the solute moved over the run
+(\cref{sec:output:jobinfo}). Left below 0, the undershoot of a front from
+$c = 0.7$ to $0.005$ reached $-0.04$ to $-0.09$ and, past the divergence test
+of $-0.1$, stopped the run with QUICK and Central4, and with UTOPIA at
+Courant 1.5 (found; corrected). Within the Newton passes the working field from
+which the viscosity, the Marangoni stress and the evaporation are taken is
+capped at 1, but the limiter of Koren and van Leer is frozen at the iterate as
+the equation solved it: frozen at the capped values, the two rows that share a
+face would take different face values from it, and the advection would lose
+its flux form there. In \val{"CZ"} the excess of a cell goes to the cell
+below it in its column, whose cells have the same volume; a column whose mean
+passes 1, which the solvent limit prevents, keeps $c$ above 1 with a warning.
+A cell below 0 is filled from the cells of its column that hold solute, in
+proportion to it; a column whose mean is below 0, which is what the
+undershoot of the advection along the film makes, takes what it lacks from
+the columns next to it in proportion to their solute (each scaled as a whole,
+so no cell of theirs goes below 0), in up to four passes and then from every
+column holding solute, as the well-mixed cells do
+(\code{CZ\_HeightEquation\_2D::RedistributeDeficit}). Left below 0, a front
+of \val{"CZ"} from 0.7 to 0.005 with UTOPIA at Courant 0.4 passed the
+divergence test and stopped the run (found; corrected).
+
+In the film-height equation the matrix $A$ holds the face weights frozen at
+the current film, so that $A(h)h$ is the flux exactly, and the Jacobian adds
+the rest of the derivative of the limited face height $h_f$: with
+$g = \partial h_f/\partial h$, $w(3g - w_t)h_f^2/\mu$ for the body forces and
+$(2g - w_t)h_f\,\Delta c/\mu$ for the Marangoni flux. Newton keeps its
+quadratic convergence (\cref{sec:verification:schemes}); at the kinks of
+Koren's $\Phi$ the derivative is one-sided. The Marangoni flux is upwinded by
+the direction of the flux itself, the sign of $\sigma_c\,\Delta c$, not of
+$\Delta c$ alone, which would pick the downwind side with a negative
+\key{Fluid.SurfaceTension.Coef}.
+
+\subsection{The well-mixed concentration in conservative form}
+\label{sec:disc:wm-conservative}
+
+The well-mixed concentration equation is solved as the finite-volume balance
+of the solute $hc$ of each cell over the step,
+%
+\begin{equation}\label{eq:disc:wm-conservative}
+  \begin{aligned}
+    h^{1}c^{1} - h^{0}c^{0}
+      = {}& -\Delta t \sum_f s_f \bigl[\theta\,G_f^{1} + (1-\theta)\,G_f^{0}\bigr]
+        + \Delta t\,S\,c_S \\
+      &{} - \Delta t\,\bigl[\theta\,r^{1}c^{1} + (1-\theta)\,r^{0}c^{0}\bigr],
+    \qquad
+    G_f = F_f\,c_f - D(c_f)\,h_f\,\frac{c_{\mathrm{hi}} - c_{\mathrm{lo}}}{\Delta x},
+  \end{aligned}
+\end{equation}
+%
+$s_f = \pm 1/\Delta x$ the outward sign of face $f$ over the spacing across
+it, $\theta = 1/2$. $F_f$ is the volume flux the film-height equation puts
+through that face: the sum, over the enabled terms, of what each holds in $A$
+for it --- the capillary, vertical-gravity and disjoining fluxes, and the
+in-plane body forces, the centrifugal force and the Marangoni stress with
+their upwinded face heights (\code{FaceFlux} of each kernel). $c_f$ is the
+face value of \key{Numerics.Convection.Concentration} (\cref{eq:disc:face}),
+upwinded by the sign of $F_f$; $D(c_f)\,h_f$ takes the means of the two cells.
+$S$ is the liquid the nozzle supplies, at the middle of the step as the
+film-height equation takes it, and $c_S$ the concentration it arrives at:
+$c_S = \theta c^{1} + (1-\theta)c^{0}$, the concentration it lands on, with
+\key{Physics.Source.ConcType = "local"} (the default), and
+$c_S = \key{Physics.Source.Conc}$ with \val{"supplied"}, which mixes the new
+liquid through the thickness of the cell's column: on a film with no flow,
+$c^{1} = (h^{0}c^{0} + \Delta t\,S\,c_S)/(h^{0} + \Delta t\,S)$.
+$r$ is the sideways outflow of the 1-D centrifugal term, which
+leaves at the concentration of its cell. Evaporation takes solvent only and
+does not appear: it is in $h^{1}$. This is \cref{eq:conc-dim} itself; the form
+of \cref{eq:conc-adv} for $c$ agrees with it in the continuum, but discretely
+only the balance keeps the solute. Solved for $c$ in the form of
+\cref{eq:conc-adv}, a front from 0.9 to 0.3 on a closed
+periodic film, carried by the flow and drying by Raoult's law, lost
+$1\times10^{-5}$ to $3\times10^{-4}$ of its solute, depending on the scheme
+and the grid (50 to 200 cells), over 0.3 of a crossing of the domain (found;
+corrected: now $4\times10^{-16}$ to $3\times10^{-15}$ in 1-D and
+$2\times10^{-14}$ in 2-D, \code{conc\_drying} in
+\cref{sec:verification:analytic}).
+
+The equation is solved for the change $d = c^{1} - c^{0}$ of the step. Taking
+$c^{0}$ times the film's own step,
+$h^{1} - h^{0} = -\Delta t \sum_f s_f[\theta F_f^{1} + (1-\theta)F_f^{0}]
+- \Delta t\,[\theta r^{1} + (1-\theta)r^{0}] - \Delta t\,(E - S)$, from
+\cref{eq:disc:wm-conservative} leaves
+%
+\begin{equation}\label{eq:disc:wm-change}
+  \begin{aligned}
+    &h^{1} d + \theta\Delta t \sum_f s_f\bigl[F_f^{1} d_f - K_f^{1}(d_{\mathrm{hi}} - d_{\mathrm{lo}})\bigr]
+       + \theta\Delta t\,(r^{1} - S)\,d \\
+    &\quad= -\Delta t \sum_f s_f \bigl[\theta F_f^{1} + (1-\theta)F_f^{0}\bigr](c^{0}_f - c^{0})
+       + \Delta t\,E\,c^{0} \\
+    &\qquad\quad{}+ \Delta t \sum_f s_f \bigl[\theta K_f^{1} + (1-\theta)K_f^{0}\bigr](c^{0}_{\mathrm{hi}} - c^{0}_{\mathrm{lo}}),
+  \end{aligned}
+\end{equation}
+%
+$K_f = D(c_f)h_f/\Delta x$, every face value $c^{0}_f - c^{0}$ formed as the
+sum of the face weights times $c^{0}_k - c^{0}$. The weights sum to one, so a
+uniform $c^{0}$ gives a right-hand side of exactly zero without evaporation,
+and $d = 0$; the evaporation, $\Delta t\,E\,c^{0}$, concentrates the solute
+as $h^{1}c^{1} = h^{0}c^{0}$ where nothing else acts. With
+\key{EnableConvection} off the terms in $c_f - c$ are dropped, and the film
+still thins or thickens under the solute ($\theta\Delta t \sum_f s_f
+F_f^{1} d$); the solute is then not a balance, since the flow moves liquid
+without the solute in it, and the step ends with $c^{0} + d$.
+
+The film $h^{1}$ comes from the Newton iteration of the same step. On every
+pass the concentration is solved with the film of that pass and its fluxes
+(\cref{sec:time:coupling}); these give that film only once the iteration has
+converged. The step is then completed (\code{AfterNKLoop} of
+\file{HeightEquationBase.h}). The film is the one the iteration converged
+to; the fluxes, the sideways outflow and the supply are taken at it, with the
+concentration of the last pass, and the evaporation as that pass took it.
+What their divergence still misses of the step the film took, cell by cell,
+is the residual of the step at that film; less its mean over the cells, which
+is the volume error of the step and stays as that, it is added to the fluxes
+of the inner faces as running sums --- along $y$ the sum of each row of cells
+spread evenly over the row, then along $x$ within each row what is left of
+it --- so that the face fluxes are exactly those of the step the film took
+(\code{ConsistentFluxes}). No edge face and no wall is touched, and nothing
+is solved. The film the fluxes would give instead, $h^{0}$ less their
+divergence, differs from the converged one by that residual, and on a film far
+thicker than its cells the residual is at the rounding of fluxes of enormous
+size ($\epsmach\,\Delta t/\Delta t_{\mathrm{explicit}}$,
+\cref{sec:convergence:floor}): taken as the film, it goes negative in
+\file{nozzle\_1d\_rotating}. The concentration is then
+solved once more with these fluxes and this film, and the solute of each cell
+is formed from \cref{eq:disc:wm-conservative} with the solute flux of each
+face formed once, from the four cells about it whichever side asks
+(\code{Reconstruct} of \file{ConcEquationBase.h}): the sum of $hc$ over the
+cells changes by the fluxes through the edges and the sources alone, to
+rounding, whatever the tolerance of the linear solve. Those edge fluxes, the
+volume flux of each edge face (which \code{ConsistentFluxes} leaves alone)
+and the solute flux \code{Reconstruct} formed there, are what
+\file{History.dat} counts as crossing a \val{"FreshInlet"} or an
+\val{"Outlet"} (\cref{sec:output:history}). A limited scheme is
+solved again with its limiter frozen at its own answer until that settles
+($10^{-12}$, at most eight times), so that the face values of the step are
+the limited face values of the answer. Then $c$ is brought into $[0, 1]$
+(\cref{sec:disc:convection}). A pass, or the end of a step, whose film has a
+cell without liquid ($h \le 0$, at a step far too long for the film) leaves
+the concentration as the pass before had it: the balance of $hc$ is not one
+there, and the step is left to fail on the film (found: the
+solve failed first and the run stopped naming the concentration solver;
+corrected). At such a step the Newton correction of the film stagnates far
+from convergence, and the step is cut, or at a fixed step the run stops
+naming the stagnation (\code{wm\_diverges} in \file{tools/input\_guards.py},
+\cref{sec:convergence:stagnation}); a film that is below zero all the same,
+as one read from a file, stops the run as diverged (\code{wm\_film\_below}).
+
+A uniform concentration under a strong in-plane flow, a nozzle, the vertical
+gravity, the capillary pressure and, in 1-D, the spin stays uniform to
+$6\times10^{-16}$ (\code{conc\_uniform}) --- in general to the rounding of
+the solute fluxes relative to the film, $\epsmach\,\Delta t\sum_f|F_f|/h$,
+which the solute formed from them once more carries (up to $3\times10^{-12}$
+in \file{tools/proptest.py}, on a thin film next to a \val{"Pinning"} edge); with every term of the model the
+manufactured solutions converge at second order in $\Delta x$ and $\Delta t$
+(\cref{sec:verification:mms}), and the oblique wave of
+\cref{sec:verification:schemes} at 1.91 and 1.97.
+
+\subsection{The concentration of \texorpdfstring{\val{"CZ"}}{CZ} in conservative form}
+\label{sec:disc:cz-conservative}
+
+The \val{"CZ"} concentration equation is a finite-volume balance of $hc$ on
+the $\zeta$ grid. The film-height equation stores the flux through each of
+its faces and writes the end of the step as their divergence; the
+concentration equation splits each of these into layer fluxes, the cell mean
+of the resolved velocity profile adjusted so that the layers of a column add
+up to the film-height flux face by face. The flux through the $\zeta$ faces
+then follows from the discrete conservation of the grid, built up from the
+substrate, with the evaporating solvent leaving through the surface face.
+The ghost cells above the surface and below the substrate are set so that
+the total flux there --- advection and the whole diffusive flux, its part
+along the slope included --- is zero. The step is solved for the change of
+$c$, so a uniform $c$ gives exactly no change, and the small solute residual
+of the linear solver is put back as a uniform shift of the change, sized for
+the solvent the shift itself sends through the surface term and applied to
+the ghosts as well (each side of a periodic seam forms the flux there from
+its own), so that the solute of the step balances to rounding. The limited schemes keep
+their frozen upwind and downwind forms, which keep $c$ bounded, and are
+re-solved until the limiter has settled at the midpoint of the step.
+
+The scheme of \key{Numerics.Convection.Concentration} is used on every face,
+$x$, $y$ and $\zeta$ alike. With the central schemes nothing is dissipated in
+any direction, so the solution has what the model has at the shortest waves
+the grid resolves: a film stratified with $\sigma_c\,\partial c/\partial\zeta
+> 0$ and a weak diffusivity is unstable there, and a central scheme lets
+those waves grow where an upwind-biased one damps them on a coarse enough
+grid (\cref{sec:verification:schemes}).

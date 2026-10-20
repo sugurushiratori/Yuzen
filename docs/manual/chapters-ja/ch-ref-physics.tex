@@ -1,0 +1,159 @@
+% ch-ref-physics.tex -- reference: the Physics block and its nine sub-blocks
+\chapter{Physics}
+\label{ch:ref-physics}
+
+\key{Physics}は必須のブロックで、ちょうど1回書く。ブロック自身のキーはなく、物理効果ごとのサブブロック九つをまとめる容器として働く。各サブブロックは省略でき、書く場合も1回までとする。ほとんどのサブブロックは\key{Enable}キー一つで切り替える。有効にした項は、膜厚の式の流束に係数として加わる。無効にした項は無次元数をゼロとし、組み立てない。
+
+本章ではキーを列挙する。各項の中身、すなわち加わる流束と前提となる仮定は理論編で述べ、参照先は各節に示す。
+
+\begin{note}[\key{Physics}のサブブロックを省くと項は無効になる]
+  ファイルにないサブブロックは、スイッチを切った空のブロックとして読む。項は計算せず、ほかのキーは本章に記載の既定値をとる。ただし\key{Enable}の既定値が\val{true}のサブブロック四つ（\key{LaplacePressure}、\key{SolutoCapillarity}、\key{Evaporation}、\key{Source}）では、ブロックを省くことと空で書くことは同じにならない。空の\code{[Physics.Evaporation]}を書けば蒸発は有効になり、書かなければ無効のままである。\key{ConcField}がない場合は\key{Model}~$=$~\val{"None"}とみなす。同梱のケースは、必要なサブブロックをすべて明示している。
+\end{note}
+
+\section{\key{Physics.ConcField}}
+\label{sec:ref-physics:concfield}
+
+溶質を輸送するかどうか、どう輸送するかを決めるブロックである。\key{Model}キーと\key{Grid.Dimension}の組でソルバーのモデル全体が決まる。\val{"WM"}と\val{"xh"}なら1次元の鉛直一様モデル、\val{"WM"}と\val{"xyh"}なら2次元の鉛直一様モデルとなる。\val{"CZ"}と\val{"xh"}なら1次元の膜で厚さ方向の濃度分布を解くモデル、\val{"CZ"}と\val{"xyh"}なら同じことを2次元の膜で行うモデル（擬似3次元）となる。\cref{ch:concentration}を参照されたい。
+
+\begin{keytable}{\key{Physics.ConcField}のキー\label{tab:physics-concfield-keys}}\key{Model} & string & \reqd & \val{"WM"}＝深さ方向に平均した鉛直一様の濃度を膜厚と連立して解く。\val{"CZ"}＝1次元または2次元の膜で、厚さ方向の濃度分布を解く（$\mathrm{Nz}\ge 2$が必要）。\val{"None"}＝濃度の式を解かない。\val{"CZ\_flow"}＝受け付けるが未実装。ブロックを書く場合は必須で、ブロックがなければモデルは\val{"None"}となる。 \\
+\key{EnableConvection} & bool & \val{true} & 濃度の式に対流項を含める。鉛直一様モデルに限る。 \\
+\key{EnableDiffusion} & bool & \val{true} & 濃度の式に拡散項を含める。鉛直一様モデルに限る。 \\
+\end{keytable}
+
+\begin{warn}[\val{"CZ\_flow"}は範囲チェックを通るが、何もしない]
+  \val{"CZ\_flow"}は候補リストにあるためエラーなく受け付けるが、実装したモデルはない。実行は\key{Grid.Dimension}で決まる鉛直一様モデルに戻り、\emph{濃度の式は無効になる}。\val{"None"}を指定した場合と同じ動作であり、未知の文字列が何かの理由でチェックを通った場合も同じになる。結果として、濃度一定のもっともらしい計算が得られてしまう。使用すべきではない。
+\end{warn}
+
+濃度の式を構成しない場合（\val{"None"}、\val{"CZ\_flow"}、未知の文字列）、\key{EnableConvection}、\key{EnableDiffusion}、\key{Fluid.Diffusivity}、\key{Numerics.ConcEquation}全体は効果を持たない。
+
+\section{\key{Physics.LaplacePressure}}
+\label{sec:ref-physics:laplace}
+
+表面張力の項であり、自由表面が平らになろうとする性質を表す。膜のレベリング、液滴が球冠になること、粗い基板のくぼみに液体が引き込まれることは、いずれもこの項による。空間四階微分を含み、膜厚の式が四階になるのもこの項のためである。そのため、ほぼすべての計算で有効にしておく。曲率は膜厚ではなく自由表面$h+s$で測る。基板形状はこれを通じて式に入る。\cref{sec:terms:laplace}を参照されたい。
+
+\begin{keytable}{\key{Physics.LaplacePressure}のキー\label{tab:physics-laplace-keys}}\key{Enable} & bool & \val{true} & 膜厚の式の毛管圧（ラプラス圧）項を有効にする。 \\
+\end{keytable}
+
+\section{\key{Physics.SolutoCapillarity}}
+\label{sec:ref-physics:soluto}
+
+溶質マランゴニ流れを扱う。表面張力は濃度に依存するので、濃度勾配は表面応力となり、自由表面に沿って液体を引きずる。体積力ではなく表面に加わるせん断であるため、$h^3$ではなく$h^2$に比例する。乾燥時の筋や塗膜のむらは、この流れが原因となることが多い。\cref{sec:terms:marangoni}を参照されたい。
+
+\begin{keytable}{\key{Physics.SolutoCapillarity}のキー\label{tab:physics-soluto-keys}}\key{Enable} & bool & \val{true} & 溶質マランゴニ流れを有効にする。falseのとき$\Ma$は0に固定され、\key{Fluid.SurfaceTension.Coef}は警告なしに無視される。 \\
+\end{keytable}
+
+\begin{warn}[無効にすると表面張力の濃度依存性も消える]
+  $\Ma$はマランゴニ応力の係数であると同時に、毛管圧項の移動度で$\sigma$を$c$に依存させる係数でもある。そのため\key{Enable = false}とすると、表面張力の濃度依存性は\emph{完全に}なくなり、乾燥する膜は$\sigma_0$だけで決まる速さでレベリングする。マランゴニ応力なしで濃度依存性だけを残すことは、このスイッチではできない。
+\end{warn}
+
+\section{\key{Physics.DisjoiningPressure}}
+\label{sec:ref-physics:disjoining}
+
+分離圧$\Pihat = (\Hstar/H)^n - (\Hstar/H)^m$は、膜がごく薄くなったときに基板と自由表面の間に働く相互作用を表す。部分濡れ、すなわち有限の平衡接触角、移動する接触線、液滴の外側に残る厚さ$\Hstar$の前駆膜は、この項によってモデルに入る。係数は、指定した接触角が潤滑近似の極限で再現されるように決めてある。したがって指数や前駆膜の比を変えても目標の接触角は変わらず、変わるのは前駆膜の厚さと遷移領域の幅である。$\Pihat \sim H^{-n}$であるため、モデルの中では際立って硬い項となる。\cref{sec:terms:disjoining}を参照されたい。
+
+\begin{keytable}{\key{Physics.DisjoiningPressure}のキー\label{tab:physics-disjoining-keys}}\key{Enable} & bool & \val{false} & 分離圧、すなわち有限の接触角を持つ部分濡れを有効にする。\key{Initial.SurfaceShape.PrecursorRatio} $>0$が必要。 \\
+\key{ContactAngle} & double & \val{0} & 平衡接触角$\thetae$。単位は\textbf{度}、範囲は$[0:90]$。範囲のチェックは\key{Enable}がtrueのときに限る。\val{0}では分離圧はゼロになる。 \\
+\key{ExponentN} & double & \val{3} & 斥力側の指数$n$（無次元）。$n>m>1$を満たす必要がある。チェックは\key{Enable}がtrueのときに限る。 \\
+\key{ExponentM} & double & \val{2} & 引力側の指数$m$（無次元）。制約は上と同じ。 \\
+\end{keytable}
+
+\begin{note}[指数の既定値は$(n,m)=(3,2)$]
+  ブロックがない場合も、\key{Enable = true}として指数を書かなかった場合も、組は$(3,2)$となる。
+\end{note}
+
+\begin{warn}[分離圧を有効にして前駆膜の比をゼロにすると計算は中断する]
+  $\Hstar$は$\Pihat$がゼロになる膜厚なので、ゼロにはできない。\key{Initial.SurfaceShape.PrecursorRatio = 0}と\key{Enable = true}を組み合わせると、最初のステップに入る前に\code{NonDimensionalNumbers::Build}で致命的エラーとなる。\file{FatalErrors.txt}には
+  \code{Physics.DisjoiningPressure requires
+  Initial.SurfaceShape.PrecursorRatio > 0.}
+  と出力される（\cref{sec:output:warnings}）。前駆膜の大きさは形式的に埋める値ではなく、モデリング上の判断で決める。\cref{sec:terms:disjoining}を参照されたい。
+\end{warn}
+
+\begin{note}[\val{"CZ"}モデルはこのブロックを一切使わない]
+  \key{Physics.ConcField.Model = "CZ"}の場合、膜厚の式を構成するのは毛管圧、溶質マランゴニ効果、遠心力、鉛直重力、水平重力だけである。\key{Physics.DisjoiningPressure}と\key{Physics.Source}全体は、警告なしに効果を持たない。接触線を含む問題は鉛直一様モデルで扱う。
+\end{note}
+
+\section{\key{Physics.VerticalGravity}}
+\label{sec:ref-physics:vgravity}
+
+基板に垂直な重力を扱う。静水圧により、液体は自由表面の高い部分から低い部分へ流れる。そのため水平な基板上では凸部を平らにし、毛管圧と同じ向きに働く。毛管圧と同様に$h+s$で駆動されるので、基板形状の影響も受ける。基板を角度$\alpha$だけ傾ける場合は、$g\cos\alpha$を与える。\cref{sec:terms:vgravity}を参照されたい。
+
+\begin{keytable}{\key{Physics.VerticalGravity}のキー\label{tab:physics-vgravity-keys}}\key{Enable} & bool & \val{false} & 静水圧によって膜をレベリングさせる重力項を有効にする。falseのとき$\Bo$は0に固定される。 \\
+\key{Acceleration} & double & \val{9.80665} & 基板に垂直な加速度。単位は\si{\metre\per\second\squared}、非負。ボンド数$\Bo = \rho g L_0^2/\sigma_0$を決める。\key{Enable}がfalseでも読み込まれ、その後破棄される。 \\
+\end{keytable}
+
+長さスケールを毛管長とし、\key{Acceleration = 9.80665}とすると、ボンド数はちょうど1になる。$\Bo$を変えたいときは\key{Acceleration}を変更する。
+
+\section{\key{Physics.HorizontalGravity}}
+\label{sec:ref-physics:hgravity}
+
+面内の体積力、すなわち傾斜した基板を扱う。鉛直重力と異なり、駆動場は位置によらない一定のベクトルである。そのため膜の厚い部分ほど速く流れ、前線ができる。角度$\alpha$だけ傾いた基板では面内成分$g\sin\alpha$（$30^\circ$で\num{4.903}）を与え、符号で下り方向を指定する。\cref{sec:terms:hgravity}を参照されたい。
+
+\begin{keytable}{\key{Physics.HorizontalGravity}のキー\label{tab:physics-hgravity-keys}}\key{Enable} & bool & \val{false} & 面内の体積力を有効にする。falseのとき$\Pgx$と$\Pgy$は0に固定される。 \\
+\key{Acceleration} & array & \val{[0, 0]} & 面内の加速度$(g_x,g_y)$。単位は\si{\metre\per\second\squared}。1次元の計算でも、長さはちょうど~2とする。 \\
+\end{keytable}
+
+\section{\key{Physics.Centrifugal}}
+\label{sec:ref-physics:centrifugal}
+
+スピンコーティングの遠心力項である。基板が回転すると膜は外向きに振り飛ばされる。駆動場は軸からの距離$r$に比例するので、効果は外縁で最も強い。1次元（\val{"xh"}）の計算では、解かない$y$方向へ振り飛ばされた液体を流出として扱い、\file{History.dat}の\code{OutflowedVol}に計上する。回転する膜は周期的ではないため、この項と\val{"Periodic"}の辺は併用できない（\key{Numerics.ManufacturedSolution}の場合を除く）。\cref{sec:terms:centrifugal}を参照されたい。
+
+\begin{keytable}{\key{Physics.Centrifugal}のキー\label{tab:physics-centrifugal-keys}}\key{Enable} & bool & \val{false} & 遠心力（スピンコーティング）項を有効にする。falseのとき$\Spn$は0に固定される。 \\
+\key{RotationRate} & double & \val{0} & 基板の角速度$\omega$。単位は\si{\radian\per\second}、値に制限はない。$\Spn = \rho\omega^2 L_0^4/(\sigma_0 h_0)$。 \\
+\key{RotationAxis} & array & \val{[0, 0]} & 回転軸の面内位置$(x,y)$。単位はメートル。長さはちょうど~2とする。 \\
+\end{keytable}
+
+\section{\key{Physics.Slip}}
+\label{sec:ref-physics:slip}
+
+基板でのナビエすべり長さ$\lambda$を与える。流体は基板上を速度$\lambda\,\partial u/\partial z$ですべる。このとき、圧力や体積力で駆動される項の移動度は$h^{3}/3$から$h^{3}/3 + \lambda h^{2}$に、マランゴニ項の移動度は$h^{2}/2$から$h^{2}/2 + \lambda h$に置き換わる（\cref{sec:terms:slip}）。無次元すべり長さは$\Lambda = \lambda/h_0$で、すべりが有効なときはログの\code{Nondimensional numbers}に\code{Lambda}として出力される。すべりが変えるのは動力学だけで、平衡状態はすべりの有無によらない。ブロックがなければすべりなしとなり、\key{Enable = true}かつ\key{Length = 0}の場合も（警告を出して）すべりなしとなる。\val{"CZ"}モデルではこのブロックを指定できない（\cref{ch:notverified}）。すべりがある場合、膜厚の正値性は次数が一つ低い形でしか保証されない（\cref{sec:disc:positivity-slip}）。
+
+\begin{keytable}{\key{Physics.Slip}のキー\label{tab:physics-slip-keys}}\key{Enable} & bool & \val{false} & 基板でのナビエすべりを有効にする。falseのとき$\Lambda = 0$となり、すべての項がすべりなしの式で計算され、結果もビット単位で一致する。 \\
+\key{Length} & double & \val{0.0} & すべり長さ$\lambda$。単位はメートル、非負。$\Lambda = \lambda/h_0$。 \\
+\end{keytable}
+
+\section{\key{Physics.Evaporation}}
+\label{sec:ref-physics:evaporation}
+
+蒸発によって溶媒が失われ、膜は薄くなり、残った液は濃縮される。蒸発速度は、基準速度、濃度の関数、位置の関数、薄膜補正の積で表す。濃度の式には同じ速度を局所の膜厚で割ったものが入る。薄い領域ほど速く濃縮されるのはこのためである。\cref{sec:terms:evaporation}を参照されたい。
+
+\begin{keytable}{\key{Physics.Evaporation}のキー\label{tab:physics-evap-keys}}\key{Enable} & bool & \val{true} & 溶媒の蒸発を有効にする。falseのとき蒸発モデルは構成されず、速度は全域で0となる。 \\
+\key{Coef} & double & \val{1} & 基準蒸発速度$E_0$。単位は\si{\metre\per\second}、非負。$\Ev = E_0 T_0/h_0$と$\Pen = E_0 h_0/D_0$を決める。 \\
+\key{SpatialFunc} & string & \val{"uniform"} & 流束の空間分布。\val{"uniform"}または\val{"negPow"}を指定する。\val{"negPow"}は\cref{eq:evap-negpow}の径方向べき$k(1-r/R')^{-n}$で、$n>0$のときプールの縁に向かって負のべきで発散する（上限は10）。縁の手前5セルで、曲線の値と傾きを引き継ぐ四分の一余弦に滑らかに切り替わり、\key{NegPowRmax}で最大となる。その外側では一定値をとる。 \\
+\key{ConcFunc} & string & \val{"Raoult"} & 濃度依存性。\val{"Raoult"}はモル質量比を用いるラウールの法則、\val{"PowerN"}は$\max(1-c-\mathrm{ConcR},0)^{\mathrm{PowerN}}$とする。 \\
+\key{NegPowExponent} & double & \val{0.25} & \val{"negPow"}分布$k(1-r/R')^{-n}$の指数$n$（無次元、1未満）。正なら速度は縁で発散し、0なら一様、負なら縁でゼロに落ちる。前置係数$k=\frac{1}{2}(1-n)(2-n)$により、プール上の平均は1に保たれる。\key{SpatialFunc}が\val{"negPow"}のときに限り使う。 \\
+\key{NegPowRmax} & double & \val{1} & \val{"negPow"}分布のプールの半径$R$。単位はメートル、正。格子座標の原点から測る。\val{"negPow"}のときに限り使う。 \\
+\key{PowerN} & double & \val{0.5} & \val{"PowerN"}則の指数（無次元、値に制限なし）。0のとき速度は$c$とともに下がらず、$c = 1$で溶媒が尽きて蒸発が止まる（\cref{sec:terms:evaporation}）。\val{"PowerN"}のときに限り使う。 \\
+\key{ConcR} & double & \val{0.0} & \val{"PowerN"}則の残留濃度オフセット。質量分率で$[0:1)$。蒸発は$c = 1-\mathrm{ConcR}$で止まる。\val{"PowerN"}のときに限り使う。 \\
+\key{EndConcType} & string & \val{"mean"} & \key{EndConcValue}と比較する濃度の統計量。\val{"mean"}、\val{"max"}、\val{"min"}のいずれか。それ以外の文字列はエラーとなる。 \\
+\key{EndConcValue} & double & \val{0.95} & 乾燥完了のしきい値。質量分率で$(0:1]$。選んだ統計量がこの値を超えると、\code{Dry out}で計算を終了する。 \\
+\end{keytable}
+
+\begin{warn}[乾燥完了の判定は蒸発を無効にしても行われる]
+  \key{EndConcValue}は\key{Enable}の値によらず適用される。\key{Physics.Evaporation}を省いたファイルでも既定値\val{0.95}が使われる。そのため、蒸発以外の要因で濃度がしきい値に達した膜は、蒸発が無効でも\code{Dry out}で終了する。
+\end{warn}
+
+\key{PowerN}、\key{ConcR}、\key{EndConcType}、\key{EndConcValue}を使うケースは、\file{cases/}にはない。
+
+\section{\key{Physics.Source}}
+\label{sec:ref-physics:source}
+
+ノズルから膜に液体を供給する項で、吐出ヘッドのモデルである。ノズルは回転するアームに載せることもできる。各セルへの供給量は、ノズルの供給範囲がセルを覆う割合に比例する。この割合はセルを細分して求める。\cref{sec:terms:source}を参照されたい。
+
+\begin{keytable}{\key{Physics.Source}のキー\label{tab:physics-source-keys}}\key{Enable} & bool & \val{true} & 供給項を有効にする。既定値は\textbf{true}である。\key{Enable}を書かずにブロックだけを書くとノズルは有効になり、ブロックを省くと無効のままとなる。 \\
+\key{Radius} & double & \val{1} & ノズルの供給範囲の半径。単位はメートル、正。 \\
+\key{InletRate} & double & \val{0} & 定常時の供給速度。単位は\si{\metre\per\second}（単位面積あたりの体積流束）、非負。$h_0/T_0$で無次元化する。 \\
+\key{ConcType} & string & \val{"local"} & 供給する液体の濃度。\val{"local"}では着地点の膜と同じ濃度とする（$c$を変えずに膜が厚くなる）。\val{"supplied"}では濃度を\key{Conc}とし、着地した列の厚さ方向に混合する（\cref{sec:terms:source}）。それ以外の文字列はエラーとなる。 \\
+\key{Conc} & double & \val{0} & 供給する液体の濃度。質量分率で$[0:1]$。\key{ConcType = "supplied"}のとき、範囲外の値はエラーとなる。\val{"supplied"}のときに限り使う。 \\
+\key{TimeConstant} & double & \val{0} & 流量が指数関数的に立ち上がる時定数$\tau$。単位は秒、非負。$\mathrm{rate} = \mathrm{InletRate}\,(1-e^{-t/\tau})$。\val{0}なら最初のステップから全流量となる。 \\
+\key{ArmLength} & double & \val{1} & ノズルを載せる回転アームの長さ。単位はメートル、非負。\val{0}ならノズルは\key{ArmCenter}に固定される。 \\
+\key{ArmCenter} & array & \val{[0, 0]} & アームの回転中心$(x,y)$。単位はメートル。長さはちょうど~2とする。 \\
+\key{RotationRate} & double & \val{0} & アームの角速度。単位は\si{\radian\per\second}、値に制限はない。\key{Physics.Centrifugal.RotationRate}とは別のキーである。 \\
+\key{StartAngle} & double & \val{0} & $t=0$でのアームの角度。単位はラジアン、値に制限はない。 \\
+\key{RampTime} & double & \val{0} & アームの回転速度を上げ下げする時間。単位は秒、非負。 \\
+\key{PlateauTime} & double & \val{1e10} & 回転速度を一定に保つ時間。この後で減速に入る。単位は秒、非負。 \\
+\key{SubRegions} & int & \val{1} & 覆われた割合を求めるときの、セルあたりの分割数。1以上。大きくすると、ノズルが動くときの供給が滑らかになる。 \\
+\end{keytable}
+
+\begin{note}[\key{Conc}を使うかどうかは\key{ConcType}で決まる]
+  既定（\key{ConcType = "local"}）では、供給した液体は着地点の濃度をそのままとり、\key{Conc}は使わない。\key{Conc}だけを設定しても、組成の異なる液体を吐出したことにはならない。\key{ConcType = "supplied"}では液体は濃度\key{Conc}で着地し、ノズル直下の濃度は膜との混合で決まる（\cref{eq:source-mixing}）。\file{History.dat}の\code{SuppliedResin}は、どちらの場合も供給された溶質を計上する。濃度の式がない場合（\key{Physics.ConcField.Model = "None"}）、このキーは効果を持たない。
+\end{note}

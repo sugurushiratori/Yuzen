@@ -1,0 +1,72 @@
+% --- title page ------------------------------------------------------------
+\begin{titlepage}
+\thispagestyle{empty}
+\centering
+\vspace*{\stretch{2}}
+
+\includegraphics[height=52mm]{figures/yuzen-mark.pdf}
+
+\vspace{14mm}
+
+{\sffamily\bfseries\fontsize{54pt}{58pt}\selectfont\color{yznInk} Yuzen}
+
+\vspace{5mm}
+
+{\sffamily\fontsize{13pt}{18pt}\selectfont\color{yznShadow}
+ 潤滑近似に基づく液膜流れソルバー}
+
+\vspace{9mm}
+
+{\color{yznCeladon}\rule{46mm}{1.2pt}}
+
+\vspace{9mm}
+
+{\sffamily\fontsize{15pt}{19pt}\selectfont\color{yznInk} ユーザーマニュアル}
+
+\vspace{3mm}
+
+{\sffamily\small\color{yznInk!70} バージョン 1.0 \quad\textbullet\quad \today}
+
+\vspace*{\stretch{3}}
+
+{\sffamily\small\color{yznInk!75}
+ 白鳥 英\quad(Suguru Shiratori)\\[2pt]
+ 東京都市大学\quad(Tokyo City University)}
+
+\vspace{6mm}
+\end{titlepage}
+
+\cleardoublepage
+\thispagestyle{empty}
+\vspace*{\stretch{1}}
+\noindent
+{\sffamily\bfseries\large\color{yznShadow} Yuzen ユーザーマニュアル}
+
+\medskip
+\noindent
+本書は Yuzen バージョン 1.0 を対象とする。
+
+\medskip
+\noindent
+Copyright \textcopyright{} 2017--2026 Suguru Shiratori, Tokyo City University.
+
+\medskip
+\noindent
+Yuzen は Apache License, Version 2.0 に基づいて配布する。ライセンス全文は
+\url{https://www.apache.org/licenses/LICENSE-2.0}から入手できる。
+配布物に含まれる\file{LICENSE}と\file{NOTICE}も参照されたい。
+
+\medskip
+\noindent
+同梱しているサードパーティーのコードは doctest（MIT）と toml++（MIT、独自の修正を一箇所含む）である。
+ビルド時には Eigen（MPL-2.0、必須）と AMGCL（MIT、任意）を取得する。
+\file{THIRD\_PARTY\_NOTICES.md}を参照されたい。
+
+\medskip
+\noindent
+本マニュアルは\file{docs/manual/}のソースから Lua\LaTeX で生成している。
+\cref{ch:verification}に挙げる数値はすべてリポジトリから再現できる。
+再現用のコマンドは各数値とともに示す。
+
+\vspace*{\stretch{2}}
+\cleardoublepage

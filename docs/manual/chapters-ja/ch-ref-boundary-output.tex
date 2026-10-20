@@ -1,0 +1,291 @@
+% ch-ref-boundary-output.tex -- reference: the Boundary and Output blocks
+\chapter{境界条件と出力}
+\label{ch:ref-bcout}
+
+本章では二つのブロックを説明する。\key{Boundary}は計算領域の縁での条件を決める。
+答えを最も大きく左右する選択の一つである。\key{Output}はディスクに書き出す内容と頻度を
+決める。計算で何が起きたかを後から知ることができるかどうかは、この設定で決まる。
+どちらも必須で、それぞれちょうど一度だけ書く。
+
+\section{\key{Boundary}}
+\label{sec:ref-bcout:boundary}
+
+\key{Boundary}自体はキーをもたない。計算領域の縁ごとに一つのサブブロックを置き、
+各サブブロックはキー\key{Type}を一つだけもつ。\key{XminBC}と\key{XmaxBC}は必須である。
+\key{YminBC}と\key{YmaxBC}は省略でき、\key{Grid.Dimension}が\val{"xyh"}の
+ときにだけ意味をもつ。
+
+\begin{keytable}{\key{Boundary}の四つのサブブロック（いずれもキーは\key{Type}のみ）\label{tab:boundary-keys}}\key{XminBC.Type} & string & \val{"Symmetry"} & 縁$x=\mathrm{Xmin}$での条件。\val{"Symmetry"}、 \val{"Periodic"}、 \val{"Pinning"}、 \val{"FreshInlet"}、 \val{"Outlet"}から選ぶ。ブロックは必須。 \\
+\key{XmaxBC.Type} & string & \val{"Symmetry"} & 縁$x=\mathrm{Xmax}$での条件。選べる値は同じ。ブロックは必須。 \\
+\key{YminBC.Type} & string & \val{"Symmetry"} & 縁$y=\mathrm{Ymin}$での条件。選べる値は同じ。ブロックは省略可。1次元では無視する。 \\
+\key{YmaxBC.Type} & string & \val{"Symmetry"} & 縁$y=\mathrm{Ymax}$での条件。選べる値は同じ。ブロックは省略可。1次元では無視する。 \\
+\end{keytable}
+
+\begin{note}[四階の方程式なので縁ごとに条件が二つ必要]
+  膜厚の式は空間の四階微分を含むので、各境界には条件が一つではなく\emph{二つ}
+  必要である。値を書くのではなく名前の付いた型を選ぶのはこのためである。各名前は
+  条件の組を表す。その組を課せるように、ゴーストセルの層は二セル分の深さをもつ。
+  濃度の式は二階なので、同じ名前から条件を一つだけ受け取る。
+\end{note}
+
+\subsection{各型の意味}
+
+\paragraph{\val{"Symmetry"}} 対称面である。境界を横切る流束はなく、形状と濃度は
+どちらも境界に関して鏡映される。条件は$\partial h/\partial n = 0$と
+$\partial^3 h/\partial n^3 = 0$である。1次元でも2次元でも、二層のゴーストセルは内側の
+二層の厳密な鏡像になる（\cref{sec:time:apply}）。液滴や液膜の中心を境界に置いて
+計算量を半分にする場合や、閉じた壁として使う。既定値はこの型である。液体が外へ
+出ていくべき場合には使ってはならない。\val{"Symmetry"}の縁に向かって濡れ広がる液滴は、
+そこに壁があるかのように振る舞い、\val{"Outlet"}とは異なる答えになる。
+
+\paragraph{\val{"Periodic"}} 縁が反対側の縁とつながる。ゴーストセルの層には反対側の値を
+複写する。周期的な構造をもつ基板上の液膜や、無限に続くパターンの一波長を計算する
+ときに使う。計算領域を横切る正味の流れがある物理には適さない。面内重力やソースが
+あると、一方の側から流れ出た液体が周期性によって他方の側へ戻ってしまう。遠心力の項と
+組み合わせると拒否される。力の腕、つまり回転軸からの距離が継ぎ目をまたいで計算領域の
+長さだけ跳ぶので、回転する液膜は周期的ではないからである（\cref{sec:terms:centrifugal}。
+製造解を使う実行は除く）。
+
+\paragraph{\val{"Pinning"}} 接触線を縁に固定する。境界での膜厚をゼロに固定し、
+そこでの面内速度もゼロとする。濃度には勾配ゼロの条件を課す。膜厚をゼロに保つので、
+\textbf{初期の液膜も固定した縁でゼロに達している必要がある}。ソルバーは最初の
+ステップの前にこれを検査する。最初の二セルから壁まで液膜を外挿し、その値を実行ログに
+出力する。
+\begin{plain}
+Pinning Xmax: the initial film reaches 0.204 um at the wall (2.0 % of its 9.995 um maximum) -- ok.
+\end{plain}
+壁に最も厚い液膜の十分の一を超える厚さが残っていれば、この行と対処法を示して
+実行を止める。固定した縁に全厚の液膜が接していると、一セル内の段差になり、最初の
+数ステップではこれを越えられない。止めなければ、ニュートン反復が停滞し、時間刻みが
+\key{MinDt}未満まで縮んで実行が終わる。しかもメッセージには壁を示す手がかりが何もない。
+このような場合のために用意した形状が、その\key{Location}に置く\key{Initial.\bk SurfaceShape.\bk EdgeBump}
+である。この形状では小さな\key{PrecursorRatio}が必要になる。ほかの場所では液膜が
+前駆膜より薄くならないからである。2次元では縁に沿ったすべての行を検査し、最も悪い行を
+出力する。この検査は初期条件に対するものである。リスタート（\key{Restart.Enable}）では
+場ファイルの液膜から計算を続けるが、その縁は時間発展で変化している可能性がある（壁に
+押し付けられて乾くと、そこの液膜が最も厚い部分の十分の一を超えることがある）。
+リスタートではその状態をそのまま受け入れ、限度を超えていればこの行を警告として書く
+（\cref{sec:ref-numerics:restart}）。この型は、段差、エッジビード、汚染線などで
+止められた液体の縁を表す。解像した接触線の計算コストを払う\emph{ことなく}、縁の
+動かない液膜をモデル化できる。縁が動く速さを知りたい場合には適さない。それには
+分離圧と、遷移領域を解像する格子が必要である（\cref{sec:terms:disjoining}）。
+また、\key{Initial.SurfaceShape.EdgeBump}は、自身の\key{Location}の縁にこの型を要求する。
+
+\paragraph{\val{"FreshInlet"}} 組成一定の液体が流入する境界である。縁での濃度は初期値に
+保つ。縁のセル界面での膜厚は現在の液膜から取り、$\partial^3 h/\partial n^3 = 0$
+とする。塗布の上流端で使う。流入する液体の組成は規定するが、流入量は液膜が決める。
+
+\begin{note}[\val{"FreshInlet"}にはキーがなく、流入状態は\key{Initial}で決まる]
+  流入口の膜厚や濃度を指定するキーは、入力ファイルのどこにもない。規定値は、その縁で
+  最も内側にある二点の平均である。膜厚の式では\emph{現在の}場から取り、濃度の式では
+  境界条件を構築したときに保存した場のスナップショット（\code{\_field\_ini}）から取る。
+  したがって流入口の状態は\key{Initial}ブロックで決まり、特に濃度は実行全体を通じて
+  初期値のまま固定される。流入する液体を変えたいときは、その縁の近くの初期分布を変える。
+\end{note}
+
+\paragraph{\val{"Outlet"}} 自由流出である。条件は$\partial^2 h/\partial n^2 = 0$と
+$\partial^3 h/\partial n^3 = 0$であり、境界が形状を押し付けることなく液体が流れ出る。
+計算量を抑えるために計算領域を切っただけで、その先の状況が不明な場所で使う。
+流出した体積とそれに伴う溶質は、各ステップのセル界面流束から積算し、
+\file{History.dat}に出力する（\code{OutflowedVol}、\code{OutflowedResin}。
+\val{"FreshInlet"}からの流入分は負として数える）。そのため\code{VolErr}と
+\code{ResinVolErr}は丸め誤差の水準にとどまる（\cref{sec:output:history}）。流出口が
+想定どおりに働いているかは、これで確認できる。実際に壁や対称面がある場所には
+適さない。本来溜まるべき液体が流れ去ってしまうからである。
+
+\subsection{型の組み合わせと特殊な場合}
+
+\val{"Periodic"}は、対になる縁の\emph{両方}に設定するか、どちらにも設定しない。
+片側だけが周期的な縁では周期的な計算領域にならない。入力の整合性検査
+（\code{CheckParameters::Check}）は、片側だけの\val{"Periodic"}を、方向にも次元にも
+よらず、何かを構築する前に拒否する。メッセージは
+\code{Periodic must be set on both edges of a pair or on neither}である。
+遠心力の項と\val{"Periodic"}の縁の組み合わせも、\key{Numerics.ManufacturedSolution}が
+有効でない限り拒否する（回転する液膜は周期的ではない。メッセージには
+\code{a rotating film is not periodic}と出る）。
+
+\val{"CZ"}モデルが実装している縁の型は、\val{"Symmetry"}と\val{"Periodic"}の二つだけで
+ある。整合性検査は、\val{"CZ"}に対する\val{"Pinning"}、\val{"FreshInlet"}、
+\val{"Outlet"}を、縁の名前を示して拒否する。
+
+2次元では、隣り合う型のすべての組について角の処理を実装している。ただし
+\val{"Pinning"}と\val{"FreshInlet"}、および\val{"Pinning"}と\val{"Outlet"}の組み合わせは
+除く。この四通りの角（二つの型をどちらの順に並べた場合も）は\emph{実装しておらず、
+実行を中止する}。メッセージ\code{not yet implemented}を\file{FatalErrors.txt}と標準
+エラー出力に書き、\file{Warnings.txt}には何も書かない（\file{model/\bk BoundaryCondition.cpp}）。
+流入口や流出口の隣に固定した縁が必要な場合は、その角の処理を実装する必要がある
+（\cref{sec:extending:other}）。
+
+\begin{warn}[基板は壁で鏡映される]
+  液膜と濃度に何を指定しても、\key{Substrate}の形状は、\val{"Periodic"}以外のすべての縁で
+  鏡像としてゴーストセルの層へ延長される。\val{"Periodic"}の縁では計算領域の反対側から
+  延長される。したがって、壁に関して対称でない基板形状（\key{FlatPlane}で傾けた平面や、
+  計算領域の縁で半分に切れた隆起）は、ゴーストセルの層で自身の延長ではなく鏡像と
+  接することになる。できる限り、基板が平坦な場所か、勾配が本当にゼロの場所に壁を置く。
+\end{warn}
+
+\section{\key{Output}}
+\label{sec:ref-bcout:output}
+
+\key{Output}は、\key{JobName}で名付けた結果ディレクトリに書き出す内容と頻度を決める。
+自身のキーを二つもつ。サブブロックは、\key{FieldData}、\key{GeneralHistory}、
+\key{CalcInfo}が必須、\key{ProbeList}が省略可である。
+
+\begin{keytable}{\key{Output}のキー\label{tab:output-keys}}\key{Overwrite} & bool & \val{false} & 結果ディレクトリが既にあっても実行を続け、書き直すファイルを置き換える（\cref{sec:output:dir}）。偽のときは、既存のディレクトリがあれば何も書かずに実行を中止する。 \\
+\key{Dimensioned} & bool & \val{true} & 結果をソルバー内部の無次元量ではなく有次元の単位で書く。時間はすべて\si{\second}、速度はすべて\si{\metre\per\second}である。長さの単位はファイルによって異なる（下記参照）。リスタートファイルの解釈もこのキーで決まる。\cref{sec:ref-numerics:restart}を参照。 \\
+\end{keytable}
+
+\begin{warn}[\key{Dimensioned}でもファイルごとに長さの単位は異なる]
+  位置を出力するファイル（\file{field*.dat}、\file{field*.vts}、\file{ProbeNN.dat}）
+  では、高さは\si{\micro\metre}、面内座標は\si{\milli\metre}である。
+  \file{History.dat}だけは例外で、そのままのスケールを使う。長さは\si{\metre}、体積は
+  \si{\metre\cubed}（1次元では幅1メートルあたりの\si{\metre\cubed\per\metre}）である。
+  そうしないと体積が\si{\milli\metre\squared\micro\metre}という混合単位になり、
+  ファイル間で単位が異なるよりもかえって扱いにくい。
+
+  どのファイルもヘッダーに単位を書いているので、この対応を覚えておく必要はない。
+  最初の行を参照すれば十分である。あるファイルの数値を別のファイルの数値と比べる前には、
+  必ず単位を確かめる必要がある。
+\end{warn}
+
+\subsection{出力ファイル}
+
+\begin{description}
+  \item[\file{field00000.vts}, \dots] 場全体をバイナリのVTK構造格子で書いたもの。
+    隣には時系列インデックス\file{<JobName>.pvd}を置く。これによりParaViewは一連の
+    ファイルを一つのアニメーションとして扱える。\key{FieldData.VTKFile}で制御する。
+  \item[\file{field00000.dat}, \dots] 同じ場をタブ区切りのASCIIで書いたもの。
+    ASCIIのリスタート形式も兼ねるので、どの場の出力からでも実行を続けられる。
+    手で編集することもでき、解析的に作った分布を与えるときはこのファイルを使う。
+    \key{FieldData.NeutralFile}で制御する。
+  \item[\file{History.dat}] 積分量と極値の時間変化。時間の後に続く列はすべて
+    \cref{tab:history-columns}に挙げる。実行後に最初に見るべきファイルである。
+  \item[\file{CalcInfo.dat}] ソルバーの診断情報。出力間隔ごとに1行書く。ニュートン反復の
+    回数と残差、線形ソルバーの反復回数と残差、時間刻み、定常状態の判定に使う相対変化率を
+    含む。実行が遅いときや途中で止まったときはここを参照されたい。
+  \item[\file{Energy.dat}] \key{Output.Energy}を指定すると、液膜の自由エネルギー、
+    散逸、両者の収支を\file{History.dat}の各行と同じ時刻に書く
+    （\cref{sec:output:energy}）。
+  \item[\file{ProbeNN.dat}] プローブを宣言した場合に、プローブごとに一つ書く時系列。
+    \code{NN}は入力ファイルでの記述順に\code{00}から数える、ゼロ詰め二桁の番号である
+    （\cref{sec:output:probes}）。
+  \item[\file{JobInfo.txt}, \file{Warnings.txt}, \file{FatalErrors.txt}] テキスト
+    ファイル。\file{JobInfo.txt}には、プログラム、計算機、計時の情報と、実行に関する
+    いくつかの数値（最大のクーラン数、$c = 1$を超えて移した溶質と$c = 0$未満のセルへ
+    移した溶質、\cref{sec:output:jobinfo}）を書く。ソルバーが入力から構築したもの
+    （導いたスケールと無次元数）と実行の進行状況は標準出力に出し、ファイルには
+    書かない（\cref{sec:output:running}）。\file{Warnings.txt}には実行中に出たすべての
+    警告を、\file{FatalErrors.txt}には実行を中止した理由を書く。後者は標準エラー出力にも
+    同じ内容を出す。どちらにもバナーはないので、何も出なかったときに限り空になる。
+    \cref{sec:output:warnings}を参照されたい。
+\end{description}
+
+\subsection{出力間隔と時間刻みの関係}
+\label{sec:output:intervals}
+
+四つの\key{TimeInterval}キーはいずれも\textbf{秒}単位で指定し、内部では時間スケール
+$T_0$で割る。どの間隔も時間刻みの上限として働く。ステップが間隔より長くなることは
+ないので出力が飛ぶことはなく、各出力は予定時刻に最も近い時刻のステップで書く。
+したがって、入力ファイル中で最小の間隔は、\key{Numerics.TimeStepControl.MaxDtFactor}による
+上限（\cref{sec:ref-numerics:tsc}）とともに、実行全体を通じた$\Delta t$の上限になる。
+このため、適応時間刻みのケースで履歴の間隔を非常に短くすると、代償がある。
+物理が必要とするより小さく時間刻みを抑えてしまうことがある。
+
+\key{Numerics.InitialDt}が最小の出力間隔より大きい場合は、その間隔まで切り詰める。
+このため、最初のステップが最初の出力より長くなることはない。
+
+\textbf{最終状態は、間隔の設定によらず必ず書く}。各出力は次のステップの前に書くので、
+このままでは実行が終わった状態（\key{EndTime}での状態、つまり求めていた答えそのもの）は、
+間隔がたまたま終了時刻を割り切る場合にしか残らない。そこでループの終わりに最終状態を
+もう一度書く。ただし、その時刻がまだファイルにない場合に限るので、予定が終了時刻に
+一致しても二重には書かない。例外は発散で止まった実行である。その状態は解ではないので、
+それ以上は何も書かない。\file{.pvd}の時刻は予定時刻ではなく実際に到達した時刻である。
+そのため切りのよい数にはならず、末尾の数桁にステップの履歴が残る。
+
+\subsection{\key{Output.FieldData}}
+
+\begin{keytable}{\key{Output.FieldData}のキー\label{tab:output-fielddata-keys}}\key{TimeInterval} & double & \val{0.01} & 場全体を出力する間隔（秒）。正の値。$\Delta t$の上限にもなる。\key{Times}や\key{LogSchedule}とは同時に指定しない。 \\
+\key{NeutralFile} & bool & \val{true} & ASCIIの中立形式の場ファイル\file{.dat}を書く。ASCIIのリスタート形式を兼ねる。 \\
+\key{VTKFile} & bool & \val{true} & バイナリの\file{.vts}ファイルを書き、ParaView用の\file{.pvd}インデックスを更新する。 \\
+\key{WritePotential} & bool & \val{false} & 駆動ポテンシャル$\varphi$を書く。\file{field*.dat}には列\code{PHI}を、\file{.vts}には配列\code{Potential}を追加する（\cref{sec:output:potential}）。鉛直一様モデルのみ。 \\
+\key{Times} & array & \val{[]} & \key{TimeInterval}ごとではなく、指定した時刻（秒）に場を書く。昇順の正の値。\key{Numerics.EndTime}より後の時刻は捨てる。少なくとも一つは残る必要があり、空のリストは受け付けない。 \\
+\key{ExactTimes} & bool & \val{false} & \key{Times}と併用し、列挙した各時刻にステップを一致させる（\cref{sec:ref-output:listed}）。\key{Times}がなければ受け付けない。 \\
+\end{keytable}
+
+\subsubsection{列挙した時刻での出力}
+\label{sec:ref-output:listed}
+
+\key{TimeInterval}ごとに場を書くと、時間刻みは実行全体を通じてその間隔以下に抑えられる。
+そのため、実行の最初の数マイクロ秒と最後の数秒の両方を解像したい場合（たとえば時間にして
+七桁にわたってレベリングする液膜）には、すべてのステップが最短の間隔に抑えられてしまう。
+\key{Times}、または後述のサブブロック\key{LogSchedule}を使うと、出力時刻を列挙できる。
+\textbf{列挙した時刻が制限するのは、その時刻を通り過ぎようとするステップだけである}。
+\begin{description}
+  \item[\key{ExactTimes} \val{false}] 間隔指定の場合と同様に、列挙した各時刻に最も近い
+    ステップで場を書く。ステップは、前後の列挙時刻の間隔以下に抑えられる。間隔指定で
+    ステップが間隔以下に抑えられるのと同じだが、列挙時刻の間隔が広がればステップも
+    長くなれる。複数の列挙時刻を通り過ぎるステップでは一度だけ書く。
+  \item[\key{ExactTimes} \val{true}] 次の列挙時刻を通り過ぎようとするステップは、
+    丸め誤差の範囲でその時刻に一致するように短縮し、そこで場を書く。その次のステップには、
+    短縮する前の刻みを使う。列挙時刻があるからといって、時間刻み制御が短いステップから
+    やり直すことはない。短縮したステップも、取ったステップとして扱う（次のステップの
+    誤差推定はこのステップをまたいで差分を取る）。時間刻み制御がそれより短いステップを
+    求めた場合や、ステップを短くして再試行した場合は、時間刻み制御が求める値から続ける。
+    時刻の$10^{-9}$未満の残りは丸め誤差とみなし、そこへはステップを進めない。
+\end{description}
+間隔指定の場合と同様に、開始時の状態を最初に、最終状態を最後に書く。
+\file{field*.state}から続行した実行は、待っていた列挙時刻から続ける。場ファイルだけから
+続行した場合は、リスタート時刻より後の最初の列挙時刻から続ける。\textbf{ほかの出力は
+引き続きその間隔でステップを制限する}（\cref{sec:output:intervals}）。列挙時刻を使う
+ときは、\key{Output.GeneralHistory}、\key{Output.CalcInfo}、\key{Output.ProbeList}の
+間隔を実行が許す限り長くするのが望ましい。\file{leveling\_1d\_logout}は、$10^{-7}$から
+\SI{1}{\second}までの七桁にわたる141個の時刻を403ステップで書く。最短の間隔に抑えると、
+同じ実行に少なくとも$10^7$ステップかかる。
+
+\begin{keytable}{\key{Output.FieldData.LogSchedule}のキー（省略可。\key{TimeInterval}と\key{Times}の代わりに使う）\label{tab:output-logschedule-keys}}\key{Start} & double & \reqd & 最初の列挙時刻（秒）。正の値。 \\
+\key{End} & double & \reqd & 最後の列挙時刻（秒）。\key{Start}より後。\key{Numerics.EndTime}より後の列挙時刻は捨てる。 \\
+\key{PerDecade} & int & \reqd & 1桁あたりの列挙時刻の数。1以上。時刻は$\key{Start}\cdot 10^{i/\key{PerDecade}}$、$i = 0, 1, \dots$で、\key{End}までとる。 \\
+\key{ExactTimes} & bool & \val{false} & \key{Output.FieldData.ExactTimes}と同じ。 \\
+\end{keytable}
+
+\subsection{\key{Output.GeneralHistory}}
+
+\begin{keytable}{\key{Output.GeneralHistory}のキー\label{tab:output-history-keys}}\key{TimeInterval} & double & \val{0.1} & \file{History.dat}の出力間隔（秒）。正の値。$\Delta t$の上限にもなる。 \\
+\end{keytable}
+
+\subsection{\key{Output.CalcInfo}}
+
+\begin{keytable}{\key{Output.CalcInfo}のキー\label{tab:output-calcinfo-keys}}\key{TimeInterval} & double & \val{0.1} & \file{CalcInfo.dat}の出力間隔（秒）。正の値。$\Delta t$の上限にもなる。 \\
+\end{keytable}
+
+\subsection{\key{Output.ProbeList}}
+
+プローブは固定点であり、そこでの解を独自の予定で書き出す。場全体の出力よりはるかに
+高い頻度で書ける。このブロックは省略できる。省略すると空のブロックとして読むので、
+プローブはなく、\key{TimeInterval}は\val{0.1}\,sのままで、やはり$\Delta t$を制限する。
+
+\begin{keytable}{\key{Output.ProbeList}のキー\label{tab:output-probelist-keys}}\key{TimeInterval} & double & \val{0.1} & プローブごとの時系列\file{ProbeNN.dat}の出力間隔（秒）。正の値。リストにプローブが一つもなくても読み込み、$\Delta t$の制限に使う。 \\
+\end{keytable}
+
+\subsection{\key{Output.ProbeList.Probe}}
+
+このブロックは\textbf{繰り返し指定できる}。プローブごとに一つ、ファイルに付けたい番号の
+順に書く。それぞれテーブル配列のヘッダー\code{[[Output.ProbeList.Probe]]}として書く
+（\cref{sec:inputformat:repeat}）。
+
+\begin{keytable}{\key{Output.ProbeList.Probe}のキー（繰り返し可）\label{tab:output-probe-keys}}\key{X} & double & \reqd & プローブの$x$座標（メートル）。任意の値。一セル以内で最も近い格子点を使う。該当する点がなければ、プローブは何も告げずに捨てる。 \\
+\key{Y} & double & \val{0} & $y$座標（メートル）。1次元の鉛直一様モデルでは無視する。 \\
+\key{Z} & double & \val{0} & 基板からの高さ（メートル）。\val{"CZ"}モデルだけが使う。プローブのある列の初期膜厚を使って、格子の$\zeta$に変換する。液膜が変化しても、プローブはその$\zeta$にとどまる。 \\
+\end{keytable}
+
+\begin{note}[プローブの位置]
+  \file{cases/}のケースはどれも\key{Probe}を宣言していない。プローブは\code{ctest}で
+  検査している（\code{features}、\cref{sec:verification:features}）。\file{ProbeNN.dat}の
+  ヘッダーには、実際に使った点を示す。出力が有次元ならミリメートル単位で書き、
+  \val{"CZ"}ではその$\zeta$も書く。
+\end{note}
+
+\subsection{\key{Output.Energy}}
+
+\begin{keytable}{\key{Output.Energy}のキー\label{tab:output-energy-keys}}\key{Enable} & bool & \val{false} & 液膜の自由エネルギー、散逸、両者の収支を、\file{History.dat}の各行と同じ時刻に\file{Energy.dat}へ書く（\cref{sec:output:energy}）。鉛直一様モデルのみ。\val{"CZ"}では受け付けない。 \\
+\end{keytable}

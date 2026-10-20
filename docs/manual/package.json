@@ -1,0 +1,9 @@
+{
+  "name": "yuzen-manual",
+  "private": true,
+  "description": "Build-time dependency of the Yuzen manual: tohtml.py pre-renders every formula to SVG with MathJax, so the HTML edition needs neither network nor JavaScript to display an equation.",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "mathjax-full": "^3.2.1"
+  }
+}

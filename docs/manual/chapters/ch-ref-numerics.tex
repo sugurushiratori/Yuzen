@@ -1,0 +1,443 @@
+% ch-ref-numerics.tex -- reference: the Numerics and Restart blocks
+\chapter{Numerics and restart}
+\label{ch:ref-numerics}
+
+\key{Numerics} holds every setting that decides \emph{how} the equations are
+solved rather than what they are: the time step, the Newton iteration of the
+height equation, and the two linear solves. \key{Restart} says where a
+continued run picks up from. This is a reference chapter --- it gives the keys,
+their ranges and their immediate meaning, and points at the numerical-method
+part for the reasoning, which is where you should go when a run will not
+converge or will not move.
+
+\section{\key{Numerics}}
+\label{sec:ref-numerics:numerics}
+
+Required, exactly once. These five keys govern the outermost loop: how long the
+run lasts and when it decides that nothing is happening any more. The
+steady-state test measures the relative change of thickness \emph{per unit
+time}, multiplied by the total time span --- ``how much the shape would still
+move if the run continued at the present rate'' --- rather than the change per
+step, so that a collapsed time step cannot be mistaken for a steady state. See
+\cref{ch:timeintegration}.
+
+\begin{keytable}{Keys of \key{Numerics}\label{tab:numerics-keys}}\key{InitialDt} & double & \reqd & Initial time step in seconds, positive. Clamped down to the smallest output interval if it is larger. \\
+\key{EndTime} & double & \val{0} & Physical end time in seconds; the loop runs while $\mathrm{StartTime}\le t\le\mathrm{EndTime}$. Positive in practice --- see the warning below. With a restart it is still an absolute time, so it must exceed \key{Restart.RestartTime}. \\
+\key{MaxSteps} & int & \val{0} & Stop after this many steps, whatever \key{EndTime} says. At least 0; \val{0} sets no limit. Counted in 64 bits, up to $2^{63}-1$; a restart counts on from the steps already taken. \\
+\key{SteadyStateCriterion} & double & \val{1e-3} & Threshold on (relative thickness change per unit time) $\times$ ($\mathrm{EndTime}-\mathrm{StartTime}$), non-dimensional. Any value; $\le 0$ disables the test. The span falls back to 1 when $\mathrm{EndTime}\le\mathrm{StartTime}$. \\
+\key{SteadyStateSteps} & int & \val{10} & How many consecutive steps the criterion must hold, range $[1:1000000]$. The test is \code{count > SteadyStateSteps}, so the run needs one step more than the number given. \\
+\end{keytable}
+
+\begin{warn}[\key{EndTime} defaults to 0, which is not ``run for ever'']
+  With \key{EndTime} left at its default the run stops after a single step, and
+  the steady-state test falls back to a time span of 1. There is no setting
+  that means ``unlimited''. \textbf{Always set \key{EndTime} explicitly.} The
+  other two ways a run can stop are the dry-out test
+  (\key{Physics.Evaporation.EndConcValue}) and the steady-state test above.
+\end{warn}
+
+\section{\key{Numerics.TimeStepControl}}
+\label{sec:ref-numerics:tsc}
+
+Required block. The time step is adaptive only when \key{Enable} is true; the
+step is decided by the height equation, and the concentration equation follows
+it. The error estimate comes from comparing two consecutive time differences,
+and the step shrinks when the estimate exceeds \key{Criterion}. See
+\cref{ch:timeintegration}.
+
+\begin{keytable}{Keys of \key{Numerics.TimeStepControl}\label{tab:tsc-keys}}\key{Enable} & bool & \val{false} & Make the time step adaptive. When false, $\Delta t$ stays at \key{InitialDt}. \\
+\key{MaxDtFactor} & double & \val{10000} & Upper bound on $\Delta t$ as $\mathrm{MaxDtFactor}\cdot\Delta x_{\min}^4$, the fourth-order-diffusion scaling, in non-dimensional time. Positive. Applied whether or not \key{Enable} is true. \\
+\key{MinDt} & double & \val{1e-15} & Floor on $\Delta t$ in non-dimensional time, positive. The run aborts when a smaller step is requested. Applied whether or not \key{Enable} is true. \\
+\key{Criterion} & double & \val{0.01} & Tolerated local truncation error per step, non-dimensional, positive. \\
+\key{ScaleFloor} & double & \val{0.0} & Floor on the weight that normalizes the error, as a fraction of the global maximum thickness, range $[0:1]$. \val{0} divides by the local thickness, so thin precursor regions dominate; \val{1} normalizes by the global maximum only. \\
+\key{KeepSteps} & int & \val{50} & How many consecutive successful steps are required before $\Delta t$ may grow again, at least 1. \\
+\key{ChangeFactor} & double & \val{0.5} & Factor $\Delta t$ is multiplied by when it shrinks, and divided by when it grows. Range $(0:1)$. \\
+\end{keytable}
+
+\begin{note}[What the \key{Enable} switch does and does not cover]
+  With \key{Enable = false}, \key{Criterion}, \key{ScaleFloor},
+  \key{KeepSteps} and \key{ChangeFactor} are read but never applied ---
+  whereas \key{MaxDtFactor} and \key{MinDt} still are. A fixed step is
+  therefore still capped from above and floored from below. The \val{"CZ"}
+  model applies neither of those two: its step is capped by the output
+  intervals alone, and floored at the built-in \val{1e-15}. A step that
+  does not converge --- the well-mixed Newton iteration, which includes a
+  correction that stagnates far from convergence
+  (\cref{sec:convergence:stagnation}), or a linear solve
+  of the film or of the concentration in either model --- cannot be retried
+  at a shorter one, so it stops the run with that reason. With
+  \key{Enable = true} such a step is cut and solved again.
+\end{note}
+
+\section{\key{Numerics.HeightEquation}}
+\label{sec:ref-numerics:height}
+
+Required block. The height equation is non-linear, because its mobility
+depends on the unknown, so each step is solved by an outer Newton--Kantorovich
+iteration. These five keys control that iteration. They are the
+settings most worth understanding before you change anything else: the single
+most common cause of a run that crawls is a convergence test that cannot be
+satisfied, which collapses the time step. \Cref{ch:convergence} explains the
+mechanism in full, and \cref{sec:convergence:floor} explains why the
+correction cannot fall below a floor, and when that floor is set by the mesh
+and the step size.
+
+\begin{keytable}{Keys of \key{Numerics.HeightEquation}\label{tab:heighteq-keys}}\key{NewtonEpsilon} & double & \val{1e-10} & Absolute convergence threshold on the Newton--Kantorovich correction, non-dimensional, positive. Setting it below the floor of the correction makes every step ``fail'' and collapses the time step. \\
+\key{NewtonEpsilonRel} & double & \val{1e-6} & Relative threshold: how far the correction must fall below the step's \emph{first} correction. Range $[0:1]$; $\le 0$ disables it, leaving the absolute test alone. Independent of solution scale and of $\Delta t$. \\
+\key{NewtonMaxIterations} & int & \val{30} & Iteration cap for the Newton solve, at least 1 in practice. Exceeding it counts as a failed step, which shrinks $\Delta t$ when the adaptive step is on and stops the run at a fixed step; so does a correction that stagnates far from convergence (\cref{sec:convergence:stagnation}). \\
+\key{NewtonMinIterations} & int & \val{1} & Minimum number of Newton iterations per step, range $[1:100]$. \val{1} lets the convergence test alone decide; \val{6} makes every step take at least six. \\
+\key{JacobianUpdateInterval} & int & \val{1} & Modified-Newton interval: how often the Jacobian is rebuilt, range $[1:100]$. \val{1} rebuilds it every iteration. \\
+\end{keytable}
+
+\begin{tip}[Prefer the relative test to a smaller \key{NewtonEpsilon}]
+  When a run stalls, lowering \key{NewtonEpsilon} is the wrong direction: where
+  the correction has a floor proportional to $\Delta t$, a smaller absolute
+  threshold feeds back into a smaller step, which lowers the floor, and the
+  run locks onto the step where the two just meet. Leave the absolute test
+  where it is and let \key{NewtonEpsilonRel} do the work
+  (\cref{sec:convergence:floor}).
+\end{tip}
+
+\begin{warn}[The \val{"CZ"} model ignores all five of these keys]
+  With \key{Physics.ConcField.Model = "CZ"} the height equation is solved
+  semi-implicitly and never calls the corresponding setters, so
+  \key{NewtonMaxIterations}, \key{NewtonMinIterations}, \key{NewtonEpsilon}, \key{NewtonEpsilonRel} and
+  \key{JacobianUpdateInterval} have no effect and the built-in defaults of the
+  Newton solver are used instead. The same model also ignores
+  \key{Physics.DisjoiningPressure} and the whole \key{Physics.Source} block.
+\end{warn}
+
+\section{\key{Numerics.ConcEquation}}
+\label{sec:ref-numerics:conceq}
+
+Required block with \textbf{no keys of its own}. Its sole purpose is to hold
+the \key{LinearSolver} block of the concentration equation. It must be present
+even when no concentration equation is solved --- with \key{Model = "None"},
+for instance, the block is still required, and its contents are still ignored.
+
+\section{\key{Numerics.Convection}}
+\label{sec:ref-numerics:convection}
+
+Optional, at most once. It chooses the face interpolation of the convective
+terms (\cref{sec:disc:convection}).
+
+\begin{yzntable}{Keys of \key{Numerics.Convection}\label{tab:ref-numerics:convection}}{@{}L{0.20\textwidth} L{0.08\textwidth} L{0.14\textwidth} L{0.50\textwidth}@{}}
+\textsf{\bfseries Key} & \textsf{\bfseries Type} & \textsf{\bfseries Default} & \textsf{\bfseries Meaning}\\ \midrule
+\key{Concentration} & string & \val{"UTOPIA"} & The advection of $c$: in $x$ and $y$, and in \val{"CZ"} also in $\zeta$. \\
+\key{Height} & string & \val{"Koren"} & The upwinded fluxes of the well-mixed film-height equation: the in-plane gravity, the centrifugal term and the Marangoni flux. Refused with \val{"CZ"}, whose film-height equation upwinds nothing. \\
+\end{yzntable}
+
+Both take one of \val{"UTOPIA"} (third-order upwind), \val{"KK"}
+(Kawamura--Kuwahara: the same with three times the dissipation),
+\val{"Koren"} and \val{"VanLeer"} (limited, bounded), \val{"Central4"},
+\val{"QUICK"}, \val{"Upwind1"}, \val{"Upwind2"} and \val{"Central2"}; any
+other name is refused with the list. The schemes in use are written to the
+log and to \file{JobInfo.txt}. \Cref{sec:verification:schemes} gives the comparison
+the defaults were chosen by: \val{"Koren"} for the film height because it
+keeps the face height between its neighbors and survives steep fronts over
+a thin precursor, \val{"UTOPIA"} for the concentration because it is the
+most accurate on smooth profiles. For a concentration with sharp fronts,
+\val{"Koren"} keeps $c$ within its bounds at the cost of accuracy at smooth
+extrema. \val{"Central2"} and \val{"Central4"} dissipate nothing: where the
+model itself is unstable at the shortest resolved waves --- in \val{"CZ"}, a
+film stratified with $\sigma_c\,\partial c/\partial\zeta > 0$ and a weak
+diffusivity --- they let those waves grow
+(\cref{sec:verification:schemes}).
+
+\paragraph{The Courant check of the limited schemes.} \val{"Koren"} and
+\val{"VanLeer"} are bounded only for a Courant number up to one
+(\cref{sec:disc:convection}). With either in use the solver computes, after
+every step, the Courant number of the step, $\Delta t$ times the larger of
+the rates of the state it starts from and the state it ends at, a rate being the
+largest over the cells of $\sum_\text{axes} \max(\text{speed on the two
+faces})/\Delta$:
+\begin{itemize}
+  \item \key{Concentration}, well-mixed: the speed is $|u|$ of the velocity
+    that advects $c$, over $\Delta x$ and $\Delta y$.
+  \item \key{Concentration}, \val{"CZ"}: the volume fluxes of the layers,
+    $|Q|/(h\,\Delta x)$ in $x$ and $y$ and $|W|/(h\,\Delta\zeta)$ through the
+    $\zeta$ faces, taken from the last assembly of the step.
+  \item \key{Height}: the characteristic speed $\partial Q/\partial h$ of
+    the upwinded fluxes, $3|u|$ of the in-plane gravity and the centrifugal
+    term ($Q \propto h^3$) plus $2|u|$ of the Marangoni flux ($Q \propto
+    h^2$), each $u$ the velocity of that term. The capillary and disjoining
+    fluxes are not upwinded and are not counted.
+\end{itemize}
+The first step above one is reported in \file{Warnings.txt}
+(\file{numerics/\bk CourantCheck.h}) --- grep for
+\code{Courant number} --- and at the end of the run the number of such
+steps and the largest value:
+\begin{plain}
+Courant number 1.43 at step 1 (t = 0.00143 s) with Numerics.Convection.Concentration = "Koren": a limited scheme keeps the concentration free of over- and undershoots only up to 1. Reported once; the count of such steps is given at the end of the run.
+Courant number above 1 in 7 of 7 steps (largest 1.43) with Numerics.Convection.Concentration = "Koren".
+\end{plain}
+The largest value of the run is written to the log and to \file{JobInfo.txt}
+(\code{Largest Courant number <conc>}, \code{<height>}) whether it passed one
+or not. Nothing else follows from it: the step is neither shortened nor
+rejected, and the results are those of a run without the check. To stay
+below one, shorten the step: \key{Numerics.InitialDt}, or the cap
+\key{Numerics.TimeStepControl.MaxDtFactor} sets on it
+(\cref{sec:ref-numerics:tsc}).
+
+\paragraph{Overshoots past $c = 1$.} The schemes that are not bounded ---
+and the limited ones above a Courant number of one --- overshoot at a sharp
+front of the concentration, and next to a film that has dried to $c$ near 1
+the overshoot passes 1. The well-mixed model moves the solute above 1 to the
+cells around (\cref{sec:disc:convection}) and keeps it; the amount moved over
+the run, summed over the steps as a fraction of the initial solute, is
+written to \file{JobInfo.txt} (\code{Solute moved from c > 1 [-]}) and, when
+it is not zero, to the log. A front from $c = 0.99$ to 0.3 crossing a domain of
+100 cells once moves 1.7 to \SI{2.3}{\percent} with UTOPIA, KK and QUICK and
+\SI{4}{\percent} with Central4. It measures an error of the scheme, not of the
+balance; \val{"Koren"} at a Courant number up to one moves nothing, and a
+finer grid moves less. No shipped case moves any. Only a film holding more
+solute than liquid in all could not take it back; that remainder is cut, reported once in \file{Warnings.txt} as
+it happens --- grep for \code{cut at c = 1} --- with the total at the end of
+the run, and written to \file{JobInfo.txt} (\code{Solute cut at c = 1 [-]}).
+
+\paragraph{Undershoots below $c = 0$.} The same schemes undershoot on the
+other side of a front, and next to a film with almost no solute the
+undershoot passes 0. Both models fill a cell below 0 from the cells around
+that hold solute (\cref{sec:disc:convection}), so $c$ stays at or above 0 and
+the solute is kept; the amount moved, as a fraction of the initial solute, is
+written to \file{JobInfo.txt} (\code{Solute moved to c < 0 [-]}) and, when it
+is not zero, to the log. A front from $c = 0.7$ to 0.005 crossing a domain of
+100 cells once moves 3.2 to \SI{4.4}{\percent} with UTOPIA, KK and QUICK and
+\SI{7.7}{\percent} with Central4; \val{"Koren"} and \val{"VanLeer"} at a Courant
+number up to one move nothing. No shipped case moves any. Only a film with
+less than no solute in all could not be filled; the rest is made up, reported
+once in \file{Warnings.txt} --- grep for \code{made up at c = 0} --- with the
+total at the end of the run, and written to \file{JobInfo.txt}
+(\code{Solute made up at c = 0 [-]}).
+
+\section{The two \key{LinearSolver} blocks}
+\label{sec:ref-numerics:linearsolver}
+
+\key{Numerics.HeightEquation.LinearSolver} and
+\key{Numerics.ConcEquation.LinearSolver} are both required, and both take
+exactly the same five keys with the same defaults and the same allowed values;
+the parser code is duplicated verbatim. You can therefore configure the two
+solves independently --- a different backend for the height equation and for
+the concentration equation is legitimate. \Cref{ch:linearsolver} compares the
+backends and their cost.
+
+\begin{keytable}{Keys of \key{Numerics.HeightEquation.LinearSolver} and of \key{Numerics.ConcEquation.LinearSolver}\label{tab:linsolver-keys}}\key{MaxIterations} & int & \val{5000} & Iteration cap of the BiCGStab solve, at least 1. \\
+\key{Epsilon} & double & \val{1e-13} & Convergence tolerance on the (possibly scaled) relative residual, positive. For the film height of the well-mixed model it is the tightest tolerance a Newton pass is solved to: earlier passes are solved more loosely, as the iteration needs (\cref{sec:linsolve:ew}). \\
+\key{RowScaling} & bool & \val{true} & Divide each row of the matrix and the right-hand side by its diagonal before solving. Does not change the solution; strongly affects conditioning. Honored by both backends. \\
+\key{PreconditionType} & string & \val{"ILU"} & Preconditioner: \val{"None"}, \val{"Jacobi"} or \val{"ILU"}. Each backend maps these onto its own machinery (\cref{ch:linearsolver}); with \val{"ILU"}, a cheaper preconditioner is tried first and this one is the fall-back (\cref{sec:linsolve:eigen,sec:linsolve:conc}). \\
+\key{Backend} & string & \val{"auto"} & Implementation: \val{"auto"}, \val{"eigen"} or \val{"amgcl"}. \val{"auto"} selects amgcl for a 2-D film if the binary was built with it, otherwise eigen. \val{"eigen"} is bit-reproducible regardless of thread count; \val{"amgcl"} is not. Any other value is rejected. \\
+\end{keytable}
+
+
+\begin{warn}[Requesting \val{"amgcl"} in a build without it falls back silently]
+  A binary built without AMGCL support answers \key{Backend = "amgcl"} with a
+  warning and then uses \val{"eigen"}. The run continues and the results are
+  valid, but they are not the results you asked for, and comparing them
+  against a run of the same input on an AMGCL build will show differences at
+  the level of the linear solver's tolerance. Nothing else in the run says so
+  in words; the warning in \file{Warnings.txt} is the only message about the
+  substitution, though the \code{Solver Info} section of \file{JobInfo.txt}
+  does record \val{"eigen"} as the backend that ran. The warning reads
+  \code{LinearSolver: Backend="amgcl" was requested, but this build has no
+  AMGCL. Falling back to "eigen".} Grep for \code{has no AMGCL}
+  (\cref{sec:output:warnings}).
+\end{warn}
+
+\begin{note}[\file{JobInfo.txt} records which backend actually ran]
+  \code{C\_ImplicitSolver::\bk BackendName()} reports the \emph{resolved}
+  backend of an equation, and the model drivers write it into the
+  \code{\#\#\#\#\#\# Solver Info \#\#\#\#\#\#} section of \file{JobInfo.txt}
+  alongside the model name, one line for the height equation and, where there
+  is one, a second for the concentration equation. Because the name is
+  resolved, \val{"auto"} appears as whatever it became and a fall-back appears
+  as the implementation that ran, so a result directory tells you which
+  linear solver produced it. The same two lines are echoed to standard output.
+  \Cref{sec:output:jobinfo} shows the section. Setting \key{Backend}
+  explicitly in both input files is still the tidier way to set up a
+  comparison, but it is not the only record.
+\end{note}
+
+\section{\key{Numerics.ManufacturedSolution}}
+\label{sec:ref-numerics:mms}
+
+For verification only, and optional. With \key{Enable} set, the run starts
+from
+\[
+  h = \key{Mean} + \key{Amplitude}\,\cos(k_x x - \Omega t)\cos(k_y y),\qquad
+  k = 2\pi/\key{Wavelength},
+\]
+over the substrate $s = \key{SubstrateMean} + \key{SubstrateAmplitude}\,
+\cos(2\pi x/L_{s,x})\cos(2\pi y/L_{s,y})$ and with
+the concentration $c = \key{ConcMean} + \key{ConcAmplitude}\,\cos(k_{c,x} x
+- \Omega_c t + \phi_c)\cos(k_{c,y} y)$ (every $k_y = 0$ in 1-D), and the
+equations get the source terms that make these their exact solution, so that
+the difference between them and the computed fields is the discretization
+error and nothing else. \file{tools/mms.py} uses it
+(\cref{sec:verification:mms}). Every term of the well-mixed model enters the
+sources; in \val{"CZ"} the concentration is the same at every height in the
+film, and the evaporation and the disjoining pressure are refused; in both
+models the nozzle is refused. The substrate comes from here, so a shape in \key{Substrate} is
+refused as well. The film, the substrate and the concentration are set from
+these formulas at the start, whatever \key{Initial} says; the edges have to be
+periodic, with the domain a whole number of wavelengths across.
+
+\begin{keytable}{Keys of \key{Numerics.ManufacturedSolution}\label{tab:mms-keys}}\key{Enable} & bool & \val{false} & Add the manufactured sources. \\
+\key{Mean} & double & \val{0} & Mean film thickness in meters; greater than \key{Amplitude}. \\
+\key{Amplitude} & double & \val{0} & Amplitude in meters, at least 0. \\
+\key{Omega} & double & \val{0} & Angular frequency in rad/s; the wave travels in $+x$ at $\Omega/k_x$. \\
+\key{Wavelength} & array & \val{[1, 1]} & Wavelengths $(L_x, L_y)$ in meters. Length exactly~2. \\
+\key{ConcMean} & double & \val{0.5} & Mean concentration. \val{"CZ"} uses it only when \key{ConcAmplitude} or \key{ConcStratAmplitude} is non-zero, and otherwise keeps \key{Initial.Concentration.Value}. \\
+\key{ConcAmplitude} & double & \val{0} & Its amplitude; the concentration must stay inside $(0, 1)$. In \val{"CZ"}, the same at every height in the film; \key{ConcStratAmplitude} adds a part that is not. \\
+\key{ConcOmega} & double & \val{0} & Its angular frequency in rad/s. \\
+\key{ConcPhase} & double & \val{0} & Its phase $\phi_c$ in radians. \\
+\key{ConcWavelength} & array & \val{[1, 1]} & Its wavelengths in meters. \\
+\key{ConcStratAmplitude} & double & \val{0} & \val{"CZ"} only: the amplitude $A_s$ of a part $A_s\cos(2\pi x/L_x - \Omega_s t)\cos(2\pi y/L_y)\cos\pi\zeta$ that varies through the film; $|\key{ConcAmplitude}| + |A_s|$ must keep $c$ inside $(0, 1)$. The well-mixed model refuses it. \\
+\key{ConcStratOmega} & double & \val{0} & Its angular frequency $\Omega_s$. \\
+\key{ConcStratWavelength} & array & \val{[1, 1]} & Its wavelengths $L_x$, $L_y$ in meters. \\
+\key{SubstrateMean} & double & \val{0} & Mean substrate height in meters. \\
+\key{SubstrateAmplitude} & double & \val{0} & Amplitude of the substrate relief in meters. \\
+\key{SubstrateWavelength} & array & \val{[1, 1]} & Its wavelengths $(L_{s,x}, L_{s,y})$ in meters. \\
+\end{keytable}
+
+\section{\key{Restart}}
+\label{sec:ref-numerics:restart}
+
+Optional, at most once. A restart continues from a previous result instead of
+building the film from \key{Initial}. Because the ASCII field file is
+hand-editable, this block is also the route by which an analytically
+constructed profile --- for instance one written by
+\file{tools/make\_equilibrium\_1d.py} --- is injected into a run.
+
+\begin{keytable}{Keys of \key{Restart}\label{tab:restart-keys}}\key{Enable} & bool & \val{false} & Continue from a previous result instead of the \key{Initial} block. When false, every other key here is read and ignored. \\
+\key{ASCII} & bool & \val{false} & Read the ASCII neutral \file{.dat} form instead of the binary \file{.vts} form. \\
+\key{FileName} & string & \val{"restartfile"} & Path of the file to read, relative to the working directory. No extension is appended, so give the full name. A file that is not there stops the run before its result directory is made. \\
+\key{RestartTime} & double & \val{0} & Physical time the continued run starts at, in seconds, non-negative. Divided by $T_0$ internally. It does \textbf{not} shift \key{EndTime}. \\
+\key{FileIndex} & int & \val{0} & Number the output-file counter resumes from, non-negative, so that new field files do not overwrite the old ones. \\
+\end{keytable}
+
+Three properties of the restart path are worth knowing before you rely on it.
+
+\begin{warn}[\key{Output.Dimensioned} decides how the restart file is read]
+  Nothing in \key{Restart} says what units the file is in. The thickness
+  conversion factor is taken from \key{Output.Dimensioned}: with dimensioned
+  output the file is assumed to hold micrometers, and with non-dimensional
+  output the factor is 1. \textbf{A file written under one setting cannot be
+  read back under the other}, and the mismatch is a silent factor of $h_0/10^{-6}$
+  in thickness, not an error.
+\end{warn}
+
+Both readers work for both concentration models, in 1-D and 2-D, and both
+verify the grid size --- the row count of a \file{field*.dat}, the point counts
+in the header of a \file{.vts} --- and abort the run on a mismatch, so a
+restart onto a different mesh is not possible. The reason for any failure is
+written to \file{FatalErrors.txt} and to the terminal: a file of the wrong
+kind (a \file{field*.dat} with \key{ASCII = false}, say) is reported as such
+at once. For the well-mixed models the boundary conditions are re-applied after
+reading, so whatever ghost values the file contained are overwritten; the
+\val{"CZ"} \file{.vts} carries its ghost layers and they are taken as written,
+and after an ASCII restart they are set by the boundary conditions at the first
+solve.
+
+A restart reproduces the state it was given, to the last digit or one unit in
+it: \code{ctest} runs \code{restart\_roundtrip}, which restarts each model from
+each format and compares the first field the restarted run writes with the
+field it was started from, together with its time and file number; for
+\val{"CZ"} it also restarts from a \file{.vts} rewritten without the
+thickness and the substrate, from which the film is recovered from the point
+heights.
+
+Every field output also writes \file{field*.state} beside the field files,
+with the same number. It holds what the field file does not: the time to the
+bit, the step count, the time step and the one before it, the counters of the
+adaptive step, the output schedule, the running totals of
+\file{History.dat}, the steady-state count, the film and (in \val{"CZ"}) the
+concentration of the step before, and $h$, $s$ and $c$ with their ghost
+layers. When a restart finds this file beside \key{FileName}, written by the
+same model at \key{RestartTime} (the time stamp in the \file{.pvd} is
+enough, and so are six digits of it), the run continues exactly as if it had not been interrupted: the
+same field files, \file{History.dat}, \file{CalcInfo.dat} and probe rows, and
+the same time steps (\code{restart\_chain}, \cref{sec:verification:bcio}).
+The state at the restart time is not written again, so \key{FileIndex}
+should be the file number plus one. \file{History.dat}, \file{CalcInfo.dat},
+the probes and the \file{.pvd} continue in the existing files when the
+restart writes into the same directory (\key{Overwrite = true}); their rows
+after the restart time are dropped, and so is a last row without its
+newline, left by a run killed while writing it. The field file stays
+authoritative: if it was edited, it is used as it stands and a warning says
+so. A damaged or inconsistent state file is ignored with a warning, on the
+terminal and in \file{Warnings.txt} (\code{... is damaged and is not used}),
+and the run starts from the field file alone. A damaged field file --- a
+short row in \file{field*.dat}, a block of the wrong length, a \file{.vts}
+that does not end with \code{</VTKFile>} --- is refused, with the line or the
+block named, rather than read partly uninitialized. The solver itself never
+leaves such a file behind: every field and state file is written under a
+temporary name and renamed when whole (\cref{sec:output:failures}), and a run
+stopped by Ctrl-C or \code{SIGTERM} writes the state it reached, which
+continues exactly.
+
+From a field file without its state file --- for example one written by
+hand --- only the field is taken. The output schedule continues on the
+multiples of the interval, but the time step returns to \key{InitialDt}, the
+totals of \file{History.dat} start from zero and its conservation errors are
+taken against the restart state. The result then differs from an
+uninterrupted run at the level of the time-stepping error with an adaptive
+step, and to the digits of the file (about $10^{-13}$ for the well-mixed
+model, $10^{-9}$ for \val{"CZ"}) with a fixed one.
+
+Finally, remember that \key{EndTime} is absolute: a restart at
+\key{RestartTime = 5} with \key{EndTime = 4} stops immediately.
+
+\section{Keys the parser accepts but no case uses}
+\label{sec:ref-numerics:unused}
+
+The cross-check behind this manual, \file{tools/doc\_keys.py} (run by
+\code{ctest} as \code{doc\_keys}), compares every block path and key used in
+the 38 input files of \file{cases/}, \file{cases/eq/} and
+\file{cases/scaling/} included, against what the parser accepts. \Cref{tab:unused-keys} lists what the parser supports
+that no shipped case exercises. These keys are not deprecated and not
+untested in the sense of being known-broken; they are simply outside the
+coverage of \file{cases/}, so a run that uses them is exploring territory the
+regression suite does not visit. Check the result rather than assuming it.
+
+\begin{yzntable}{Parser features not exercised by any case in \file{cases/}\label{tab:unused-keys}}{@{}L{0.30\textwidth} L{0.58\textwidth}@{}}
+\textsf{\bfseries Block} & \textsf{\bfseries Keys never used} \\ \midrule
+root & \key{LengthScaleType}, \key{LengthScale}; every case therefore runs with the capillary length scale. \\
+\key{Physics.Evaporation} & \key{PowerN}, \key{ConcR}, \key{EndConcType}, \key{EndConcValue}; the \val{"PowerN"} concentration law and the dry-out threshold are never covered. \\
+\key{Physics.Slip} & The whole block; every case runs without slip. \code{analytic} (\code{leveling\_slip\_*}, \code{eq\_slip}, \code{wall\_balance\_slip}), \code{mms} (\code{wm\_slip\_1d}, \code{wm\_all\_slip\_1d}) and \code{yuzen\_tests} exercise it. \\
+\key{Physics.Source} & \key{ConcType}; every nozzle case supplies its liquid at the local concentration. \code{analytic} exercises \val{"supplied"} (\code{nozzle\_supplied}, \code{nozzle\_mixing}). \\
+\key{Numerics} & \key{SteadyStateCriterion}, \key{SteadyStateSteps}; the steady-state test always runs with its defaults. \\
+\key{Numerics.TimeStepControl} & \key{ScaleFloor}. \\
+\key{Numerics.HeightEquation} & \key{NewtonEpsilonRel}, \key{NewtonMinIterations}, \key{JacobianUpdateInterval}. \\
+\key{Numerics.Convection} & \key{Concentration}; every case runs its default, \val{"UTOPIA"}. Only \file{wet\_coupled} sets \key{Height} (to \val{"UTOPIA"}); \code{ctest} exercises the other schemes (\code{advection}). \\
+Both \key{LinearSolver} blocks & \key{Backend}; no case pins a backend, so all of them run whatever \val{"auto"} picks. \\
+\key{Output.FieldData} & \key{Times}, \key{ExactTimes}, \key{WritePotential} (\code{analytic} and \code{restart\_roundtrip} exercise it); the listed output times are exercised through a \key{LogSchedule} (\file{leveling\_1d\_logout}), and \key{Times} by \code{input\_guards}. \\
+\key{Output.Energy} & The whole block; \code{analytic} (\code{energy\_*}) and \code{restart\_roundtrip} exercise it. \\
+\key{Output.ProbeList} & The entire \key{Probe} sub-block --- \key{X}, \key{Y}, \key{Z} --- although every case declares an empty \key{ProbeList} with a \key{TimeInterval}. \\
+\key{Initial.SurfaceShape} & \key{RectBump}, \key{FlatPlane}, \key{MexicanHat}, \key{SmoothConvex}, \key{EdgeBump}; only \key{EllipseBump} and (in \file{leveling\_1d\_logout}) \key{PeriodicWave} are used. \\
+\key{Substrate} & \key{RectBump}, \key{PeriodicWave}, \key{FlatPlane}, \key{MexicanHat}, \key{SmoothConvex}; again only \key{EllipseBump}. \\
+\key{Numerics.ManufacturedSolution} & The whole block, which is for verification only; \code{mms} and \code{input\_guards} write their own inputs with it. \\
+\end{yzntable}
+
+\key{Substrate.EllipseBump.Order} is never given either --- only the
+\key{Initial} copy sets it --- so the substrate-side ordering path is
+untested. Two further observations come out of the same cross-check:
+\key{Physics.DisjoiningPressure} appears only in \file{cases/eq/} and
+\file{cases/wet\_*}, and every case supplies \key{Physics.Evaporation},
+\key{Physics.ConcField}, \key{Output.ProbeList}, \key{Substrate} and
+\key{Restart}, so no shipped case relies on what an absent optional block
+means (\cref{ch:ref-physics}); \code{input\_guards} runs one that does.
+
+\section{\key{InputFormatVersion}}
+\label{sec:ref-numerics:formatversion}
+
+Every shipped case file sets \key{InputFormatVersion = "1.0"} at root level.
+It records which version of the input format the file was written for. It is
+optional, since there has only been one, and when it is present it must read
+\val{"1.0"}: a file written for a later format is refused rather than
+half-understood.
+
+The other version gate is \key{SolverName}, which must read exactly
+\val{"Yuzen-1.0"}. It names the version \emph{series}, \code{MAJOR.MINOR}, and
+not the full version of the binary: the solver builds the accepted string from
+\code{C\_Yuzen::\bk VersionSeries()}, so a patch release goes on reading the
+same input files unchanged. \Cref{ch:policy} sets out what that promises.

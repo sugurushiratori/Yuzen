@@ -1,0 +1,325 @@
+% ch-convergence.tex -- numerical method: the correction floor, the convergence tests, termination
+\chapter{Convergence and the correction floor}
+\label{ch:convergence}
+
+This is the most practically important chapter in the manual. Almost every
+report of ``Yuzen is unbearably slow'' or ``the run stopped moving'' traces back to
+one of two things: a convergence test that cannot be satisfied, which collapses
+the time step, or a steady-state test that is satisfied far too early, which
+stops the run while it is still going somewhere. Both come from the same
+misunderstanding --- judging an iteration or a run by an absolute change ---
+and both are avoidable once you know why the Newton correction has a floor it
+cannot fall below.
+
+Four keys decide when the Newton iteration of a step stops, all of them in the
+block \key{Numerics.HeightEquation} (\cref{sec:ref-numerics:height}): they are
+\key{NewtonEpsilon}, \key{NewtonEpsilonRel}, \key{NewtonMaxIterations} and \key{NewtonMinIterations}. Two
+more decide when the run as a whole stops, in the block \key{Numerics}
+(\cref{sec:ref-numerics:numerics}): \key{SteadyStateCriterion} and
+\key{SteadyStateSteps}.
+
+\section{The floor of the correction}
+\label{sec:convergence:floor}
+
+Newton's method converges quadratically, and for the first few iterations the
+correction does exactly what that promises. Then it stops falling, and from
+there on it merely scatters about one value. On the spreading film of
+\cref{tab:floor} at \key{Nx = 2000}:
+
+\begin{plain}
+iteration 0 : 6.231e-02      <- quadratic convergence, falling cleanly
+iteration 1 : 1.899e-03
+iteration 2 : 1.494e-05
+iteration 3 : 1.037e-09
+iteration 4 : 1.931e-16      <- this is the "floor"
+iteration 5 : 2.220e-16
+iteration 6 : 2.189e-16      <- from here it wanders between 1.5e-16 and 2.2e-16
+\end{plain}
+
+The floor is \textbf{cancellation in the assembly of the right-hand side}, and
+it has nothing to do with the accuracy of the linear solver. The right-hand
+side is the residual of \cref{eq:nk-update},
+
+\begin{equation}\label{eq:residual}
+  \mathrm{Rhs} = (\varphi_{\mathrm{old}} - \varphi_{\mathrm{guess}})
+    - \Delta t\left[\theta\,A\cdot\varphi_{\mathrm{guess}}
+      + (1-\theta)\,A\cdot\varphi_{\mathrm{old}} + B\right],
+\end{equation}
+
+and $A$ is a fourth-order spatial difference, so its coefficients are of order
+$1/\Delta x^{4}$: at \key{Nx = 2000} --- a non-dimensional
+$\Delta x = 1.72\times10^{-4}$ --- the row sums reach $\sim 6\times10^{15}$.
+Formed as the product of those entries with $\varphi$, $A\cdot\varphi$ is an
+answer of about $10^{5}$ obtained by canceling terms of that magnitude
+against one another, with an absolute error of
+$\epsmach \times \lVert A\rVert \times \lvert\varphi\rvert \sim 1$ that
+\cref{eq:residual} multiplies by $\Delta t$. Since the inverse of
+$I + \theta\,\Delta t\,J$ is a contraction, the floor of such a product is
+roughly
+
+\begin{equation}\label{eq:floor}
+  \epsmach \times \frac{\Delta t}{\dtexp},
+  \qquad
+  \dtexp \sim \frac{3\mu\,\Delta x^{4}}{H^{3}},
+\end{equation}
+
+proportional to how far beyond the explicit stability limit the step goes.
+The well-mixed thickness equation does not form its stiff terms that way. The
+capillary pressure and the vertical gravity give their $A\cdot\varphi$ face by
+face (\cref{sec:time:apply}): the flux of a face is its mobility times a
+difference of the film, and the differences are taken first, between
+neighboring values. What cancels is then the variation of the film over the
+stencil rather than the film, and on the films of \cref{tab:floor} the floor
+is that of $\varphi$ itself, a few $\epsmach$, whatever the mesh and the step.
+\Cref{eq:floor} remains the bound for what is formed as a product --- the
+in-plane body forces, the Marangoni stress and the disjoining pressure, whose
+entries are of order $1/\Delta x$ or $1/\Delta x^{2}$ --- and for a film whose
+variation over a stencil is comparable to the film itself. Set
+\env{YUZEN\_DEBUG\_FLOOR} to \val{1} and the floor is printed.
+
+\begin{yzntable}{Measured correction floor, and the bound $\epsmach\,\Delta t/\dtexp$ of \cref{eq:floor} for $A\cdot\varphi$ formed as a product\label{tab:floor}}{@{}L{0.24\textwidth} d d d d d@{}}
+\textsf{\bfseries Case} & \textsf{\bfseries $\Delta x$ [\si{\micro\metre}]} &
+\textsf{\bfseries $\Delta t$} & \textsf{\bfseries $\Delta t/\dtexp$} &
+\textsf{\bfseries bound} & \textsf{\bfseries measured} \\ \midrule
+spreading, Nx = 500  & 1.2  & 3.21e-9  & 4.8e3 & 1.1e-12 & 1.1e-16 \\
+spreading, Nx = 2000 & 0.3  & 3.21e-9  & 1.2e6 & 2.7e-10 & 1.8e-16 \\
+spreading, Nx = 2000 & 0.3  & 3.21e-11 & 1.2e4 & 2.7e-12 & 1.1e-16 \\
+flat film, \file{leveling\_1d\_reg} & 3.33 & 3.21e-8 & 8.1e2 & 1.8e-13 & 5.5e-17 \\
+\end{yzntable}
+
+The $\Delta t$ column is non-dimensional. The spreading film is
+\file{stress\_wetting} at the \key{Nx} given, run with the adaptive step for
+\SI{1}{\milli\second} (\SI{0.1}{\milli\second} at \key{Nx = 2000}) and then
+stepped at the $\Delta t$ of the table, \key{NewtonEpsilon} and \key{NewtonEpsilonRel}
+out of the way; the floor is the median of the corrections from the fifth
+iteration on. Two conclusions follow.
+
+\begin{description}
+  \item[No particular value is universal.] On these films the floor does not
+    grow as $\Delta x^{-4}\Delta t$, but a term formed as a product, a film
+    steep over a few cells or another case can put it higher, as high as
+    \cref{eq:floor}. Measure it rather than assume it.
+  \item[Machine precision is the limit.] The correction does not fall below
+    $\epsmach\,\lvert\varphi\rvert$: the updated film cannot be represented
+    more finely. The linear solver is not what sets it --- the measured
+    \code{bcg\_resid} is $\sim 10^{-25}$ --- and tightening its tolerance does
+    not move the floor at all.
+\end{description}
+
+\section{What an absolute-only test does}
+\label{sec:convergence:absolute}
+
+\begin{warn}[Do not use an absolute-only convergence test]
+  Where the floor is proportional to $\Delta t$ (\cref{eq:floor}), an
+  absolute threshold below it creates the relation ``make $\Delta t$ smaller
+  and the floor falls until the test is met''. That relation closes into a
+  feedback loop with the time-step control, and the run locks onto the step
+  at which the two just meet. A threshold below $\epsmach\,\lvert\varphi\rvert$
+  is never met at all.
+\end{warn}
+
+The loop runs as follows.
+
+\begin{enumerate}
+  \item A \key{NewtonEpsilon} below the floor can never be satisfied.
+  \item The iteration has effectively converged after about five iterations,
+    but it spins on to \key{NewtonMaxIterations}.
+  \item Having hit the iteration cap, it reports a convergence failure.
+  \item The caller, \code{TimeAdvance}, sees the failure and \textbf{halves the
+    time step}.
+  \item A smaller step lowers the floor, so the run settles onto the step size
+    that just reaches \key{NewtonEpsilon} and oscillates there --- \code{dt-} and
+    \code{dt+} alternating in the log.
+\end{enumerate}
+
+The finer the mesh, the higher a floor of the kind of \cref{eq:floor} and the
+smaller the step the run locks onto: on a mesh that resolves a contact line
+the loop can cost orders of magnitude in the physical time reached.
+
+\section{The two tests that avoid the floor}
+\label{sec:convergence:tests}
+
+\subsection{The relative test, \key{NewtonEpsilonRel}}
+
+The iteration is taken to have converged once the correction has fallen to
+\key{NewtonEpsilonRel} times \textbf{the first correction of that time step};
+the default is \val{1e-6}. The statement it makes is ``the non-linearity of this
+time step has been solved to six digits'', which is a statement about the step
+and nothing else --- it is independent of the scale of the solution, of the
+size of the time step and of the mesh. The floor and $\Delta t$ appear in the
+numerator and the denominator alike and cancel, which is exactly what breaks
+the feedback loop of \cref{sec:convergence:absolute}. The iteration starts
+from the film extrapolated from the last two steps (\cref{sec:time:newton}),
+so its first correction is what the extrapolation missed, and the test is
+relative to that: taken relative to how far the extrapolation moved the film
+instead, the iteration stopped a pass earlier, and the volume of a nozzle film
+thickened a hundredfold drifted to $|\mathrm{VolErr}| = 5\times10^{-11}$
+(\file{tools/\bk analytic.py} \code{nozzle\_balance}); relative to the first
+correction it stays at $7\times10^{-14}$.
+
+On the history at the start of this chapter the threshold is
+$6.231\times10^{-2} \times 10^{-6} = 6.23\times10^{-8}$, so the iteration exits
+at iteration 3 --- before it has reached the floor at all. Setting
+\key{NewtonEpsilonRel} to \val{0} or below switches the relative test off and
+leaves the absolute test alone.
+
+\subsection{The stagnation test}
+\label{sec:convergence:stagnation}
+
+The second test looks at \textbf{how many iterations in a row fail to improve
+the best value so far}. An iteration that does not get below $0.9$ times the
+smallest correction seen so far counts as one failure, and more than five
+failures stops the loop.
+
+The detail that makes it work is the use of the best value rather than the
+change from one iteration to the next. Measuring the change ratio
+$\lvert\mathrm{resid} - \mathrm{resid_{old}}\rvert/\mathrm{resid_{old}}$
+instead does not fire at all in the situation it is meant to catch: on the
+floor the correction scatters by tens of percent, and by several times where
+the floor is of the kind of \cref{eq:floor}, from iteration to iteration,
+which any change-ratio test reads as healthy progress.
+
+When the test fires, the outcome depends on where the correction has got to.
+The iteration has converged as far as it can, and the step is accepted
+silently, if any of these holds:
+
+\begin{itemize}
+  \item the absolute test is met;
+  \item the correction has fallen four or more decades below the first
+    correction of the step: the non-linearity of the step is resolved to
+    four digits;
+  \item the correction is within $1000\,\epsmach\,\lvert\varphi\rvert$, with
+    $\lvert\varphi\rvert$ the largest film value: the film cannot be updated
+    more finely than $\epsmach\,\lvert\varphi\rvert$, and the floors of
+    \cref{tab:floor} are about that. This catches a step whose first
+    correction was already close to the floor, near a steady state, without
+    having to lower \key{NewtonEpsilon}.
+\end{itemize}
+
+Otherwise the iteration has stopped \textbf{far from convergence}, and the
+step has failed, like one whose linear solve does not converge or that runs
+out of \key{NewtonMaxIterations}. With \key{Numerics.TimeStepControl.Enable =
+true} it is cut by \key{ChangeFactor} and solved again, the first such step is
+reported in \file{Warnings.txt} and all of them are counted in
+\file{JobInfo.txt} (\code{Steps failed: the Newton correction stagnated},
+\cref{sec:output:jobinfo}); a cut below \key{MinDt} aborts the run, as any
+other (\cref{sec:time:dt}). At a fixed step there is no shorter step to retry
+it at, so the run stops and names the stagnation
+(\cref{sec:ref-numerics:tsc}).
+
+At the default tolerances every stagnation in the shipped cases and the
+checks that ship with them is of the second kind, and far into it: on the
+contact-line stress case (\file{stress\_wetting}, the first step) the
+correction stopped at 0.068 to 25 times the first correction, on the thick nozzle film
+with liquid supplied at its own concentration (\code{nozzle\_supplied},
+\cref{sec:verification:analytic}) at $8\times10^{-4}$ to 1.9 times; no
+stagnation fell between the relative test ($10^{-6}$) and $8\times10^{-4}$.
+Kept, such a step is not a solution of the step: the nozzle film kept its
+residual as a volume error of $2.2\times10^{-8}$, and the contact-line film
+run at a fixed step went negative and ended as diverged. Cut, the nozzle film
+is at rounding ($2\times10^{-13}$).
+
+The four decades are deliberately not tied to \key{NewtonEpsilonRel}. With
+\key{NewtonEpsilonRel} at $10^{-11}$ (and \key{NewtonEpsilon} at $10^{-16}$) the same nozzle film levels off at
+$10^{-11}$ to $10^{-4}$ of the first correction in two steps out of three ---
+the limited upwinding at Courant numbers up to 150 is not smooth --- and
+those steps are accepted; failing them would chase the relative test the way
+the loop of \cref{sec:convergence:absolute} chases an absolute one. The run
+cuts 33 steps that stagnated above $10^{-4}$, takes 3358 steps and ends
+with a \code{VolErr} of $1.5\times10^{-9}$, against $2\times10^{-13}$ at
+the default: what the accepted steps left. A tighter \key{NewtonEpsilonRel}
+buys nothing on a film whose iteration cannot reach it.
+
+\section{What to look at when it does not converge}
+\label{sec:convergence:diagnosis}
+
+\begin{enumerate}
+  \item Set \env{YUZEN\_DEBUG\_RESIDUAL} and find out whether it is the
+    thickness or the concentration that is holding the iteration up
+    (\cref{sec:time:coupling}).
+  \item Set \env{YUZEN\_DEBUG\_FLOOR} and find out where the correction stops
+    falling.
+  \item If the floor sits above \key{NewtonEpsilon}, \textbf{rely on the relative
+    test rather than lowering \key{NewtonEpsilon}}. Lowering the absolute threshold
+    is the maneuver of \cref{sec:convergence:absolute} run in reverse: it
+    makes the test harder, which shrinks the step, which lowers the floor, and
+    the run ends up slower rather than more accurate.
+  \item If the warning about the correction stagnating does appear --- look in
+    \file{Warnings.txt} for \code{correction stagnated}
+    (\cref{sec:output:warnings}), and in \file{JobInfo.txt} for how many
+    steps were cut for it ---
+    then the iteration genuinely is not converging and the floor is not the
+    explanation. Look for a non-smooth ingredient --- upwind switching, or the
+    clamping applied to evaporation and to the concentration --- which can
+    prevent the quadratic behavior the test assumes, or a step far too long
+    for the state, as at the start of \file{stress\_wetting}.
+    \env{YUZEN\_DEBUG\_RESIDUAL} prints a line for every stagnation, with
+    the floor it was judged against.
+\end{enumerate}
+
+\section{Termination}
+\label{sec:convergence:termination}
+
+At the end of every step \code{CheckTermination()} applies three tests in
+order.
+
+\begin{enumerate}
+  \item \textbf{The specified time, or the step count, has been reached}: the
+    run has passed \key{Numerics.EndTime}, or it has taken
+    \key{Numerics.MaxSteps} steps. The two are reported separately, as
+    \code{Time reached to the EndTime.} and
+    \code{Step count reached Numerics.MaxSteps.}, so a run that stops early
+    does not have to be diagnosed by counting dots. \key{MaxSteps} defaults to
+    \val{0}, no limit, so unless it is set the end time is what stops the
+    run; see \cref{sec:ref-numerics:numerics}.
+  \item \textbf{The film has dried out}: the concentration selected by
+    \key{Physics.Evaporation.EndConcType} --- \val{"mean"}, \val{"max"} or
+    \val{"min"} --- has exceeded \key{EndConcValue}. The run
+    prints \code{Dry out.}
+  \item \textbf{The solution has stopped changing}, which is the subject of the
+    rest of this section.
+\end{enumerate}
+
+\begin{warn}[Do not judge steadiness on the change per step]
+  $\max\lvert h_{\mathrm{new}} - h_{\mathrm{old}}\rvert /
+   \max\lvert h_{\mathrm{new}}\rvert$ becomes small simply because the time
+  step is small. A calculation that resolves the contact line at
+  $\Delta t \sim 10^{-11}$ would be declared ``steady'' within a dozen steps of
+  the start and stop without complaint. The more finely the case is resolved
+  the sooner this happens, which is what makes it hard to notice.
+\end{warn}
+
+What the test actually uses is the relative change \textbf{per unit time},
+
+\begin{equation}\label{eq:changerate}
+  \mathrm{ChangeRate} =
+    \frac{\max\lvert h_{\mathrm{new}} - h_{\mathrm{old}}\rvert}
+         {\max\lvert h_{\mathrm{new}}\rvert \times \Delta t}
+  \quad [\si{\per\second}],
+\end{equation}
+
+and the criterion applied to \cref{eq:changerate} is
+
+\begin{equation}\label{eq:steady}
+  \mathrm{ChangeRate} \times (\mathrm{EndTime} - \mathrm{StartTime})
+    < \mathrm{SteadyStateCriterion}.
+\end{equation}
+
+The left-hand side of \cref{eq:steady} reads ``how much the shape would
+change if it went on changing at the present rate for the whole span of the
+run, from its start ($0$, or \key{Restart.RestartTime}) to \key{EndTime}''. It is
+dimensionless and depends neither on the time step nor on the time
+scale $T_0$. The default \key{SteadyStateCriterion} of \val{1e-3} therefore
+means ``at the present rate, the whole span of the run would move it by only
+\SI{0.1}{\percent}''.
+
+Once \cref{eq:steady} has held for more than \key{SteadyStateSteps} consecutive
+steps the run prints \code{Steady state.} and stops. The first five steps are
+not judged at all --- \code{ChangeRate} is reported as 1 for them --- and
+setting \key{SteadyStateCriterion} to \val{0} or below disables the test
+entirely.
+
+\code{ChangeRate} is written out as a column of \file{CalcInfo.dat}.
+\textbf{Look at that column before you choose a threshold}, rather than
+guessing one: it tells you directly what range the quantity takes in your case,
+and whether the default is loose or tight for it.

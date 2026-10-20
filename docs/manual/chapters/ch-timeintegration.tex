@@ -1,0 +1,365 @@
+% ch-timeintegration.tex -- numerical method: theta method, Newton, coupling and the adaptive step
+\chapter{Time integration}
+\label{ch:timeintegration}
+
+Every equation Yuzen solves is cast into the same shape, advanced with the same
+$\theta$ method, and --- where it is non-linear --- driven to the solution of
+the implicit system by the same outer Newton iteration. This chapter describes
+that machinery: the form, the iteration, the Jacobian, the way the thickness
+and the concentration are coupled, and the adaptive time step. The keys
+mentioned here are documented in \cref{sec:ref-numerics:height,%
+sec:ref-numerics:tsc}; what happens when the iteration will not converge is the
+subject of \cref{ch:convergence}.
+
+\section{The form every equation is cast into}
+\label{sec:time:form}
+
+Every equation is rearranged into
+
+\[
+  \frac{\partial\varphi}{\partial t} = -A\,\varphi - B
+\]
+
+before it is handed to the solver (\file{numerics/ImplicitSolver.h}). $A$ is
+the part proportional to the unknown, and is a matrix; $B$ is everything else,
+and is a vector. Time is advanced with the $\theta$ method, where
+$\theta = 0$, $0.5$ and $1$ are forward Euler, Crank--Nicolson and backward
+Euler respectively. \textbf{Both the thickness equation and the concentration
+equation are built with Crank--Nicolson}, $\theta = 0.5$.
+
+The system actually solved for the correction $\delta\varphi$ is
+
+\begin{equation}\label{eq:nk-update}
+  (I + \theta\,\Delta t\,J)\,\delta\varphi
+    = \varphi_{\mathrm{old}} - \varphi_{\mathrm{guess}}
+      - \Delta t\left[\theta\,A\cdot\varphi_{\mathrm{guess}}
+        + (1-\theta)\,A\cdot\varphi_{\mathrm{old}} + B\right],
+\end{equation}
+
+with $J$ the Jacobian of \cref{sec:time:jacobian}. The right-hand side of
+\cref{eq:nk-update} is the residual, and it is worth noting now that it is
+also the origin of the correction floor of \cref{sec:convergence:floor}.
+
+\begin{warn}[A term in $B$ has to be averaged in time as well]
+  The $\theta$ weighting of \cref{eq:nk-update} applies to $A$. A term put into
+  $B$ gets it only if $B$ itself is formed as the same average, and the
+  well-mixed thickness equation does so: $B = (1-\theta)\,B(\varphi_{\mathrm{old}})
+  + \theta\,B(\varphi_{\mathrm{guess}})$ for the evaporation, and the liquid
+  supply of \key{Physics.Source} is taken at the middle of the step
+  (\code{SetMatrixA} and \code{BeforeNKLoop} of
+  \file{HeightEquationBase.h}). Taken at the start of the step alone, $B$
+  makes the scheme first order in $\Delta t$ for that term. When you add a new term, put it in $A$
+  if it can be written as a coefficient times the unknown --- the disjoining
+  pressure $\Pihat(H)$ written as $(\Pihat/H)\cdot H$ is the example --- or
+  give it the same average in $B$.
+\end{warn}
+
+\subsection{How the product with the matrix is formed}
+\label{sec:time:apply}
+
+The two products $A\cdot\varphi_{\mathrm{guess}}$ and
+$A\cdot\varphi_{\mathrm{old}}$ of \cref{eq:nk-update} are, for the well-mixed
+thickness equation, not all formed as the product of the entries of $A$ with
+$\varphi$ (\code{ApplyA} of \file{HeightEquationBase.h}). The capillary
+pressure and the vertical gravity form theirs face by face
+(\code{AddConservative} of their kernels): the flux through a face is its
+mobility --- the one $A$ was assembled with --- times a difference of the film
+(the third difference across the face, and its cross term in 2-D, for the
+capillary pressure; $h_b - h_a$ and the substrate term for the gravity),
+written as differences of neighboring values, and the two cells that share
+the face take it from the same values in the same order, so one loses exactly
+what the other gains. In exact arithmetic this is the product with $A$; in
+floating point the sum over the cells is the flux through the edges of the
+domain to rounding of the fluxes. The product with the entries is not: the
+entries of a fourth-order term are of order $D/\Delta x^{4}$, and the sum of
+the products over the cells would come out as
+$\epsmach\,\lVert A\rVert\,\lvert\varphi\rvert$ per cell --- on a film
+\SI{1.2}{\milli\metre} thick over cells \SI{3.3}{\micro\metre} wide, as in
+\file{nozzle\_1d\_rotating}, a volume error of $2\times10^{-7}$ of the film
+over the run (\cref{sec:verification:analytic}). The other terms --- the in-plane body
+forces, the Marangoni stress, the disjoining pressure and the sideways
+outflow of the 1-D centrifugal term --- keep the product with their entries,
+which are of order $1/\Delta x$ or $1/\Delta x^{2}$; so do the rows of the
+boundary conditions. $A$ itself, which the Jacobian starts from, still holds
+every term.
+
+The flux of an edge face is zero only if the ghosts make it so. After every
+linear solve the rows of the boundary conditions are satisfied exactly by the
+correction (\code{CRS\_Matrix::SatisfyBCRows}), not merely to the tolerance of
+the solve, and a \val{"Symmetry"} ghost is then the exact mirror of the layer
+inside it, and a \val{"Periodic"} one the exact copy of the other end: the
+third difference across a mirrored edge face is exactly zero, where a ghost
+off its mirror by the tolerance of the solve would leak as much as the
+product above.
+
+\section{The Newton--Kantorovich outer iteration}
+\label{sec:time:newton}
+
+The thickness equation is non-linear because its mobility $h^{3}/(3\mu(c))$
+depends on the unknown. Yuzen therefore iterates within a single time step
+until the non-linearity itself is solved, rather than lagging it
+(\file{numerics/NewtonKantorovich.cpp}). One iteration has five stages:
+
+\begin{enumerate}
+  \item \code{EveryNKLoop()} --- update the fields from the current guess
+    $\varphi_{\mathrm{guess}}$ and solve the coupled side, the concentration.
+  \item \code{SetMatrixA()} --- assemble the matrix $A$.
+  \item \code{SetMatrixJacobi()} --- assemble the Jacobian, once every
+    \key{JacobianUpdateInterval} iterations; then \code{MakeMatrix\_IA()} forms
+    $I + \theta\,\Delta t\,J$.
+  \item the linear solve (\cref{ch:linearsolver}), which yields the correction
+    $\delta\varphi$.
+  \item $\varphi_{\mathrm{guess}} \mathrel{+}= \alpha\,\delta\varphi$, with
+    $\alpha = 0.5$ only when the correction has grown since the previous
+    iteration, and $\alpha = 1$ otherwise.
+\end{enumerate}
+
+The iteration starts from the film extrapolated linearly from the last two
+steps, $\varphi^n + (\Delta t/\Delta t_{\mathrm{old}})(\varphi^n -
+\varphi^{n-1})$, unless that would leave a cell that has liquid without any;
+an attempt from it that fails is made once more from $\varphi^n$, at the same
+step, before the step is cut or the run stopped (a source that turns on, a
+nozzle, is not in the last two steps). The linear solve of each pass is
+solved only as far as the progress of the iteration needs
+(\cref{sec:linsolve:ew}). The two cut the Newton iterations by up to a
+third and the linear iterations by up to 38\,\% on the cases measured, and
+leave the converged answer where it was: the convergence tests are relative
+to the first correction of the step, whatever the start
+(\cref{sec:convergence:tests}).
+
+The concentration equation, and the thickness equation of the \val{"CZ"} model,
+are weakly non-linear. They freeze their coefficients and solve a linear
+system --- the semi-implicit path of \file{numerics/SemiImplicit.cpp} ---
+with no outer iteration. Frozen at the start of the step, that is first order
+in $\Delta t$ whatever $\theta$ is, so the \val{"CZ"} model solves each step
+twice: once with the coefficients of the start of the step, which predicts the
+end state, and again from the same start with every coefficient and every term
+of $B$ formed at the midpoint between the two. That is the implicit midpoint
+rule, second order. The thickness equation does this with the concentration
+extrapolated to the midpoint from the last two steps. The velocity the solute
+is carried with is then formed from the film halfway to the end state, not to
+the prediction, so that it carries the flux the film moved with. Without the
+Marangoni term, the concentration equation is solved once after that, with a
+predicted concentration of its own. With it, the film and the concentration
+are solved again, one stage each, at the midpoint concentration the last pass
+found, with Aitken relaxation, until that midpoint moves by less than a tenth
+of the extrapolation's miss (at most eight passes; \file{JobInfo.txt} reports
+how many were taken). That is the implicit midpoint rule for the coupled
+pair. On a flat film the gain of a plain pass exceeds 1 only where a wave of
+the model grows faster than $2/\Delta t$ (\cref{sec:verification:czpasses}
+derives that gain and measures it, and the passes the runs take); a step whose passes do not settle within eight has failed,
+as one whose linear solve does not converge: the time-step control cuts it,
+and at a fixed step the run stops. The
+well-mixed concentration equation is solved inside the Newton loop, on the
+current guess of the end state, so its Crank--Nicolson average is already that
+of the two ends; once the loop has converged it is solved one last time, with
+the face fluxes of the step the film took (\cref{sec:time:coupling}).
+
+\section{The Jacobian}
+\label{sec:time:jacobian}
+
+Each physical term contributes its own \emph{analytic} Jacobian through
+\code{SetJacobiMatrix()}; this is part of the contract every term implements
+(\file{PhysicsTermBase.h}). The difference coefficients are separated from the
+field-dependent factors: \code{SetLinearCoef()} builds the coefficients that
+depend only on the mesh and the scheme, once, while the part that depends on
+the fields lives in \code{NonlinearTerm()} and its derivative
+\code{NonlinearJacobi()}.
+
+\textbf{The Jacobian is allowed to be approximate.} An approximate Jacobian
+changes how fast the iteration converges; it does not change where it converges
+to. What fixes the converged answer is the residual \code{Rhs} of
+\cref{eq:nk-update}, not the matrix multiplying the correction. Within the
+thickness equation Yuzen exploits this in one place only, the modified Newton
+method below; the terms themselves do not need it.
+
+\begin{itemize}
+  \item The Jacobian starts as a copy of $A$ and each term adds the
+    derivative of its coefficients. For the gravity and centrifugal terms the
+    gradient side is linear in $h$, so $A$ already holds its derivative and
+    the term adds only that of the mobility; the result is exact, and
+    \file{test\_jacobian.cpp} checks every term against a finite difference
+    (\cref{sec:verification:jacobian}).
+  \item \key{Numerics.HeightEquation.JacobianUpdateInterval} greater than 1 turns
+    the scheme into a modified Newton method: the Jacobian is rebuilt only once
+    every few iterations, and \code{\_crsIA} can be held with it, since it
+    depends on nothing but \code{\_crsJacobi} and $\Delta t$. This is worth
+    doing because the Jacobian assembly is the single largest item in an
+    iteration. The 1-D breakdown is \code{SetMatrixA} \SI{19}{\percent},
+    \code{SetMatrixJacobi} \SI{43}{\percent}, \code{IA + RHS}
+    \SI{2}{\percent} and the linear solve \SI{37}{\percent}.
+\end{itemize}
+
+\textbf{A gradient side that is not linear needs its own derivative.} The
+disjoining pressure goes like $\Pi \sim h^{-n}$ and is extremely stiff, and it
+is written into $A$ as $(\hat\Pi/h)\,h$; its term therefore adds the
+derivative of the mobility and $\hat\Pi' - \hat\Pi/h$ on the gradient side
+(\cref{sec:terms:disjoining}). Adding all of $\hat\Pi'$ would count
+$\hat\Pi/h$ twice and leave the Jacobian \SI{50}{\percent} off; with the
+correct derivative the disjoining-pressure cases take 30--55 \% fewer Newton
+iterations.
+
+\section{Coupling the thickness and the concentration}
+\label{sec:time:coupling}
+
+Thickness and concentration are solved as a block Gauss--Seidel iteration
+inside the outer Newton loop.
+
+\begin{plain}
+within a time step, for k = 0, 1, 2, ...
+    form the face volume fluxes F of h^k
+    solve the concentration equation over dt   -> c^{k+1}
+        (fluxes and coefficients frozen at h^k, the film at the end h^k)
+    cap the c of the coefficients at 1         (ClampConc)
+    take one Newton step on the thickness      -> h^{k+1}
+        (Jacobian is dF_h/dh only)
+once converged, to h^1:
+    the fluxes F at h^1, made those of the step h^0 -> h^1
+    solve the concentration equation once more -> c^1
+    bring c^1 into [0, 1] without cutting solute
+\end{plain}
+
+The off-diagonal blocks $\partial F_h/\partial c$ and $\partial F_c/\partial h$
+are dropped, for exactly the reason given in \cref{sec:time:jacobian}: they
+slow the convergence down but \textbf{do not move the converged answer}. If the
+loop converges to $\delta h \to 0$ together with $c^{k+1} = c^{k}$, then the
+thickness equation and the concentration equation are satisfied
+\emph{simultaneously}, and that state is precisely the fully implicit coupled
+discretization of the two.
+
+The last solve completes the step. Within the loop each pass carries the
+solute with the fluxes of its own film, which give that film only once the
+iteration has converged; at the end, the fluxes at the converged film are
+made, cell by cell, those of the step the film took (the residual of the
+step there is put into the inner faces), and the concentration is solved with
+them once more, so that the solute of every cell changes by what crosses its
+faces and what the sources bring, and a uniform concentration stays uniform
+(\cref{sec:disc:wm-conservative}). The film is not changed by it. The
+concentration it gives differs from the last pass's by the tolerance the
+loop converged to.
+
+That argument is also what dictates the convergence test. It requires both
+conditions, so the test must be made on \textbf{the larger of the two
+corrections},
+
+\[
+  \max\bigl(\,\lVert\delta h\rVert_{\infty},\
+             \lVert\Delta c\rVert_{\infty}\,\bigr).
+\]
+
+\begin{warn}[Do not test on the thickness correction alone]
+  $\lVert\delta h\rVert$ can become small while the concentration is still
+  moving, so a test that leaves the concentration out lets the iteration exit
+  early. What it exits to is a state that satisfies the thickness equation
+  only, not the fully implicit coupled solution. Propping the iteration up with
+  a minimum iteration count instead is not a fix: it decides the accuracy with
+  a number that has nothing to do with the problem.
+\end{warn}
+
+The concentration correction is measured \textbf{after} the clamp
+(\code{ClampConc}), because the clamped value is the one that enters the
+coefficients of the physical terms, and therefore the one that decides whether
+the coupling has settled. A model that does not report a coupling leaves the
+reported value at zero --- the \val{"CZ"} model solves the thickness equation
+semi-implicitly too and has no outer iteration at all --- so there the test
+reduces to the thickness. \key{NewtonMinIterations} can force a minimum iteration count,
+but since the concentration correction is already part of the test, the default
+of \val{1} is normally the right value.
+
+To see whether it is the thickness or the coupling that is holding convergence
+up, set \env{YUZEN\_DEBUG\_RESIDUAL}. Each outer iteration then prints a line
+to standard error in the form
+\code{[resid] <iteration> <thickness correction> <concentration correction>}.
+
+\section{The adaptive time step}
+\label{sec:time:dt}
+
+The step changes only when \key{Numerics.TimeStepControl.Enable} is
+\val{true}. It is decided by the thickness equation; the concentration equation
+follows whatever the thickness equation asks for.
+
+\subsection{The local truncation error}
+
+The routine \code{LocalTruncationCriterion} of \code{C\_ImplicitSolver} builds
+the estimate from two consecutive time differences, weighing the change over
+the current step against the change over the previous one:
+
+\begin{equation}\label{eq:lte}
+  \mathrm{Ek}_i = 2\,\frac{\Delta t}{\Delta t_0}\,
+    \frac{\Delta t_0\,h^{+}_{i} + \Delta t\,h^{-}_{i}
+          - (\Delta t_0+\Delta t)\,h^{0}_{i}}
+         {(\Delta t_0+\Delta t)\,w_i},
+  \qquad
+  \mathrm{criterion} = 1 - \frac{\max\lvert\mathrm{Ek}\rvert}
+                                {\mathrm{Criterion}}.
+\end{equation}
+
+Here $\Delta t_0$ is the step last taken and $\Delta t$ the current one; for
+the first step, $\Delta t_0$ is \key{InitialDt}, so the first step is judged
+too. A positive \code{criterion} in \cref{eq:lte} accepts the step; a
+negative one shrinks it. A step whose solve fails --- the Newton iteration
+of the well-mixed film, not converged in \key{NewtonMaxIterations} or
+stagnated far from convergence (\cref{sec:convergence:stagnation}), or a
+linear solve of the film or of the
+concentration in either model --- is shrunk in the same way and solved
+again; with the step control off it stops the run
+(\cref{sec:ref-numerics:tsc}). $\Delta t_0$ must be the step that produced $h^{-}$:
+taking instead the value of the step before its last change, or the rejected
+step on a retry, leaves a first-order term in the estimate and holds the step
+down --- in 1-D it does not grow again after a cut. \key{Criterion} is
+therefore not the error itself: a leveling film at \key{Criterion}
+$= 10^{-5}$ takes 69 steps for an error in its decay of $2.9\times10^{-4}$
+(the estimate with the wrong $\Delta t_0$ takes 385 for $1.1\times10^{-5}$).
+Choose \key{Criterion} by the error you need.
+
+The weight $w_i$ that normalizes the error is
+
+\begin{equation}\label{eq:lte-weight}
+  w_i = \max\bigl(\,\lvert h^{0}_{i}\rvert,\
+                   \mathrm{ScaleFloor}\times\max\lvert h^{0}\rvert\,\bigr),
+\end{equation}
+
+so \key{ScaleFloor} chooses what ``error'' means. \val{0}, the default, divides
+by the local thickness and gives a completely local relative error; \val{1}
+normalizes by the global maximum alone and gives something close to an absolute
+error; values in between judge the body of the film relatively while refusing
+to over-weight the thin regions. Read as a sentence, \cref{eq:lte-weight} says
+``anywhere thinner than \key{ScaleFloor} times the maximum thickness is not
+judged more harshly than that'', which also serves as the division-by-zero guard
+in a dry region, $h \to 0$.
+
+The default has a consequence worth knowing about. A precursor film at
+$\Hstar = 0.02$ is a fiftieth of the body of a drop at $H \sim 1$, so with
+\key{ScaleFloor} left at \val{0} a wobble inside the precursor film weighs
+fifty times as much as the same wobble in the body. \textbf{This is still not
+the usual reason a contact-line calculation sees its step collapse}; suspect
+the convergence test first (\cref{sec:convergence:absolute}).
+
+\subsection{Growing and shrinking}
+
+\begin{yzntable}{How the step is changed\label{tab:dt-change}}{@{}l L{0.34\textwidth} L{0.30\textwidth}@{}}
+\textsf{\bfseries Direction} & \textsf{\bfseries Condition} &
+\textsf{\bfseries Action} \\ \midrule
+shrink & \code{criterion <= 0} & \code{dt *= ChangeFactor} \\
+grow   & \code{criterion > 0.9} for \key{KeepSteps} consecutive steps &
+         \code{dt /= ChangeFactor} \\
+\end{yzntable}
+
+A shrink acts at once, on the step being retried; a lengthened step applies
+from the next step, and the clock advances by the step that was solved.
+
+The step is then clipped from both sides. The upper bound is the smaller of
+\key{MaxDtFactor} $\times$ (smallest mesh width)$^{4}$ and the smallest output
+interval; the lower bound is \key{MinDt}.
+
+The output interval appears in the upper bound because a step that straddles an
+output time would shift the time at which the output is actually written.
+
+The lower bound behaves differently: \textbf{the moment a step smaller than
+\key{MinDt} is requested the run aborts}, rather than continuing with the
+floor. This is deliberate. A calculation that has shrunk that far is not
+suffering from a step-size problem, so lowering \key{MinDt} and letting it grind
+on achieves nothing. In practice a step size collapsing in a contact-line case
+is the convergence test, not the truncation-error estimator ---
+\cref{sec:convergence:absolute} explains the mechanism, and it is the first
+thing to check.

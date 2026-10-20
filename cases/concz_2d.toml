@@ -1,0 +1,233 @@
+#  concz_2d -- ConcZ model on a two-dimensional film (pseudo 3-D).
+#
+#  The film spreads in x and y, and the concentration is resolved through the
+#  thickness as well. This is the combination that makes the model worth its
+#  cost: a concentration profile through the film makes the surface value
+#  milder than the average, and it is the surface value that drives both the
+#  Marangoni flux and the rate of evaporation.
+#
+#  Substrate relief drives the flow. Evaporation is on, so solvent leaves from
+#  the free surface and the solute piles up there. Over the 2 ms of the run the
+#  film loses too little solvent to move the mean concentration in its seventh
+#  digit; what the run shows is the stratification. It is local: it is confined
+#  to the two rings where the film is thinnest, on the shoulder of the
+#  substrate feature, and over the flat film (r > 0.4 mm) the profile is
+#  uniform to 5e-9. At the strongest point the concentration runs from
+#  0.5000000 at the substrate to 0.5000015 at the surface.
+#
+#  SlopeWidth is 0.6 here, not the 0.1e-3 the 1-D cases carry, and the number
+#  matters more than it looks. For an EllipseBump SlopeWidth is measured in the
+#  NORMALIZED radius, not in meters: the rim goes from a tenth of Height to
+#  nine tenths of it over 0.44*SlopeWidth*Width, so 0.1e-3 over a 0.4 mm bump
+#  is a rim 0.018 um across, which on a 16.7 um mesh is a vertical wall. That
+#  wall is not a small error. It drives the time step down by a factor of 10
+#  and the run takes 2.5 times the steps, puts a spurious bulge in the film at
+#  the corner (h up to 7.92 um against 6.05), inflates the surface excess
+#  below by a factor of 2.7, and carries c below its initial value by 1.2e-7.
+#  With the rim resolved over about six cells the run takes no time-step cuts
+#  and the undershoot is 3e-8.
+#
+#  Fluid.Diffusivity.BaseValue is 3e-10, and it is chosen so that the layer the
+#  model exists to resolve is in fact resolved. The evaporative layer is about
+#  sqrt(D*t) = 0.77 um deep after 2 ms against cells 0.20 um high, so it spans
+#  four of them, and the surface excess (surface minus substrate at the
+#  strongest point) converges at second order in the cell height:
+#  1.568e-6, 1.549e-6, 1.544e-6 at Nz = 15, 30, 60, extrapolating to 1.542e-6.
+#  Nz = 30 therefore sits 0.4 % above the converged value.
+#
+#  At the 1e-9 the 1-D cases use, diffusion crosses the film faster and the
+#  excess halves, to 8.4e-7. At 1e-12 the layer is 0.05 um, a quarter of one
+#  cell, and what comes out is proportional to the cell height rather than
+#  converging to anything: the excess reads 1.08e-4 at Nz = 15 and 5.80e-5 at
+#  Nz = 30. It looks like a stronger result and is a weaker one.
+#
+#  Nz = 30, not 15, so that four cells rather than two fall inside the layer.
+#  It costs a little over twice the run time of Nz = 15.
+#
+#  VTK output is on, so the result opens in ParaView; the field files carry
+#  x, y, z, c, u, v, w, h+s, h and s.
+SolverName = "Yuzen-1.0"
+InputFormatVersion = "1.0"
+JobName = "concz_2d"
+
+[Grid]
+Dimension = "xyh"
+Xmin = -0.5e-3
+Xmax = 0.5e-3
+Ymin = -0.5e-3
+Ymax = 0.5e-3
+Nx = 60
+Ny = 60
+Nz = 30
+
+[Initial]
+
+[Initial.Concentration]
+Type = "uniform"
+Value = 0.5
+
+[Initial.SurfaceShape]
+TotalHeight = 10e-6
+PrecursorRatio = 0.5
+
+[Initial.SurfaceShape.EllipseBump]
+Order = 2
+CreateType = "stack"
+Base = 0.0
+Height = 0.5
+Center = [0.0, 0.0]
+Width = [0.5e-3, 0.5e-3]
+SlopeWidth = 0.48
+
+[Substrate]
+TotalHeight = 10e-6
+
+[Substrate.EllipseBump]
+CreateType = "add"
+Base = 0.0
+Height = 0.3
+Center = [0.0, 0.0]
+Width = [0.4e-3, 0.4e-3]
+SlopeWidth = 0.6
+
+[Fluid]
+Name = "resist"
+
+[Fluid.Density]
+Value = 1000.0
+
+[Fluid.SurfaceTension]
+BaseValue = 30.0e-3
+BaseConc = 0.5
+Coef = 10e-3
+
+[Fluid.Viscosity]
+BaseValue = 100.0e-3
+BaseConc = 0.5
+Exponent = 10.0
+
+[Fluid.Diffusivity]
+BaseValue = 3.0e-10
+BaseConc = 0.5
+Exponent = -7.0
+
+[Fluid.MolarMass]
+Solvent = 100
+Resin = 2000
+
+[Physics]
+
+[Physics.ConcField]
+Model = "CZ"
+EnableConvection = true
+EnableDiffusion = true
+
+[Physics.LaplacePressure]
+Enable = true
+
+[Physics.SolutoCapillarity]
+Enable = true
+
+[Physics.VerticalGravity]
+Enable = false
+Acceleration = 9.80665
+
+[Physics.HorizontalGravity]
+Enable = false
+Acceleration = [4.903, 0]
+
+[Physics.Centrifugal]
+Enable = false
+RotationRate = 41.89
+RotationAxis = [0e-3, 0e-3]
+
+[Physics.Evaporation]
+Enable = true
+Coef = 1e-7
+ConcFunc = "Raoult"
+SpatialFunc = "uniform"
+NegPowExponent = 0.25
+NegPowRmax = 75e-3
+
+[Physics.Source]
+Enable = false
+Radius = 2e-3
+InletRate = 1.33
+Conc = 0.2
+TimeConstant = 0.5
+ArmLength = 395e-3
+ArmCenter = [-395e-3, 0e-3]
+RotationRate = 0.0
+StartAngle = 0
+RampTime = 0.0
+PlateauTime = 100
+SubRegions = 10
+
+[Boundary]
+
+[Boundary.XminBC]
+Type = "Symmetry"
+
+[Boundary.XmaxBC]
+Type = "Symmetry"
+
+[Boundary.YminBC]
+Type = "Symmetry"
+
+[Boundary.YmaxBC]
+Type = "Symmetry"
+
+[Output]
+Dimensioned = true
+Overwrite = true
+
+[Output.FieldData]
+TimeInterval = 2e-4
+NeutralFile = true
+VTKFile = true
+
+[Output.GeneralHistory]
+TimeInterval = 1e-3
+
+[Output.CalcInfo]
+TimeInterval = 1e-2
+
+[Output.ProbeList]
+TimeInterval = 1e-2
+
+[Numerics]
+InitialDt = 1e-5
+MaxSteps = 4000000000
+EndTime = 2e-3
+
+[Numerics.TimeStepControl]
+Enable = true
+MaxDtFactor = 1.0e10
+MinDt = 1.0e-15
+Criterion = 1e-3
+KeepSteps = 50
+ChangeFactor = 0.75
+
+[Numerics.HeightEquation]
+NewtonMaxIterations = 50
+NewtonEpsilon = 1e-12
+
+[Numerics.HeightEquation.LinearSolver]
+MaxIterations = 8000
+Epsilon = 1e-13
+RowScaling = true
+PreconditionType = "ILU"
+
+[Numerics.ConcEquation]
+
+[Numerics.ConcEquation.LinearSolver]
+MaxIterations = 5000
+Epsilon = 1e-13
+RowScaling = true
+PreconditionType = "ILU"
+
+[Restart]
+Enable = false
+FileName = "Stage1_fin.dat"
+RestartTime = 0
+FileIndex = 0

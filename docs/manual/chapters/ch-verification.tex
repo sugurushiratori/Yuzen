@@ -1,0 +1,2450 @@
+% ch-verification.tex -- verification: every claim, how strong it is, and how to reproduce it
+\chapter{Verification}
+\label{ch:verification}
+
+This chapter is the evidence. It records what has been checked in Yuzen, what
+the checks measured, and what the numbers came out at. It does not re-derive
+anything: the governing equations are in \cref{ch:governing}, the physical
+terms in \cref{ch:terms}, the wetting model in \cref{ch:wetting} and the
+numerical method in \cref{ch:discretization,ch:timeintegration,ch:convergence}.
+What is new here is the evidence and only the evidence.
+
+Two habits run through every section. \textbf{Each claim says how strong it
+is}, because ``verified'' covers everything from an algebraic identity to a
+number somebody once wrote down and has been comparing against ever since.
+\textbf{Each claim says how to reproduce it}, and
+\cref{sec:verification:reproduce} collects every command in one place. If a
+number in this chapter matters to you, run the command and get it again; if you
+cannot, that is a bug in this chapter.
+
+\section{How to read this chapter}
+\label{sec:verification:policy}
+
+Claims about a solver come in strengths, and the differences between them are
+large. In descending order:
+
+\begin{description}
+  \item[Agreement with an analytic solution.] The strongest. There is an
+    answer that exists independently of the code, and the code reproduces it.
+  \item[Convergence order.] Nearly as strong, and in some ways more
+    informative: it says not only that the error is small but that it is the
+    error you expect from the discretization you wrote. A wrong coefficient or
+    a wrong sign survives a single-mesh comparison far more easily than it
+    survives a refinement study.
+  \item[Invariants and identities.] Properties that must hold exactly ---
+    a sum that must be a plain sum, a uniform state that must stay uniform, a
+    reduction that must give the same bits whatever the thread count. These
+    are cheap to test and they fail loudly.
+  \item[Regression fixing.] The weakest. The current behavior is recorded, and
+    a change that alters it is caught. This says nothing whatever about the
+    current behavior being \emph{right}; it only says it has not changed.
+\end{description}
+
+It is worth naming which of Yuzen's claims sit where, because they are not all
+in the same place.
+
+\subsection*{The strong claims}
+
+\begin{itemize}
+  \item \textbf{The disjoining-pressure coefficient $\Dpn$ reproduces the
+    equilibrium contact angle you ask for.} This is checked in closed form ---
+    no numerics at all --- over 36 parameter combinations
+    (\cref{sec:verification:disjoining}). The calibration is an identity in the
+    limit of an infinite precursor, and the code agrees with the identity to
+    within $10^{-14}$ relative.
+  \item \textbf{The discretization of capillary plus disjoining pressure is
+    second-order accurate.} On an analytic equilibrium droplet the residual
+    velocity falls to zero at order 1.94 under mesh refinement
+    (\cref{sec:verification:disjoining}). If any of the coefficient, the sign
+    or the discretization were wrong, that residual would not vanish under
+    refinement at all.
+  \item \textbf{The reductions and BiCGStab are bit-identical under a change of
+    thread count} (\cref{sec:verification:linalg}). Not ``agree to a tolerance'':
+    equal, tested with \code{==}.
+\end{itemize}
+
+\subsection*{The weak claims}
+
+\begin{itemize}
+  \item \textbf{Cox--Voinov} (\cref{sec:verification:spreading}). What is
+    checked is the \emph{form} of the relation and the correlation of the fit.
+    The logarithmic factor $\ln(L/l)$ is not independently verified, and the
+    agreement with a naive estimate of it claims nothing beyond order of
+    magnitude.
+  \item \textbf{The cost of the coupling} (\cref{sec:verification:coupling}).
+    One 1-D, well-mixed case family, measured in iteration counts. It is not a
+    statement about two dimensions, about the \val{"CZ"} model, or about
+    wall-clock time.
+  \item \textbf{Input interpretation, output format and time-step control.}
+    These are regression fixes. They have no external ground truth and make no
+    claim to be correct, only to be unchanged.
+\end{itemize}
+
+What has not been checked at all is a separate chapter,
+\cref{ch:notverified}. Read it before you rely on a part of Yuzen this chapter
+does not mention.
+
+\section{The test suite}
+\label{sec:verification:suite}
+
+The unit tests build and run with three commands.
+
+\begin{shell}
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j
+ctest --test-dir build
+\end{shell}
+
+\code{ctest} runs the same executable three times, in separate processes: once
+at the default thread count, once with \env{OMP\_NUM\_THREADS} set to \val{1},
+and once with it set to \val{4}; it also runs the fourteen other
+entries described in \cref{ch:installation}. That is not redundancy. \textbf{Invariance
+under a change of thread count is itself one of the claims}
+(\cref{sec:verification:linalg,ch:reproducibility}), so it has to be exercised
+rather than assumed.
+
+Calling the executable directly prints the counts.
+
+\begin{plain}
+$ ./build/bin/yuzen_tests
+[doctest] test cases:    128 |    128 passed | 0 failed | 0 skipped
+[doctest] assertions: 183297 | 183297 passed | 0 failed |
+\end{plain}
+
+\Cref{tab:testfiles} breaks that down by file.
+
+\begin{yzntable}{The seventeen test files, their cases and their assertions\label{tab:testfiles}}{@{}L{0.28\textwidth} d d L{0.375\textwidth}@{}}
+\textsf{\bfseries File} & \textsf{\bfseries Cases} &
+\textsf{\bfseries Assertions} & \textsf{\bfseries What it covers} \\ \midrule
+\file{test\_grid.cpp}               & 9 & 6,252 & Grid indices, moves and coordinates; where fields sit \\
+\file{test\_linear\_solver.cpp}     & 6 & 1,663 & The analytic solution of the 1-D Poisson problem, second-order convergence, bit reproducibility \\
+\file{test\_finite\_differences.cpp}& 11 & 171,651 & Interpolation coefficients and gradients against analytic values; every convection scheme: exactness, bounds, symmetry, frozen weights \\
+\file{test\_boundary\_condition.cpp}& 11 & 1,025 & Matrix consistency over every combination of boundary conditions; the ghost values they give, inlets on every edge, mirrors and transposes; the boundary rows satisfied exactly after a solve \\
+\file{test\_mixed\_velocity.cpp}    & 3 & 216 & That the mixed velocity is the plain sum of the individual terms \\
+\file{test\_disjoining.cpp}         & 4 & 179 & Calibration of the disjoining pressure and the residual velocity on the equilibrium shape \\
+\file{test\_restart.cpp}            & 12 & 193 & The correspondence between lines of the ASCII restart file and grid points; the marker search of the binary reader; the restart state file; damaged restart files refused \\
+\file{test\_config.cpp}             & 11 & 76 & Interpretation of the input file, in TOML and in the \file{.inp} format, the report of unknown entries, and the strict conversions \\
+\file{test\_vector.cpp}             & 5 & 34 & Basic operations and bit reproducibility of the reductions \\
+\file{test\_positivity\_mobility.cpp}& 11 & 858 & That the face mobility is the positivity-preserving form of Diez \& Kondic; with Navier slip, against a reference without cancellation, continuous at its series, its derivative; zero against a \val{"Pinning"} ghost \\
+\file{test\_crs\_matrix.cpp}        & 4 & 28 & Element access in CRS and \code{MatVec} \\
+\file{test\_timesteps.cpp}          & 13 & 169 & Time advance and output intervals; the output schedule after a restart; the clock advances by the step solved \\
+\file{test\_newton\_convergence.cpp}& 9 & 23 & How the outer iteration exits, and when a stagnation fails the step \\
+\file{test\_source.cpp}            & 2 & 15 & The nozzle arm's angle against the integral of its rotation rate \\
+\file{test\_opt.cpp}               & 2 & 29 & The \env{YUZEN\_OPT} and \env{YUZEN\_GRAIN} switches parsed \\
+\file{test\_thread\_cap.cpp}        & 5 & 65 & The limit on the thread count \\
+\file{test\_jacobian.cpp}          & 10 & 821 & Each term's Jacobian against a finite difference of the term, 1-D and 2-D, with every convection scheme, with and without slip; no flux through a wall; the capillary and gravity $A\cdot h$ face by face; each term's face fluxes against its $A\cdot h$ \\ \midrule
+Total                               & 128 & 183,297 & \\
+\end{yzntable}
+
+Read the assertion column with care. \textbf{It reflects the number of times a
+loop inside a case reaches a check}, not the number of distinct properties
+being asserted. \file{test\_finite\_differences.cpp} dominates the total
+because it checks every convection scheme at every face of many random
+profiles; that makes it 94 \% of the assertions and nothing like 94 \% of the
+coverage.
+
+\section{Grid and finite differences}
+\label{sec:verification:grid}
+
+\file{test\_grid.cpp} builds a \code{RectGrid<3>} with
+$N_x, N_y, N_z = 9, 7, 5$ and checks the following at \textbf{every grid point
+of all eight site types} (\cref{tab:site-types} of \cref{ch:discretization}):
+
+\begin{itemize}
+  \item The linear index and the grid coordinates are inverses of one another.
+  \item Neighbors close periodically: $N_x$ moves of one cell return to the
+    starting point.
+  \item A one-cell move and a half-cell move both return to the starting point
+    when reversed, and a half-cell move lands on the correct destination site
+    type as well.
+  \item The index moves under a half-cell move exactly as the rule says ---
+    a move of $+\tfrac12$ cell leaves the index alone when that axis's stagger
+    bit is \code{0} and raises it by one when the bit is \code{1}, and a move of
+    $-\tfrac12$ cell does the reverse.
+  \item The coordinates follow the staggered layout, and nothing degenerates in
+    a direction that holds only one line, such as $N_y = 1$.
+  \item Fields are zero-initialized and can be read back by index, and the
+    components of a vector field sit in different places from one another.
+\end{itemize}
+
+The difference side is pinned by \file{test\_finite\_differences.cpp}. Over the
+seven fixed schemes --- \val{Upwind\_1st}, \val{Upwind\_2nd}, \val{Central\_2nd},
+\val{Upwind\_3rd}, \val{QUICK}, \val{KK} and \val{Central\_4th} --- it fixes
+that the interpolation coefficients sum to one, so that a constant is
+preserved; that the gradient of a linear function is reproduced exactly; that
+the gradient of a quadratic agrees to second order or better; and that the
+\code{Node} variant is the average of the \code{Xedge} values on either side of
+it. The two limited schemes, \val{Koren} and \val{VanLeer}, are checked with the others in \cref{sec:verification:schemes}.
+
+\section{Linear algebra and determinism}
+\label{sec:verification:linalg}
+
+\subsection{The Poisson problem}
+
+\file{test\_linear\_solver.cpp} drives the \val{"eigen"} backend through the
+\code{ILinearSolverBackend} interface on the one-dimensional Poisson problem
+$u'' = 2$ on $[-1, 1]$ with $u(\pm1) = 0$, whose solution is
+$u(x) = x^{2} - 1$. All three preconditioners --- \val{None}, \val{Jacobi} and
+\val{ILU} --- converge, with a residual below $10^{-11}$
+and a maximum error against the analytic solution at the interior points below
+$10^{-4}$ (at $n = 202$, $\Delta x = 0.01$, the measured value is
+$2.5\times10^{-5}$). Refining through $n = 52, 102, 202, 402$ \textbf{more than
+halves the maximum error every time}, which is the second-order convergence the
+discretization promises.
+
+Two further properties are fixed in the same file. A zero right-hand side
+returns the trivial solution --- only that, and nothing about how many
+iterations it takes to get there: returning in zero iterations was an
+optimization in an in-house backend tried during development, not a property
+of the problem, and \val{"eigen"} iterates 520 times to the same trivial answer.
+And \code{Solve()} restores both the matrix and the right-hand
+side to the state they were in before the call --- necessary because the
+diagonal scaling of the preconditioner overwrites both
+(\cref{sec:linsolve:contract}).
+
+\subsection{Determinism}
+
+\Cref{tab:determinism} lists the properties the unit tests fix. The point of
+the table is the word \emph{exactly}: these are comparisons with \code{==}, not
+with doctest's \code{Approx}.
+
+\begin{yzntable}{Bit-level determinism fixed by the unit tests\label{tab:determinism}}{@{}L{0.26\textwidth} L{0.17\textwidth} L{0.44\textwidth}@{}}
+\textsf{\bfseries Object} & \textsf{\bfseries Condition} &
+\textsf{\bfseries Claim} \\ \midrule
+\code{Vector} inner product, \code{Sum}, \code{Norm} & $N = 100003$ &
+  \textbf{Exactly equal} at 1, 2, 4 and 8 threads (tested with \code{==}, not with \code{Approx}) \\
+The \val{"eigen"} backend with ILU & $n = 402$ &
+  Every component of the solution agrees at 1, 2, 4 and 8 threads, and so do \textbf{the iteration count and the residual} \\
+The \val{"eigen"} backend with ILU & the same problem twice &
+  Iteration count, residual and solution agree exactly \\
+\end{yzntable}
+
+The reductions fix the order of the additions with a block decomposition that
+does not depend on the thread count: at least 512 elements per block, at most
+256 blocks (\cref{sec:repro:reduction}). $N = 100003$ is chosen deliberately
+--- \textbf{it is not a multiple of 256, so the array does not divide evenly
+into blocks and the test straddles the block boundaries} rather than sitting
+neatly inside them.
+
+The same property is then measured on the whole solver, with
+\file{tools/compare.py}, which reports the maximum difference divided by the
+scale of the column. \Cref{tab:wholesolver} gives the result; every entry is
+exact agreement. The one backend this does not hold for is \val{"amgcl"},
+measured separately in \cref{sec:verification:amgclthreads}.
+
+\begin{yzntable}{Whole-solver reproducibility, maximum difference over column scale\label{tab:wholesolver}}{@{}L{0.52\textwidth} d@{}}
+\textsf{\bfseries Comparison} & \textsf{\bfseries Result} \\ \midrule
+\file{leveling\_1d\_reg}, 1 thread against 2 threads (\val{"eigen"}) & 0.000e+00 \\
+\file{leveling\_1d\_reg}, run twice on 2 threads                   & 0.000e+00 \\
+\file{allphys\_2d\_reg}, 1 thread against 2 threads (\val{"eigen"}) & 0.000e+00 \\
+\end{yzntable}
+
+\section{Backend agreement}
+\label{sec:verification:backends}
+
+The linear solver backend is an input-file choice, made separately for the
+thickness equation and for the concentration equation (\cref{ch:linearsolver};
+the keys are given in \cref{sec:verification:reproduce}).
+\file{leveling\_1d\_reg} --- $N_x = 300$, 20 output intervals --- was solved
+with \val{"eigen"} and with \val{"amgcl"}, on one thread, and the outputs
+compared.
+\Cref{tab:backendagreement} gives the result.
+
+\begin{yzntable}{The two backends on \file{leveling\_1d\_reg}, maximum difference over column scale\label{tab:backendagreement}}{@{}L{0.33\textwidth} L{0.24\textwidth}@{}}
+\textsf{\bfseries What is compared} &
+\textsf{\bfseries \val{"eigen"} vs \val{"amgcl"}} \\ \midrule
+Physical quantities in \file{field*.dat} & 7.033e-11 (\code{Ux}) \\
+\file{History.dat}                       & 9.615e-02 (\code{ResinVolErr}) \\
+Time and step in \file{CalcInfo.dat}     & 0.000e+00 \\
+\end{yzntable}
+
+Two readings matter more than the numbers themselves.
+
+\textbf{The $7.033\times10^{-11}$ is the linear solver's tolerance, not a
+time-integration discrepancy.} \key{Epsilon} is \val{1e-13} in this case, and a
+difference of that order in the solution is what a difference of that order in
+the convergence criterion produces. It is \emph{not} an $O(\Delta t)$
+disagreement between two different time integrations; the two backends are
+solving the same discrete system and stopping at slightly different points
+inside the same tolerance.
+
+\textbf{\code{VolErr}, and the conservation-error columns generally,
+show a larger relative difference because they are themselves near-zero
+quantities.} Their absolute values hover around zero and dividing by their
+scale magnifies whatever is left. This case has symmetric edges, so nothing
+flows out, and \code{VolErr} and \code{ResinVolErr} are rounding, at most
+$7\times10^{-15}$, on which the two backends differ by $6\times10^{-16}$; a
+relative difference of $0.096$ on that column does not mean the two backends
+disagree about the solute.
+
+The same comparison is what ruled out an in-house BiCGStab backend tried
+during development. It agreed with \val{"eigen"} just as closely --- $1.220\times10^{-10}$ in
+the physical quantities (\code{Ux}) and $2.935\times10^{-6}$ in the error
+measures (\code{ResinVolErr}) --- but it was far more expensive in getting
+there. Over the same 20 output intervals the total BiCGStab iteration count was
+\textbf{3676} for that backend against \textbf{21} for \val{"eigen"}: a factor
+of about 175 for the same answer, which, together with the bugs found in it, is
+why it was left out of the release rather than offered as an option. Those totals are summed
+from the \code{BCG\_iter} column of \file{CalcInfo.dat} by hand;
+\file{tools/compare.py} does not total anything, but it does hold that column,
+and the three other diagnostic columns, out of the pass/fail decision and
+report their difference separately --- quite correctly, since they are a
+property of the solver rather than of the answer.
+
+\subsection{\val{"amgcl"} is not thread-invariant}
+\label{sec:verification:amgclthreads}
+
+\val{"amgcl"} is the one backend whose result moves when the thread count
+moves. Its internal reductions are not order-fixed the way
+\cref{sec:repro:reduction} fixes Yuzen's own, so changing the number of threads
+can change the low-order bits. The same \file{leveling\_1d\_reg}, run on one
+thread and on four, gives a difference of $6.089\times10^{-11}$ in the physical
+quantities (worst column \code{Ux}) and $9.615\times10^{-2}$ in the error
+measures (worst column \code{ResinVolErr}, which is rounding here: at most
+$6\times10^{-15}$, and the two runs differ by $6\times10^{-16}$). On two
+threads it gave the same bits as on one, and so did \file{allphys\_2d\_reg}
+on one, two and four threads: whether the bits move depends on how the
+library splits the work, and nothing guarantees that they do not. For
+\val{"eigen"} the identical comparison gives $0.000\mathrm{e}{+}00$, exactly,
+at any thread count (\cref{tab:wholesolver}).
+
+\begin{warn}[What the \val{"amgcl"} measurement does and does not cover]
+  \code{ctest} passes on an AMGCL build as well, but the agreement above and
+  the thread
+  differences above come from one regression case run by hand, not from a
+  property the test suite re-checks on every commit. The bit-identity that
+  \cref{sec:verification:linalg} asserts covers \val{"eigen"}
+  only, and \val{"amgcl"} cannot be brought under it --- it is not
+  bit-reproducible by construction. See \cref{sec:notverified:numerics}.
+\end{warn}
+
+\section{Velocity composition}
+\label{sec:verification:velocity}
+
+The mixed velocity is the film's velocity in the output (\code{Ux},
+\code{Uy}), and the Courant check is formed from it (the well-mixed
+concentration itself is carried by the face volume fluxes, and what crosses
+an open edge is counted from them, \cref{sec:disc:wm-conservative}), so if the rule by
+which the individual physical terms are combined into it goes wrong, all of
+these are wrong. The sign convention that comes from writing the governing equation
+in the form $-\nabla\cdot(\dots)$ is already inside each term's
+\code{\_Magnitude} (\cref{ch:terms}), which means \textbf{the composition side
+must be a plain sum and nothing more}.
+
+\file{test\_mixed\_velocity.cpp} fixes that with powers of two. Six terms are
+given distinct values --- capillary pressure 1, Marangoni 2, vertical gravity
+4, in-plane gravity 8, centrifugal force 16, disjoining pressure 32 --- and the
+mixed velocity must come out at \textbf{63}. Any term dropped, doubled or
+counted twice changes the total to a value that identifies it uniquely.
+
+The signs are checked separately, and just as bluntly: vertical gravity alone
+set to $+3$ must give a mixed velocity of $+3$, and centrifugal force alone set
+to $-5$ must give $-5$. \textbf{Signs pass through unchanged.} In two
+dimensions the same holds for the $x$ and the $y$ component alike.
+
+\section{The same problem posed twice}
+\label{sec:verification:equivalence}
+
+A test against a known answer needs a known answer; most of the terms have
+none (\cref{sec:notverified:physics}). What every term does have is a set of
+changes to the input that must not change the physics: exchanging $x$ and
+$y$, mirroring $x$, running a film that does not vary in $y$ as 1-D or as
+2-D, moving a periodic film round the domain by whole cells, and making the
+problem dimensionless with other scales. \file{tools/equivalence.py} runs a
+shipped case and a copy of it rewritten in one of those ways, at a fixed time
+step, and compares the two results point by point: a term that treats one
+direction differently from the other, an edge or a corner handled on one side
+only, an index slip in a stencil or in an output writer, or a group of
+dimensionless numbers that does not cancel, all show up far above rounding.
+\Cref{tab:equivalence} lists the thirty-three checks. \code{ctest} runs them as
+\code{equivalence}, in about half a minute.
+
+\begin{yzntable}{The checks of \file{tools/equivalence.py}\label{tab:equivalence}}{@{}L{0.22\textwidth} L{0.52\textwidth} d@{}}
+\textsf{\bfseries Check} & \textsf{\bfseries The same problem, posed again as} & \textsf{\bfseries Worst}\\ \midrule
+\code{wm2d\_transpose} & $x \leftrightarrow y$ (grid with $\Delta x \ne \Delta y$, shapes, gravity, axis, edges) & $2\times10^{-9}$ \\
+\code{wm2d\_mirror\_x} & $x \to -x$ & $1\times10^{-15}$ \\
+\code{cz2d\_dry\_transpose} & a drying 2-D \val{"CZ"} film with the Marangoni term, $x \leftrightarrow y$ & $3\times10^{-11}$ \\
+\code{cz2d\_dry\_mirror\_x} & the same, $x \to -x$ & $3\times10^{-11}$ \\
+\code{wm2d\_spin\_transpose} & the transpose with a strong rotation and UTOPIA for the film height, so that the upwind side of the centrifugal flux is chosen from the cell centers & $8\times10^{-10}$ \\
+\code{wm2d\_spin\_mirror\_x} & the mirror, the same & $2\times10^{-9}$ \\
+\code{wm2d\_nozzle\_transpose} & the transpose, with a fixed nozzle off the center & $2\times10^{-10}$ \\
+\code{wm2d\_nozzle\_thin} & the same on cells 5.6 times longer one way than the other & $2\times10^{-10}$ \\
+\code{wm2d\_nozzle\_mirror\_x} & the mirror, with the same nozzle & $2\times10^{-10}$ \\
+\code{wm\_1d\_vs\_2d} & 2-D, uniform and periodic in $y$ & 0 \\
+\code{wm\_1d\_vs\_2d\_koren} & the same with the Koren scheme for the concentration, whose limiter is settled at the answer of each step and whose explicit half is formed from the state the step starts from & 0 \\
+\code{wm\_io\_1d\_vs\_2d} & the same with a \val{"FreshInlet"} and an \val{"Outlet"} in $x$, the film's rim across the inlet & $4\times10^{-10}$ \\
+\code{wm\_io\_1d\_vs\_2d\_sym} & and with $y$ symmetric, so the inlet and outlet corners are walls & $9\times10^{-10}$ \\
+\code{wm\_io\_1d\_vs\_2d\_ymin} & the inlet run flowing along $+y$ from an inlet on Ymin, $x$ periodic & $9\times10^{-10}$ \\
+\code{wm\_io\_1d\_vs\_2d\_ymax\_sym} & along $-y$ from an inlet on Ymax, $x$ symmetric & $3\times10^{-10}$ \\
+\code{wm1d\_io\_mirror} & the 1-D inlet run mirrored, inlet at Xmax & $5\times10^{-10}$ \\
+\code{wm1d\_shift} & a periodic film moved 13 cells round the domain & $1\times10^{-9}$ \\
+\code{wm2d\_shift} & the same in 2-D, 5 cells in $x$ and 7 in $y$ & $5\times10^{-10}$ \\
+\code{wm1d\_scales} & \key{TotalHeight} $\times 2.5$ and $L_0 = \SI{0.7}{\milli\metre}$ & $6\times10^{-9}$ \\
+\code{cz1d\_hscale} & \val{"CZ"}, \key{TotalHeight} $\times 2.5$ & $1\times10^{-14}$ \\
+\code{cz1d\_lscale} & \val{"CZ"}, $L_0 = \SI{0.7}{\milli\metre}$ & $1\times10^{-14}$ \\
+\code{wm1d\_nozzle\_mirror} & a nozzle off the center of a flat film, $x \to -x$ & $4\times10^{-12}$ \\
+\code{cz1d\_mirror} & \val{"CZ"}, $x \to -x$ & $3\times10^{-14}$ \\
+\code{cz1d\_shift} & \val{"CZ"}, a periodic film moved 11 cells & $2\times10^{-13}$ \\
+\code{cz2d\_transpose} & \val{"CZ"}, $x \leftrightarrow y$ & $2\times10^{-13}$ \\
+\code{cz\_1d\_vs\_2d} & \val{"CZ"}, 2-D uniform in $y$ & $1\times10^{-14}$ \\
+\code{cz2d\_deficit\_transpose} & \val{"CZ"}, $x \leftrightarrow y$, restarted with a column next to a wall at $c = -0.05$, which the columns beside it fill & $2\times10^{-15}$ \\
+\code{body\_velocity} & flat film: $\rho g h^2/3\mu$ and $\rho\omega^2 r h^2/3\mu$ exactly & $2\times10^{-14}$ \\
+\code{cz\_solute} & drying flat \val{"CZ"} film keeps its solute & 0 \\
+\code{cz\_solute\_slope} & a drying \val{"CZ"} film over relief keeps its solute & $5\times10^{-15}$ \\
+\code{cz\_uniform} & a uniform \val{"CZ"} concentration stays uniform while the film moves & 0 \\
+\code{cz\_wm\_advection} & the flow carries the solute as in \val{"WM"} & $2.7\times10^{-3}$ \\
+\code{wm\_retry} & a rejected and retried step, against that step taken at its $\Delta t$ & 0 \\
+\end{yzntable}
+
+The column \textsf{Worst} is the largest difference over every column of the
+field files, relative to how far that field moved over the run; it is the
+concentration every time, because the concentration moves least. The film
+thickness itself agrees to $2\times10^{-13}$ or better in every well-mixed check and
+in the \val{"CZ"} ones without Marangoni flow; with it, the surface-tension
+gradient multiplies the rounding of $c$ by $A_s\,\mathrm{Ma}/\Delta x$, the
+thickness agrees to $10^{-12}$ and the velocity to $3\times10^{-11}$. The limit the test enforces is $10^{-7}$.
+
+The last six rows are the exceptions to the rule of the section, checks
+against a closed form, against the other model or against another run. \code{body\_velocity} reads
+the velocity that the in-plane gravity and the centrifugal term write --- the
+one that appears in \file{field*.dat} --- on a
+flat film in 1-D and 2-D, where it is $\rho g h^2/(3\mu)$ along \key{Acceleration}
+and $\rho\omega^2 r h^2/(3\mu)$ away from the axis, and requires it to
+$10^{-10}$. \Cref{sec:verification:velocity} checks that the terms are summed
+correctly; this checks that each of them has the right size and sign.
+\code{cz\_solute} dries a flat \val{"CZ"} film by \SI{0.4}{\percent} and
+measures the change of its solute content $h\,\bar c$ as a fraction of the
+solvent lost; it is zero to rounding, and the test allows $10^{-10}$. \code{cz\_wm\_advection} switches on a
+strong in-plane gravity over a drying film whose evaporation varies along $x$,
+with a vertical diffusivity high enough to keep the \val{"CZ"} profile flat,
+and compares the change the flow makes to the depth-mean concentration in the
+two models. Away from the walls they agree to \SI{0.3}{\percent}; the test
+allows \SI{3}{\percent}. This is the check that fixes the direction in which
+\val{"CZ"} advects the solute, which none of the symmetries can: a scheme that
+carries the solute upstream is as symmetric as one that carries it
+downstream. \code{wm\_retry} lets the time-step control reject the first
+step of a leveling film 18 times, and compares the step it finally takes
+with the same step taken at that $\Delta t$ from the start; the two must agree
+to rounding, since both start from the same film. They did not: the retry
+built the explicit half of its Crank--Nicolson update from the answer of the
+attempt it had just rejected, and was off by $3.5\times10^{-5}$ of the change.
+\code{wm1d\_nozzle\_mirror} and \code{wm2d\_nozzle\_mirror\_x} are ordinary
+mirrors, but of cases with a nozzle, which no other check has: they caught the footprint being measured
+at the end of each sub-division of a cell instead of its center, which put the
+supply half a sub-division to one side (\cref{sec:terms:source}).
+
+\file{tools/concz\_vs\_wm.py} poses a film twice in another way, to the two
+concentration models (\cref{sec:disc:positivity-concz}), and requires, besides
+the film, that the \code{Volume} of their \file{History.dat} agree to
+$10^{-6}$. It found that they wrote different quantities for a 1-D film: the
+well-mixed model a strip as wide as the length scale $L_0$, \val{"CZ"} one as
+wide as \key{Grid.Ymax} $-$ \key{Grid.Ymin} ($8.7\times10^{-12}$ against
+$1.0\times10^{-8}$\,\si{\metre\cubed} for the same film). Corrected, both write
+the volume of a strip \SI{1}{\metre} wide (\cref{sec:output:history}); they
+agree exactly, in 1-D and in 2-D.
+
+\section{Problems with a closed-form answer}
+\label{sec:verification:analytic}
+
+\file{tools/analytic.py} sets up problems the lubrication equations answer in
+closed form, runs the solver on them and compares. The linear ones start from
+a sinusoid of amplitude $10^{-3}$ of a flat \SI{5}{\micro\metre} film on a
+periodic domain one wavelength long, $L = \SI{0.25}{\milli\metre}$, and follow
+the Fourier coefficient of that wave number over the cell centers: its decay
+rate against $\sigma h_0^3 k^4/3\mu$ (capillary), plus $\rho g h_0^3 k^2/3\mu$
+with vertical gravity, and its phase against a translation at
+$\rho g h_0^2/\mu$ with in-plane gravity. Where the error should fall at a known
+rate it is the rate that is checked.
+
+With the disjoining pressure of \cref{sec:terms:disjoining}, a flat film of
+thickness $h_0$ is linearly unstable to long waves where $\Pi'(h_0) > 0$: a
+sinusoid of wavenumber $k$ grows at
+\begin{equation}
+  \omega = -\frac{h_0^3}{3\mu}\,k^2\bigl(\sigma k^2 - \Pi'(h_0)\bigr),\qquad
+  \Pi'(h) = -\frac{B}{h}\Bigl[n\Bigl(\frac{\hstar}{h}\Bigr)^{n} - m\Bigl(\frac{\hstar}{h}\Bigr)^{m}\Bigr],
+  \label{eq:spinodal}
+\end{equation}
+with $B$ the calibrated coefficient of \cref{sec:terms:disjoining}; for
+$(n,m) = (3,2)$ that is $h_0 > 1.5\hstar$. In the dimensionless variables it
+reads $\omega = -\tfrac13 H_0^3k^2\bigl(k^2 + \Bo - \Dpn\,\Pihat'(H_0)\bigr)$.
+The \code{spinodal} checks follow a sinusoid on a film on either side of
+$1.5\hstar$, in the linear range (the unstable one grows 1.85 times).
+\Cref{tab:analytic} gives the result;
+\code{ctest} runs it as \code{analytic}, in about a minute.
+
+\begin{yzntable}{The checks of \file{tools/analytic.py}\label{tab:analytic}}{@{}L{0.18\textwidth} L{0.58\textwidth} L{0.16\textwidth}@{}}
+\textsf{\bfseries Check} & \textsf{\bfseries What is compared} & \textsf{\bfseries Result}\\ \midrule
+\code{leveling\_1d} & capillary decay rate, 16 and 32 cells per wavelength & order 1.99 in $\Delta x$ \\
+\code{leveling\_2d} & the same for $\cos k_x x\cos k_y y$, 12 and 24 cells & order 1.98 \\
+\code{leveling\_dt} & the same rate, $\Delta t$ = 8 and \SI{4}{\milli\second} & order 2.00 in $\Delta t$ \\
+\code{leveling\_cz} & \val{"CZ"} against \val{"WM"} on the same problem & $1\times10^{-11}$ \\
+\code{leveling\_slip\_1d} & Navier slip, $\lambda = h_0/2$ (\key{Physics.Slip}): decay rate $\sigma(h_0^3/3 + \lambda h_0^2)k^4/\mu$, 16 and 32 cells & order 1.99 in $\Delta x$ ($6.4\times10^{-3}$ at 32) \\
+\code{leveling\_slip\_dt} & the same, $\Delta t$ = 3.2 and \SI{1.6}{\milli\second} & order 2.00 in $\Delta t$ \\
+\code{energy\_\bk leveling}, \code{\_slip}, \code{\_box}, \code{\_2d} & \key{Output.Energy} on a 30\,\% sinusoid leveling (periodic; with slip; between \val{"Symmetry"} walls with vertical gravity; 2-D): the balance of the run $|\mathcal F(T)-\mathcal F(0)+\int_0^T\mathcal D\,\mathrm dt|$ relative to $\int_0^T\mathcal D\,\mathrm dt$ (the steps' balances summed), and $\mathcal F$ never rising from step to step & order 2.00 in $\Delta t$ ($2\times10^{-4}$ to $5\times10^{-5}$ at \SI{2}{\milli\second} and \SI{1}{\milli\second}, leveling); no rise \\
+\code{energy\_\bk dewetting} & the same on a film $5.5\hstar$ thick, spinodally unstable, ruptured onto its precursor at about \SI{10}{\second} and gathered into a drop by \SI{40}{\second}, 128 cells, $\Delta t$ = 0.125 and \SI{0.0625}{\second} & order 1.97 in $\Delta t$; no rise \\
+\code{energy\_\bk saturate\_mono} & capillary and disjoining pressure on the film of \code{spinodal\_1d\_unstable}, a 30\,\% sinusoid grown into a steady film over \SI{40}{\second}: $\mathcal F$ never rises and $\mathcal D \ge 0$ (with the mean face mobility the disjoining pressure once took, $\mathcal D$ went negative, $5.9\times10^{-5}$ of its largest value) & 0 \\
+\code{eq\_slip} & the equilibrium droplet of \cref{sec:verification:disjoining} ($N_x = 2000$) advanced \SI{0.01}{\second} with slip of \SI{1}{\micro\metre}, five times the precursor film: $\max|\Delta h|/\max h$ & $9.5\times10^{-6}$ ($6.5\times10^{-6}$ without slip) \\
+\code{gravity\_1d} & decay rate with vertical gravity, 32 cells & $6\times10^{-3}$ \\
+\code{potential\_1d} & \key{WritePotential}: the \code{PHI} column of the initial field (a sinusoid under capillary and disjoining pressure and vertical gravity) against $\sigma\nabla^2 h + \Pi(h) - \rho g h$ & $1.5\times10^{-15}$ \\
+\code{leveling\_logout\_\bk times} & \file{leveling\_1d\_logout}: 141 field outputs from $10^{-7}$ to \SI{1}{\second}, 20 a decade, \key{ExactTimes}: $|t - t_i|/t_i$ & $0$ \\
+\code{leveling\_logout} & the same: the decay rate at each output, 64 cells & $1.6\times10^{-3}$, as at a fixed step \\
+\code{spinodal\_1d\_\bk unstable} & disjoining pressure ($\thetae = \ang{10}$, $(n,m) = (3,2)$) on a film $h_0 = 2\hstar$, a sinusoid \SI{1}{\milli\metre} long: growth rate against \cref{eq:spinodal}, 16 and 32 cells & order 2.00 in $\Delta x$ ($2.3\times10^{-3}$ at 32) \\
+\code{spinodal\_1d\_\bk unstable\_dt} & the same, $\Delta t$ = 0.4 and \SI{0.2}{\second} & order 2.00 in $\Delta t$ \\
+\code{spinodal\_1d\_stable} & the same on $h_0 = 1.25\hstar$, below $1.5\hstar$: decay rate & order 1.99 ($3.9\times10^{-3}$ at 32) \\
+\code{spinodal\_1d\_\bk stable\_dt} & the same, $\Delta t$ = 0.4 and \SI{0.2}{\second} & order 2.01 in $\Delta t$ \\
+\code{wave\_1d} & damping added by the upwinded in-plane gravity (UTOPIA), 32 and 64 cells & order 3.25 \\
+\code{wave\_1d\_speed} & wave speed $\rho g h_0^2/\mu$ (UTOPIA), 32 cells & $5\times10^{-5}$ \\
+\code{wave\_2d\_speed} & the same along \key{Acceleration} in 2-D & $1\times10^{-4}$ \\
+\code{wave\_1d\_koren} & the damping with the default Koren scheme, 32 and 64 cells & order 3.41 \\
+\code{wave\_1d\_koren\_speed} & its wave speed, 32 cells; order in $\Delta x$ & $6.7\times10^{-4}$; 2.85 \\
+\code{wave\_2d\_koren\_speed} & the same in 2-D, 24 cells & $1.1\times10^{-3}$ \\
+\code{wave\_cz} & \val{"CZ"} decay rate with in-plane gravity, 32 and 64 cells & order 2.10 in $\Delta x$ \\
+\code{wave\_cz\_speed} & \val{"CZ"} wave speed, 32 cells & $6\times10^{-3}$ \\
+\code{spin\_1d} & $h_0/\sqrt{1 + 4\rho\omega^2 h_0^2 t/3\mu}$ on a strip of a flat film (an \val{"Outlet"} at each end) & $4\times10^{-7}$ \\
+\code{spin\_balance} & a 1-D closed box spinning (\val{"Symmetry"} or \val{"Pinning"} walls; \val{"WM"} at a fixed and an adaptive step, \val{"CZ"} with and without evaporation): $|\code{VolErr}|$, $|\code{ResinVolErr}|$ with the outflow into $y$ counted & $\le 10^{-12}$ ($2\times10^{-15}$) \\
+\code{evap\_wm} & drying flat film against the ODE, $\Delta t$ = 10 and \SI{5}{\milli\second} & order 2.00 in $\Delta t$ \\
+\code{evap\_cz} & the same with \val{"CZ"} & order 2.16 \\
+\code{slab\_cz} & \val{"CZ"} profile against the slab series, $N_z = 20$ & $3\times10^{-4}$ (second order in $N_z$) \\
+\code{dry\_cz} & \val{"CZ"} drying at $Eh/D \approx 1$ with $D(c)$, against a reference, $N_z$ = 16 and 32 & order 1.81 in $N_z$ \\
+\code{evap\_cap} & evaporation capped at $h/2$ and at the solvent per step: $h_1 = \tfrac23 h_0$, $hc$ kept & $3\times10^{-8}$ \\
+\code{evap\_solvent} & the solvent limit $E\Delta t \le h(1-c)$, $c_0 = 0.5$, $E\Delta t/h_0$ = 0.3 and 0.75, 1-D and 2-D & $3\times10^{-8}$ \\
+\code{dried\_wm}, \code{dried\_cz} & a film dried out to $c = 1$ at a rate independent of $c$: solute kept, $c \le 1$, also with a lengthened step & $\le 10^{-12}$ \\
+\code{conc\_overshoot} & a front from $c = 0.99$ to 0.3 carried by a uniform flow, UTOPIA and Central4 in 1-D, UTOPIA in 2-D, Courant number 0.4: the overshoot past $c = 1$ moved, not cut; $|\code{ResinVolErr}|$, and $c \le 1$ & $\le 10^{-12}$ ($2\times10^{-14}$) \\
+\code{conc\_overshoot\_koren} & the same with Koren at a Courant number of 1.5 & $\le 10^{-12}$ ($1\times10^{-15}$) \\
+\code{conc\_drying} & a front from $c = 0.9$ to 0.3 on a closed periodic film, carried by the flow and drying by Raoult's law, UTOPIA and Koren on 50 cells, UTOPIA in 2-D on 24: $|\code{ResinVolErr}|$ & $\le 10^{-12}$ ($2\times10^{-15}$) \\
+\code{conc\_uniform} & a uniform $c$ in a closed box under a nozzle and a strong in-plane gravity (and, in 1-D, the spin): $\max|c - c_0|$, 1-D and 2-D & $\le 10^{-12}$ ($6\times10^{-16}$) \\
+\code{conc\_undershoot}, \code{\_cz} & a front from $c = 0.7$ to 0.005 carried by the flow (UTOPIA, KK, Central4; UTOPIA in 2-D; \val{"CZ"} with UTOPIA): the undershoot below $c = 0$ filled from the cells around, $c \ge 0$, $|\code{ResinVolErr}|$ & $\le 10^{-12}$ ($1\times10^{-14}$) \\
+\code{wall\_balance\_cz}, \code{\_solute} & a \val{"CZ"} closed box with every term toward the walls: volume and solute, with and without evaporation & $\le 10^{-12}$ \\
+\code{leveling\_adaptive}, \code{\_cz} & leveling with an adaptive step: the decay at the reported times, and the clock against the sum of the steps solved & $5\times10^{-4}$ ($2.9\times10^{-4}$ at \key{Criterion} $=10^{-5}$); $10^{-12}$ \\
+\code{inlet\_outlet} & a bump carried out through an \val{"Outlet"}, the film fed through a \val{"FreshInlet"}, 100 cells: $\max|\code{VolErr}|$, $|\code{ResinVolErr}|$ & $\le 10^{-12}$ ($1.3\times10^{-15}$) \\
+\code{inlet\_outlet\_left} & the same: the film uniform again after the bump left & $3\times10^{-5}$ \\
+\code{solute\_balance} & the same film drying, UTOPIA, Koren, an adaptive step, and without the concentration: $\max|\code{VolErr}|$, $|\code{ResinVolErr}|$ & $\le 10^{-12}$ ($2.2\times10^{-15}$) \\
+\code{solute\_balance\_2d} & the same in 2-D, uniform in $y$ (UTOPIA, Koren) and open on all four sides with every kind of open corner & $\le 10^{-12}$ ($1.1\times10^{-14}$) \\
+\code{evap\_threshold} & one step of a flat film losing $E\Delta t = 0.3, 0.45, 0.75\,h_0$: the cap from $E\Delta t > h/2$ at either end of the step, in the film and the concentration & $10^{-7}$ \\
+\code{evap\_threshold\_2d} & the same in 2-D & $10^{-7}$ \\
+\code{negpow\_rim} & flat film, no flow, \val{"negPow"}: thickness lost in one step against the profile, through the blend to 3.9 blend widths past \key{NegPowRmax} & $3\times10^{-15}$ \\
+\code{negpow\_rim\_slope} & jump of slope where the blend takes over, relative to the slope & $0.056$ (allowed 0.2) \\
+\code{negpow\_rim\_flat} & spread of the rate past \key{NegPowRmax}, relative to its value & $0$ \\
+\code{wall\_balance}, \code{wall\_balance\_2d} & a closed box, gravity and rotation toward the walls, four convection schemes, every edge and corner: $|\code{VolErr}|$ & $\le 10^{-12}$ (about $10^{-14}$) \\
+\code{wall\_balance\_pinned}, \code{\_pinned\_2d} & the same with \val{"Pinning"} edges & $\le 10^{-12}$ \\
+\code{wall\_balance\_slip} & the four boxes above with Navier slip of \SI{3}{\micro\metre} & $\le 10^{-12}$ ($1.1\times10^{-14}$) \\
+\code{nozzle\_balance} & a nozzle with an adaptive step, 1-D and 2-D, and \file{nozzle\_1d\_rotating} with its arm turning, the film thickened a hundredfold: \code{VolErr} counts what it supplies & $\le 10^{-12}$ ($1\times10^{-13}$) \\
+\code{nozzle\_solute} & the same: \code{ResinVolErr} counts the solute that comes with it & $\le 10^{-12}$ ($1.3\times10^{-13}$) \\
+\code{nozzle\_supplied} & the same with the liquid supplied at \key{Conc} (\key{ConcType = "supplied"}): \code{ResinVolErr} counts $\int c_S S$, and \code{VolErr}; on the thick film steps whose Newton correction stagnated are cut & $\le 10^{-12}$ ($2\times10^{-13}$) \\
+\code{nozzle\_mixing} & liquid at \key{Conc} on a film that does not flow, over the whole domain and under a small nozzle, 1-D and 2-D: $c$ against \cref{eq:source-mixing}; with \val{"local"}, $c = c_0$ & $\le 10^{-12}$ ($4.2\times10^{-15}$) \\
+\code{nozzle\_arm} & where a rotating nozzle puts the liquid: steady turn and stop & $2\times10^{-4}$ of the arm \\
+\code{nozzle\_area} & a fixed 2-D nozzle on near-square cells and on cells 11 and 20 times longer one way than the other: what it supplies against \key{InletRate} $\pi R^2 t$ & $3.6\times10^{-3}$ (its area from $20\times20$ points a cell) \\
+\end{yzntable}
+
+The errors of the linear checks are relative to the rate or the phase that is
+compared; those of the flat films are relative to the change over the run.
+
+One thing the table records is a property of the scheme rather than a
+confirmation of it: \textbf{the in-plane gravity of \val{"WM"} is upwinded},
+and the upwinding damps a traveling wave: with UTOPIA \SI{3.3}{\percent} of
+the capillary rate at 32 cells per wavelength, \SI{0.35}{\percent} at 64,
+falling at third order (with KK, three times as much: \SI{11}{\percent} and
+\SI{1.3}{\percent}). The default Koren scheme damps it by \SI{4.6}{\percent}
+and \SI{0.43}{\percent}, but clips the crests and troughs, so its speed error
+is 13 times UTOPIA's. \val{"CZ"} takes the same flux centered, and its error falls at
+second order from \SI{0.6}{\percent} at 32 cells.
+
+\code{slab\_cz} dries a flat \val{"CZ"} film slowly enough ($E h/D = 5\times
+10^{-5}$) for the profile through the thickness to be that of a slab with a
+constant flux $q = cE$ into its top face and none through the bottom,
+\begin{equation*}
+  c - \bar c = \frac{q h}{D}\left[\frac{3\zeta^2 - 1}{6}
+    - \frac{2}{\pi^2}\sum_{n\ge1}\frac{(-1)^n}{n^2}\,
+      \mathrm{e}^{-n^2\pi^2 D t/h^2}\cos n\pi\zeta\right],
+\end{equation*}
+and compares the computed profile with it; the error, relative to a third of
+$qh/D$, is $1.3\times10^{-3}$, $3.2\times10^{-4}$ and $8.7\times10^{-5}$ at
+$N_z = 10$, 20 and 40, falling at second order until the linearization, which
+is of order $Eh/D$, sets a floor.
+
+\code{dry\_cz} is the regime \code{slab\_cz} stays out of: a film drying
+fast enough ($Eh/D \approx 1$) for the solute to pile up under the surface,
+with a diffusivity that falls by $e^{-3}$ per unit of concentration. There is
+no closed form, so \file{tools/analytic.py} solves the same problem itself
+--- the solute per cell conserved in $\zeta$, $(hc)_t = \partial_\zeta[h_t\zeta c
++ (D/h)c_\zeta]$, with no flux through either face, on 600 cells, implicit
+midpoint in time --- and the \val{"CZ"} profile must approach it at second
+order in $N_z$ (1.79, 1.81 and 1.87 from $N_z = 8$ to 64, the test asking
+for at least 1.8 from 16 to 32). It is the check on the vertical advection that the $\zeta$
+mapping produces, and on its upwinding at the surface, which nothing else
+constrains.
+
+\code{evap\_cap} dries a flat film so fast that one step would take more than
+half of it. The evaporation is then capped at $h/(2\Delta t)$, at the start of
+the step and at its end, so the Crank--Nicolson step gives $h_1 = h_0 -
+(h_0 + h_1)/4$, $h_1 = 0.6\,h_0$, and the solute $hc$ must stay what it was.
+The check found that it did not: the concentration equation enriched the
+solute at the uncapped rate and made \SI{30}{\percent} more of it in the one
+step (found; corrected). The well-mixed concentration equation is the balance
+of $hc$ itself, which the evaporation does not enter: the solvent the
+film-height equation removed is in $h_1$, so $hc$ is kept exactly
+(\cref{sec:disc:wm-conservative}); with the solvent limit as
+well, $h_1 = \tfrac23 h_0$ for $c_0 = 0.5$. \code{evap\_threshold} checks where the cap starts: one step each
+below it, across it within the step, and above it at both ends, in the film
+and in both concentration equations. An enrichment $c_t = Ec/h$ at the rate
+of the field alone kept the solute below the cap only to the order of
+the scheme, $1 + O((E\Delta t/h)^3)$ per step, which is what
+\code{evap\_wm} measures (found; corrected the same way). \code{negpow\_rim} compares the rate of the
+\val{"negPow"} profile with the definition across the rim. It found that the
+cosine blending the profile into a constant was never stopped at
+\key{NegPowRmax}: beyond it the rate fell again and oscillated, down to 0.75 of
+its rim value two blend widths out (at the corners of a square domain whose
+half-width is \key{NegPowRmax}, for example). Corrected, it is constant
+beyond \key{NegPowRmax}.
+
+\code{inlet\_outlet} feeds a film on an incline through a \val{"FreshInlet"}
+and drains it through an \val{"Outlet"}, and carries a bump of
+\SI{1.5}{\micro\metre} out of the domain. The volume in the domain plus what
+has flowed out must stay what it was, and so must the solute
+(\file{History.dat} reports the balances as \code{VolErr} and
+\code{ResinVolErr}), and once the bump has gone the film must be uniform
+again. \code{wm\_io\_1d\_vs\_2d} of \cref{sec:verification:equivalence} adds
+the corners these edges make.
+
+\code{solute\_balance} lets the same film dry while it flows, so its
+concentration rises downstream and solute diffuses through both edges: the
+inlet holds $c$ at its face, the outlet extrapolates it. The film-height and
+the concentration equations are finite-volume balances
+(\cref{sec:disc:wm-conservative}), so what is in the domain changes by what
+crosses the edge faces and the sources alone, and \file{History.dat} counts
+what crosses an open edge from the very face fluxes each committed step put
+through it, at the step's weighting in time (\cref{sec:output:history}): the
+largest $|\code{VolErr}|$ and $|\code{ResinVolErr}|$ over the run must stay
+at rounding, $10^{-12}$, with UTOPIA and with Koren for the concentration
+(the step completed with the limiter settled), with the time step cut back
+and lengthened by the control (only the committed steps count), and without
+the concentration (the volume alone); \code{solute\_balance\_2d} does the same
+in 2-D, uniform in $y$, and on a film open on all four sides with the flow
+along the diagonal, which crosses an inlet--inlet, an outlet--outlet and two
+inlet--outlet corners. The checks found three faults of the bookkeeping, not
+of the fields; all corrected. \file{History.dat} counted only the solute the
+flow carries out, not what the concentration equation diffuses through the
+edge faces, and the balance stayed at $1.7\times10^{-4}$ of the outflowed
+solute whatever $\Delta x$ and $\Delta t$ were. In 2-D it took the film and
+the concentration in the boundary cell rather than at the face, a
+first-order error in \code{VolErr} as well ($1.5\times10^{-3}$). With both
+corrected it still counted what crossed from the velocities and the face
+values of the field after each step, integrated by the trapezoidal rule,
+not from the face fluxes the equations carried: \code{VolErr} and
+\code{ResinVolErr} were $6\times10^{-7}$ here on 100 cells (and
+$1.5\times10^{-6}$ with the open corners on 24 by 24), falling at order 1.8
+in $\Delta x$. Counted from the step's own face fluxes they are
+$1\times10^{-15}$ to $1\times10^{-14}$. \code{restart\_chain}
+(\cref{sec:verification:bcio}) continues such a run from its state files, in
+1-D and 2-D, to the bit of the run made straight through.
+
+\code{nozzle\_balance} also runs \file{nozzle\_1d\_rotating} with its arm
+turning at \SI{1}{\radian\per\second}: the nozzle crosses half the domain
+and leaves it in part, and the film thickens from \SI{10}{\micro\metre} to
+\SI{1.1}{\milli\metre} over cells \SI{3.3}{\micro\metre} wide while the
+spinning substrate flings liquid into the $y$ that is not solved for. The
+supply is about 200 times the initial volume, and \code{VolErr}, normalized
+by the initial volume, must still be at rounding. The shipped case found it
+at $-5.4\times10^{-5}$ ($2\times10^{-7}$ of the film; the turning arm
+$4.3\times10^{-5}$), unchanged by tighter Newton and linear tolerances. The
+supply and its bookkeeping agreed to rounding at every step; the volume the
+step added did not, by $\Delta t$ times the sum over the cells of
+$A\cdot\varphi$, which should be zero in a closed box. Formed as the product
+of the entries of $A$ with $\varphi$, the capillary term's sum was
+$\epsmach\,\lVert A\rVert\,\lvert\varphi\rvert$ per cell, entries of order
+$D/\Delta x^{4}$ on a film 360 cells thick, and the edge faces leaked as
+well: the 1-D \val{"Symmetry"} ghosts, two coupled rows of their own, came
+off their mirror by rounding of the film. Corrected, the capillary and
+vertical-gravity parts of $A\cdot\varphi$ are formed face by face from
+differences of the film, the boundary rows are satisfied exactly after every
+linear solve, and a \val{"Symmetry"} ghost is the exact mirror in 1-D as in
+2-D (\cref{sec:time:apply}); \code{VolErr} is $2\times10^{-13}$ at the end
+of the shipped case and $1\times10^{-13}$ at most with the arm turning. The
+correction floor of the Newton iteration fell with it
+(\cref{sec:convergence:floor}).
+
+\code{nozzle\_supplied} repeats the three runs of \code{nozzle\_balance} with
+the liquid supplied at a concentration of its own (\key{ConcType =
+"supplied"}, \key{Conc} 0.9 into a film at 0.5, and 0.1 on the thick film):
+\code{SuppliedResin} adds up $\Delta t\,S\,c_S$ from the very supply term the
+solute balance took in, so \code{ResinVolErr} is at rounding
+($5\times10^{-14}$), and the run fails the check if $c$ did not move. On the
+thick film the supplied liquid at 0.1 lowers the viscosity under the nozzle
+$e^{4}$-fold (\key{Exponent} 10), and in some steps the Newton correction
+stagnates far from convergence, at $8\times10^{-4}$ to 1.9 times the first
+correction. Such a step was found taken with a warning, the film keeping its
+residual as a \code{VolErr} of $2.2\times10^{-8}$; corrected, it fails and is
+cut (\cref{sec:convergence:stagnation}): 29 steps are cut, the run takes 3259
+steps instead of 1982, and \code{VolErr} is $2\times10^{-13}$, checked on all
+three films ($1\times10^{-14}$ on the closed boxes). The check fails if no
+step of the thick film was cut, so that it keeps exercising the cut. \code{nozzle\_mixing}
+supplies liquid at $c_S = 0.1$ onto a flat film at $c_0 = 0.5$ that does not
+flow (no term on): with the nozzle wider than the domain, $h = h_0 + St$ and
+$c$ follows \cref{eq:source-mixing}; under a nozzle of radius
+\SI{0.1}{\milli\metre}, diffusion off, every cell keeps
+$hc = h_0c_0 + (h - h_0)\,c_S$ with its own $h$. Each step adds $\Delta t\,S$
+to $h$ and $\Delta t\,S\,c_S$ to $hc$ exactly ($S$ is constant), so there is
+no error of the time discretization, and the largest error over 1-D and 2-D
+is rounding, $4.2\times10^{-15}$. With \val{"local"} the same film keeps
+$c = c_0$ exactly.
+
+\code{nozzle\_arm} turns a nozzle on an arm over a film with no flow at all,
+so that every point keeps what lands on it: the centroid of what arrived
+between two outputs is where the nozzle was on average. The arm ramps up over
+\SI{0.3}{\second}, turns for \SI{0.5}{\second} and ramps down over
+\SI{0.3}{\second}. The ramp times were being multiplied by the time scale
+$T_0$ instead of divided by it, so the arm moved on a clock of its own; the
+check failed by \SI{30}{\percent} of the arm's length.
+
+\code{nozzle\_area} holds a 2-D nozzle still in a closed box and compares
+what it supplied with \key{InletRate} $\pi R^2 t$. The cells the nozzle
+reaches were picked by the distance of their centers from it, up to
+$R + 2\min(\Delta x, \Delta y)$, which on cells more than 3.9 times longer than
+wide leaves out cells the circle covers in part: on the grid of cells 11 times
+longer in $y$ the nozzle supplied \SI{81}{\percent} of its rate (found by
+mutation testing, \cref{sec:notverified:mutation}). Corrected, the test allows a
+whole diagonal of the cell, $R + \sqrt{\Delta x^2 + \Delta y^2}$, and what
+is left is the error of counting $20\times20$ points a cell. On cells less
+than 3.9 times longer than wide the results are the same, bit for bit.
+
+\section{Manufactured solutions}
+\label{sec:verification:mms}
+
+The checks of \cref{sec:verification:analytic} use amplitudes of $10^{-3}$ of
+the film, so the mobility $h^3$ hardly varies and the non-linear parts of the
+discretization are barely exercised. The method of manufactured solutions has
+no such limit. With \key{Numerics.ManufacturedSolution}
+(\cref{sec:ref-numerics:mms}) the solver adds to the film-height equation the
+source that makes
+\[
+  h = h_0 + a\cos(k_x x - \Omega t)\cos(k_y y)
+\]
+an exact solution, and \file{tools/mms.py} runs it with $a = 0.3\,h_0$ --- the
+mobility varies by a factor of six over a wavelength --- with the capillary
+pressure, vertical gravity and in-plane gravity all on, on a periodic domain
+one wavelength across, for \SI{20}{\milli\second} at $\Omega =
+\SI{60}{\per\second}$. The error is the largest difference from the
+manufactured film at the end, relative to $a$; the order in $\Delta x$ is
+measured at a time step too small to matter, the order in $\Delta t$ on a fine
+grid against a run at a quarter of the smaller step. \code{ctest} runs it as
+\code{mms}; it requires both orders to be at least 1.8.
+
+The four rows of \cref{tab:mms} marked ``all'' switch on every term of the
+model at once, each tuned to move $h_t$ (or $c_t$) by about as much as the others, so
+that none hides behind another: over a substrate with a relief of
+\SI{2}{\micro\metre}, the capillary pressure, both gravities, the
+centrifugal term about an axis off the center of the domain, and --- in the
+well-mixed model --- the disjoining pressure with the film at 1.75 to 3.25
+times the precursor, the Marangoni flux, a viscosity, a surface tension and a
+diffusivity that depend on the concentration, and the evaporation, with the
+\val{"PowerN"} law in 1-D and Raoult's law with the \val{"negPow"} profile in
+2-D. The concentration is manufactured as well,
+$c = 0.5 + 0.1\cos(k_x x - 40t + 0.7)\cos(k_y y)$, and its equation gets its
+own source, so its convection, diffusion and enrichment by evaporation are in
+the comparison, and so is its error. With that many terms the derivatives
+are too long to write by hand without a mistake --- and a mistake in the
+source would look like one in the solver --- so \file{tools/mms\_generate.py}
+derives them with SymPy from the equations as \cref{ch:governing} states
+them, and writes them into \file{model/\bk ManufacturedSourceTerms.inc};
+\code{ctest} checks, where SymPy is installed, that the file is what the
+generator makes of the current equations (\code{mms\_source\_current}). The
+evaporation, which needs no derivatives, is written out by hand in
+\file{ManufacturedSource.cpp} from \cref{sec:terms:evaporation}, not taken
+from the solver's own code.
+
+\begin{yzntable}{The manufactured solution, error relative to $a$\label{tab:mms}}{@{}L{0.12\textwidth} L{0.40\textwidth} L{0.40\textwidth}@{}}
+\textsf{\bfseries Case} & \textsf{\bfseries In $\Delta x$} & \textsf{\bfseries In $\Delta t$}\\ \midrule
+\val{"WM"}, 1-D & $6.2\times10^{-3} \to 1.0\times10^{-3}$ (32, 64 cells): 2.61 & $9.5\times10^{-4} \to 2.2\times10^{-4}$ (1, \SI{0.5}{\milli\second}): 2.08 \\
+\val{"WM"}, 2-D & $4.6\times10^{-2} \to 6.7\times10^{-3}$ (16, 32): 2.78 & $2.9\times10^{-3} \to 6.5\times10^{-4}$ (2, \SI{1}{\milli\second}): 2.15 \\
+\val{"CZ"}, 1-D & $2.5\times10^{-2} \to 6.2\times10^{-3}$ (32, 64): 2.02 & $6.4\times10^{-3} \to 1.5\times10^{-3}$ (1, \SI{0.5}{\milli\second}): 2.06 \\
+\val{"CZ"}, 2-D & $8.0\times10^{-2} \to 2.0\times10^{-2}$ (16, 32): 2.01 & $1.5\times10^{-2} \to 4.0\times10^{-3}$ (2, \SI{1}{\milli\second}): 1.94 \\ \midrule
+\val{"WM"}, 1-D, all & $9.9\times10^{-4} \to 2.7\times10^{-4}$ (64, 128): 1.89 & $4.4\times10^{-4} \to 1.1\times10^{-4}$ (1, \SI{0.5}{\milli\second}): 2.07 \\
+\val{"WM"}, 2-D, all$^{*}$ & $7.7\times10^{-3} \to 1.8\times10^{-3}$ (24, 48): 2.11 & $1.4\times10^{-3} \to 3.3\times10^{-4}$ (2, \SI{1}{\milli\second}): 2.07 \\
+\val{"CZ"}, 1-D, all & $1.2\times10^{-2} \to 3.0\times10^{-3}$ (32, 64): 2.00 & $1.8\times10^{-3} \to 4.4\times10^{-4}$ (1, \SI{0.5}{\milli\second}): 2.05 \\
+\val{"CZ"}, 2-D, all & $4.6\times10^{-2} \to 1.1\times10^{-2}$ (16, 32): 2.05 & $6.1\times10^{-3} \to 1.5\times10^{-3}$ (2, \SI{1}{\milli\second}): 2.01 \\ \midrule
+\val{"CZ"}, 1-D, $c(x)$ & $7.4\times10^{-3} \to 1.9\times10^{-3}$ (32, 64): 2.00 & $4.0\times10^{-4} \to 8.5\times10^{-5}$ (1, \SI{0.5}{\milli\second}): 2.22 \\
+\val{"CZ"}, 2-D, $c(x,y)$ & $2.9\times10^{-2} \to 7.4\times10^{-3}$ (16, 32): 1.97 & $1.6\times10^{-3} \to 3.2\times10^{-4}$ (2, \SI{1}{\milli\second}): 2.32 \\
+\val{"CZ"}, 1-D, $c(x,\zeta)$ & $2.0\times10^{-2} \to 4.9\times10^{-3}$ (32, 64): 2.01 & $7.5\times10^{-4} \to 1.5\times10^{-4}$ (1, \SI{0.5}{\milli\second}; 128 cells): 2.30 \\
+\val{"CZ"}, 2-D, $c(x,y,\zeta)$ & $7.7\times10^{-2} \to 2.0\times10^{-2}$ (16, 32): 1.96 & $6.4\times10^{-4} \to 1.6\times10^{-4}$ (1, \SI{0.5}{\milli\second}; 16 cells): 2.02 \\ \midrule
+\val{"WM"}, 1-D, slip & $2.2\times10^{-3} \to 3.0\times10^{-4}$ (32, 64): 2.90 & $4.5\times10^{-4} \to 1.0\times10^{-4}$ (1, \SI{0.5}{\milli\second}): 2.12 \\
+\val{"WM"}, 1-D, all, slip & $2.1\times10^{-3} \to 5.1\times10^{-4}$ (64, 128): 2.03 ($h$ 2.03, $c$ 1.90) & $6.6\times10^{-4} \to 1.6\times10^{-4}$ (1, \SI{0.5}{\milli\second}): 2.07 \\
+\end{yzntable}
+\noindent$^{*}$\,With a tenth of the diffusivity and half the relief of the 1-D case (see below).
+The rows marked ``slip'' are \code{wm\_slip\_1d} and \code{wm\_all\_slip\_1d}: the
+first two cases of their rows with Navier slip of half the mean film,
+$\lambda = \SI{2.5}{\micro\metre}$ (\key{Physics.Slip}), which makes $\lambda h^2$
+as large as $h^3/3$; the source is that of the slip mobilities
+\cref{eq:q-slip}, generated by the same script.
+
+The well-mixed orders above two in $\Delta x$ are the pre-asymptotic mixture
+of a second-order capillary term and a third-order upwinded in-plane gravity,
+whose error dominates on these grids; the \val{"CZ"} model takes both centered
+and shows the second order plainly. Both models are second order in time with
+every term on --- for \val{"CZ"} that is the predictor--corrector of
+\cref{sec:time:newton}, without which the explicit terms of its film-height
+equation would be first order. In the \val{"CZ"} rows marked ``all'' the
+concentration is uniform. The rows marked $c(x)$ and $c(x,y)$ give \val{"CZ"} a
+concentration that varies in the plane, $c = 0.5 + 0.2\cos(k_x x - 40t + 0.7)\cos(k_y y)$,
+the same at every height in the film, with a viscosity that changes by
+$e^{1.2}$ and a diffusivity by $e^{-0.8}$ over that range, $\sigma(c)$ and the
+Marangoni flux, on top of every other \val{"CZ"} term. The concentration
+equation gets its own source, $c_t + \mathbf{u}(\zeta)\cdot\nabla c -
+\nabla\cdot(D\nabla c)$, which depends on $\zeta$ through the lubrication
+profile; the error of $c$ is measured at every level, and the velocity
+profile itself is compared with the exact one at every level. Each of $h$,
+$c$ and $\mathbf{u}$ must converge at second order on its own (1-D: 2.00,
+1.92, 2.01; 2-D: 1.97, 1.82, 2.00). The last two rows add a part that varies through the film,
+$0.1\cos(k_x x-30t)\cos(k_y y)\cos\pi\zeta$, which meets the no-flux
+conditions at the substrate and, without evaporation, at the surface. The
+surface value then differs from the depth mean by 0.1 and the viscosity by
+$e^{0.6}$ through the thickness. The diffusivity is
+$1.5\times10^{-9}$~\si{\metre\squared\per\second}, a twentieth of that of
+the rows above, so that the diffusion through the film stays within an order
+of the other terms of $c_t$; it is not lower, because below about
+$1.25\times10^{-9}$ in 2-D (and $10^{-9}$ in 1-D) the model does not keep
+this state stable at short wavelengths (\cref{sec:verification:schemes}). Neither the flux nor the velocity profile
+has a closed form: \file{mms\_generate.py} derives their integrands and the
+mapped residual (the vertical advection $\Omega$ of the $\zeta$ grid, the
+metric terms, diffusion at fixed $z$), and the source integrates them by
+Gauss--Legendre quadrature; $N_z$ is refined with the grid. Each of $h$, $c$
+and $\mathbf u$ must converge at second order in $\Delta x$ and in $\Delta t$
+(1-D: 2.01, 1.98, 1.96 and 2.30, 2.04, 2.58; 2-D: 1.96, 1.88, 1.98 and
+1.97, 2.02, 2.25). In 2-D the diffusion through the film,
+$D\pi^2/h^2 = \SI{2.2e3}{\per\second}$ where the film is thinnest and $c$
+lowest, makes a step of \SI{2}{\milli\second} 4.4 relaxation times long, and $\mathbf u$
+converged at 1.7 on 2 to \SI{1}{\milli\second}; its order in $\Delta t$ is
+therefore taken on 1 and \SI{0.5}{\milli\second}, on 16 cells, with 6 and 12
+cells through the film on 16 and 32 cells (with 4 and 8, $c$ converged at
+1.83 in $\Delta x$). The evaporation, whose surface condition $D c_z = cE$ the
+manufactured profile does not meet, and the disjoining pressure (which
+\val{"CZ"} does not have) stay out; the concentration through the
+thickness is checked against a reference instead (\code{dry\_cz},
+\cref{sec:verification:analytic}). The nozzle is outside the manufactured
+solution in both models.
+
+The runs with every term on found four faults that the runs with three had
+no way to see:
+\begin{itemize}
+  \item The in-plane gravity and the centrifugal term took the viscosity at
+    the concentration of the row's own cell, not of the face: the two rows
+    that share a face saw different fluxes through it. The scheme was not
+    conservative, and with a viscosity that depends on the concentration it
+    did not converge at all (an error of 0.8 on every grid).
+  \item Over a substrate with relief, the vertical gravity split each face's
+    topography flux between the center and the neighbor and gave the
+    center's share the viscosity of the cell rather than of the face ---
+    the same fault, an error of $3.7\times10^{-2}$ that did not fall.
+  \item The well-mixed concentration equation formed the explicit half of
+    its first step before the first velocities had been computed, so the
+    convection of that step was half at zero velocity: first order in
+    $\Delta t$ overall ($1.24$), which the concentration then passed on to
+    the film through the viscosity.
+  \item In 1-D the well-mixed model counts the liquid the centrifugal term
+    flings sideways, into the $y$ that is not solved for; \val{"CZ"} did
+    not, so the two models disagreed on a spinning strip. Corrected,
+    \val{"CZ"} counts it in the film-height equation and, through the continuity
+    equation, in the vertical velocity.
+\end{itemize}
+
+The \val{"CZ"} runs with a concentration varying in the plane found five
+more, all in the film-height equation and the velocity profile of
+\val{"CZ"}:
+\begin{itemize}
+  \item The capillary term used the surface tension of the left $x$ face for
+    the right face too, so again two rows saw different fluxes through the
+    face they share (first order in $h$).
+  \item The $x$ velocity of the centrifugal term ignored the $x$ offset of
+    the rotation axis; the $y$ velocity and the film-height equation had it
+    (a solute error of 0.19 on every grid).
+  \item The first Simpson interval of the velocity integral took its
+    midpoint at the substrate, which puts the profile off by
+    $h^2\Delta\zeta^2/12\mu$ even at uniform viscosity (an error that did not
+    fall).
+  \item The 2-D capillary velocity lacked the cross derivatives
+    $\partial_x\partial_{yy}h$ and $\partial_y\partial_{xx}h$ that the
+    film-height equation has ($2.4\times10^{-2}$, not falling).
+  \item At a periodic seam each face took the velocity of the face on the
+    far side. For a periodic force the two are equal; the centrifugal force
+    is not periodic, and the copy made the concentration first order.
+    Corrected, each seam face keeps its own velocity, the one whose flux the film-height
+    equation uses there.
+\end{itemize}
+
+The well-mixed model had the same seam fault: the far seam face took the
+velocity of the near one, and with the centrifugal term the concentration
+was first order (\code{wm\_all\_1d}: 1.24 on 32 to 64 cells, 0.92 on 64 to
+128), which the combined order hid. Corrected, each seam face keeps its own
+velocity; for a periodic force the two agree to rounding. \code{wm\_all\_1d}
+requires $h$ and $c$ each at second order on its own (1.89 and 1.94, on
+64 and 128 cells, with the default schemes). With the Kawamura--Kuwahara
+scheme for the concentration (\cref{sec:verification:schemes}), the
+concentration on 32 cells was still
+pre-asymptotic, at 1.50: the third-order dissipation of its upwinded
+convection, of the other sign from the rest of the error, took a part off
+it; it reached 1.80 and 1.91 on the next two refinements (to 256 cells), and
+1.96 to 1.99 with its convection switched off. In \code{wm\_all\_2d}, too, $h$ and $c$ must each
+converge. The Kawamura--Kuwahara upwinding adds a third-order dissipation,
+$-|u|\Delta x^3/4\,\partial^4$ (UTOPIA a third of it), of
+the other sign from the second-order error of the diffusion (for $c$) and of
+the capillary term (for $h$); near a cell Péclet number of $1/3$ the two
+cancel, and the order stays below 2 on every grid a 2-D test can afford. With
+the parameters of 1-D and KK for the concentration, $c$ converges at 1.66, 1.58 and 1.81 on 16, 32, 64 and
+128 cells and $h$ at 1.96 and 1.89 on the last two pairs; with the upwind part
+switched off (\val{"Central2"} for both), $c$ converges at 1.99, 1.98 and
+1.95 and $h$ at 2.02, 2.00 and 1.96 on the same grids, and the error is smooth
+everywhere, the seams and corners included. Switching the terms off one at a
+time found no term that lowers the order by itself. The 2-D case therefore
+uses a tenth of the diffusivity and half the relief, which puts the cell
+Péclet number well away from the cancellation: on 24 and 48 cells $c$
+converges at 2.58 and $h$ at 2.12 with KK for the concentration, and at
+2.38 and 2.11 with the default schemes. The asymptotic order of the concentration itself,
+past the cancellation, is checked in 2-D on a linear problem whose error is
+known, an oblique sine carried and diffused at a lower cell Péclet number
+(\code{oblique\_wm}, \cref{sec:verification:schemes}): second order with
+UTOPIA and with Koren, settled on 16 to 64 cells.
+
+The stratified \val{"CZ"} runs found four faults that a concentration uniform
+through the thickness could not show:
+\begin{itemize}
+  \item The film-height flux took the surface tension and the viscosity at
+    the depth-mean concentration, so it was not the depth integral of the
+    velocity profile the concentration is carried by (errors of 0.2--0.3
+    that did not fall). Corrected, it takes $\sigma$ at the surface
+    concentration,
+    and in the mobility and the Marangoni flux the means of $1/\mu(c(\zeta))$
+    weighted by $3(1-\zeta)^2$ and $2(1-\zeta)$, which is that integral
+    exactly (\cref{sec:disc:positivity-concz}).
+  \item \code{Uz} was stored one cell too high.
+  \item \code{Uz} was $-h\int\nabla\cdot\mathbf u\,d\zeta$ at fixed $\zeta$
+    rather than the vertical velocity $w$, so the $\zeta$ velocity did not
+    vanish at the surface of a sloping film and solute was carried through
+    it.
+  \item The ghost above the surface was not the image of the cell below it,
+    which made the top cell's advection first order.
+\end{itemize}
+The field files also carried the velocity of the last step's midpoint, half
+a step behind $h$ and $c$; corrected, they carry that of the state written.
+
+\code{cz\_strat\_1d\_koren} runs the stratified case with the Koren scheme
+for the concentration, which no other check does through the thickness. Its
+orders in $\Delta t$ are taken on steps of 0.25 and \SI{0.125}{\milli\second}:
+on the coarser pair, with the limiter settled at the midpoint of each
+step, $\mathbf u$ is not yet in its asymptotic range (3.26; $h$ 2.22, $c$
+2.05). \code{cz\_strat\_1d\_central4} runs it with Central4, which
+dissipates nothing in any direction (\cref{sec:verification:schemes}).
+
+With a concentration stratified through the thickness, the \val{"CZ"} step
+was limited as $\Delta x^2$: on 128 cells a step of \SI{0.5}{\milli\second}
+diverged. The cause was not the Marangoni term but two velocities that
+disagreed. The film moved with the capillary and Marangoni flux at the
+extrapolated midpoint concentration $c^*$, but the velocity the concentration
+was carried with took its capillary part from the film halfway to the
+\emph{predicted} end state, which had already balanced the Marangoni stress
+of $c_n$. The difference, the Marangoni flux of $c^* - c_n$, left a
+$\zeta$ velocity at the free surface that moved the stratification across its
+own gradient: $c_t \approx D_M\nabla^2(c_n - c_{n-1})/2$ with
+$D_M = h\sigma_c c_\zeta/2\mu$, stable only for
+$\Delta t < \Delta x^2/2D_M$, which the thresholds observed on 64, 128 and 256
+cells follow. Corrected, the velocity is formed from the film of the step
+itself, and the coupling is iterated to the midpoint (\cref{sec:time:newton});
+the step is limited only by accuracy. On 128 and 256 cells steps up to
+\SI{2}{\milli\second} give ordinary time errors of a few $10^{-3}$, and an
+evaporating 1-D film that had needed 1548 adaptive steps needs 134. The runs
+in $\Delta t$ of \code{cz\_strat\_1d} are on 128 cells, and the
+correction lowered the errors in $\Delta t$ of the stratified runs by a
+factor of 4--5.
+
+\section{Boundary conditions, restart and input parsing}
+\label{sec:verification:bcio}
+
+Three files cover this ground, and each fixes something different.
+
+\file{test\_boundary\_condition.cpp} takes every combination of the five
+boundary conditions --- \val{"Symmetry"}, \val{"Periodic"}, \val{"Pinning"},
+\val{"FreshInlet"} and \val{"Outlet"} --- with the three fields
+\code{Height}, \code{HeightJacobi} and \code{Conc}, and checks that the column
+indices of the matrix stay within range, that every ghost row carries exactly
+one equation (its diagonal is non-zero), and that a symmetric boundary
+condition produces a matrix that is its own mirror image. It also checks
+the values the conditions give: a uniform film is returned at every ghost
+point, corners included, for every combination; an inlet on each edge holds
+its face at the value of the field it was built from, whatever the interior
+has become since; and mirroring or transposing the field together with the
+edge types moves every ghost value with it. These found that an inlet on Xmax
+or Ymax was held at the mean of its two ghost layers rather than of the two
+points either side of its face, and that its face velocity was overwritten
+with the one a cell inside, so that the solute carried in was not what the
+film carried; both are fixed (the difference from the mirrored run fell from
+$0.25$ to $2\times10^{-9}$). No shipped case has an inlet on those edges.
+
+\file{test\_restart.cpp} exists because \file{field*****.dat} is both an output
+file and the input format of an ASCII restart. \textbf{The line number written
+and the grid point read back have to be the same point.} Three cases fix it:
+(a) in 1-D, line $i$ lands at $x$ index $i+1$; (b) an asymmetric shape written
+out and read back in returns to exactly the same places, to $10^{-13}$
+relative; and (c) the decomposition of the line number is correct on a 2-D grid
+as well. That last case uses a \textbf{$12 \times 5$} grid, and the asymmetry is
+the whole point: \textbf{a mix-up between dividing the line number by $N_x$ and
+dividing it by $N_y$ is invisible on a square grid and shows up only when the
+two differ}.
+
+\code{restart\_chain} (\file{tools/restart\_roundtrip.py --chain}) holds a
+run that was stopped and restarted to one that ran straight through. Thirteen
+cases of both models, in 1-D and 2-D, with the adaptive step, evaporation, the
+coupling passes of \val{"CZ"}, a limited convection scheme, a moving nozzle
+(once with its liquid at the local concentration, once at its own),
+probes and the steady-state and dry-out stops, are stopped by \key{MaxSteps} at steps that
+are not output times and restarted from the last file, alternating
+\file{.vts} and \file{field*.dat}, into the same directory; one restarts from
+an earlier file so that part of the run is done twice, two stop on the very
+step at which the run becomes steady or dries out, and two (\code{wm1d\_pinned\_dry},
+\code{\_adapt}) push a film against a \val{"Pinning"} wall and dry it, so that
+the film at the wall passes a tenth of the thickest before the last
+restart; two more (\code{wm1d\_open}, \code{wm2d\_open}) feed the film
+through a \val{"FreshInlet"} and drain it through \val{"Outlet"} edges, so
+that the totals of what crossed them go on from the state. Every field file, every row of
+\file{History.dat}, \file{CalcInfo.dat} and the probes, and the step counts
+summed over the parts must be identical, bit for bit. Without the state file
+(\cref{sec:ref-numerics:restart}) two fixed-step cases must keep the output
+times and agree to $10^{-11}$ (well-mixed) and $10^{-7}$ (\val{"CZ"}). The
+check found five faults: after a restart the output schedule started again
+from $t = 0$ and wrote a field every half interval; the totals of
+\file{History.dat} started from zero; \val{"CZ"} took its first step from the
+initial field, not the one it was given; the outer ghost column of a
+\val{"CZ"} field read from \file{field*.dat} kept the initial film; and the
+last step of each part was not counted toward the steady state, so a run
+stopped on its steady step went on after a restart.
+
+\file{test\_config.cpp} fixes the interpretation of the input files: scalars,
+vectors, nested blocks and repeated blocks, and the requirement that a
+\file{.toml} input produces the same tree as the equivalent
+\file{.inp} (\cref{sec:inputformat:legacy}).
+
+\section{Disjoining pressure and the contact line}
+\label{sec:verification:disjoining}
+
+This is the core of the chapter. The contact-line model is the part of Yuzen
+with the most physics in it and the most ways to be subtly wrong, and it is
+also the part where an analytic reference is available. The tests live in
+\file{yuzen/tests/test\_disjoining.cpp}; the model they test is derived in
+\cref{ch:wetting}.
+
+\subsection{The calibration checked in closed form}
+
+Equilibrium means uniform pressure, which for capillary plus disjoining
+pressure is \cref{eq:eq-ode}, $H'' + \Dpn\,\Pihat(H) = K$ with $K$ the constant
+pressure. In the limit where the precursor extends to infinity, $K = 0$, and
+multiplying by $H'$ integrates the equation once:
+
+\begin{equation}\label{eq:ver-first-integral}
+  \tfrac{1}{2}\,(H')^{2} = -\Dpn \int_{\Hstar}^{H} \Pihat\,\mathrm{d}s .
+\end{equation}
+
+The integral to infinity is elementary (\cref{eq:pi-integral}), and it is
+negative, so \cref{eq:ver-first-integral} gives the far-field slope
+\cref{eq:slope-limit}: $(H')^{2} \to \As\,\thetae^{2}$. Multiplying the
+dimensionless slope by $\varepsilon = h_0/L_0$ turns it into the physical
+slope, and since $\As = 1/\varepsilon^{2}$ that physical slope is
+\emph{exactly} $\thetae$. The coefficient the code builds,
+\cref{eq:dp-def}, agrees with this identically; the derivation is in
+\cref{sec:wetting:dp} and is not repeated here.
+
+What the test adds is that the implementation really does evaluate that
+formula, over a grid of parameters wide enough that an algebraic slip in any
+one factor would show. It sweeps \textbf{36 combinations} ---
+$\thetae \in \{2, 5, 10, 20\}^{\circ}$, $\Hstar \in \{0.01, 0.05, 0.2\}$ and
+$(n,m) \in \{(3,2), (4,3), (9,3)\}$ --- and requires at every one of them that
+
+\begin{itemize}
+  \item $\Dpn$ agrees with \cref{eq:dp-def} to within $10^{-14}$ relative, and
+  \item the recovered angle $\varepsilon\sqrt{-2\,\Dpn\int\Pihat}$ agrees with
+    $\thetae$ in radians to within $10^{-12}$ relative.
+\end{itemize}
+
+A separate case fixes that disabling the disjoining pressure makes $\Dpn$
+exactly zero. \textbf{This is the strongest claim in the chapter}: no
+discretization and no time stepping are involved, and the tolerances are those
+of double-precision arithmetic rather than of a numerical method.
+
+\subsection{The residual velocity on the analytic equilibrium droplet}
+
+Equilibrium droplets are a one-parameter family
+(\cref{sec:wetting:equilibrium}): give $\Hmax$, solve \cref{eq:Hf-Hmax} for
+$\Hf$ by bisection, and integrate $H'' = K - \Dpn\,\Pihat(H)$ from the foot to
+the crest. No partial differential equation is involved.
+
+The measurement is then simple to state. Put that shape on the mesh and add up
+the capillary and disjoining-pressure velocities. In the continuous
+equilibrium they cancel exactly, so \textbf{whatever is left is the truncation
+error of the discretization}. The conditions are $\thetae = 10^\circ$,
+$\Hstar = 0.02$ (that is \SI{0.2}{\micro\metre}), $\Hmax = 1.0$ (that is
+\SI{10}{\micro\metre}), on a domain of $\pm\SI{300}{\micro\metre}$. Run the
+solver, read \code{Ux} out of \file{field00000.dat} and divide by the velocity
+scale $U_0 = 5.6069\times10^{-8}$~\si{\metre\per\second}.
+
+\begin{yzntable}{Residual velocity on the analytic equilibrium droplet\label{tab:eqresidual}}{@{}d d d d d@{}}
+\textsf{\bfseries $N_x$} & \textsf{\bfseries $\Delta x$ [\si{\micro\metre}]} &
+\textsf{\bfseries residual velocity} & \textsf{\bfseries ratio} &
+\textsf{\bfseries order} \\ \midrule
+1000 & 0.6  & 18.94 &      &      \\
+2000 & 0.3  & 5.074 & 3.73 & 1.90 \\
+4000 & 0.15 & 1.294 & 3.92 & 1.97 \\
+\end{yzntable}
+
+The residual velocity in \cref{tab:eqresidual} is dimensionless. Taken from
+$N_x = 1000$ to $N_x = 4000$ as a whole the order is \textbf{1.94}, and 1.97
+on the finer pair: second-order convergence.
+
+\textbf{The maximum sits at the contact line, where $H \approx 2\Hstar$ --- not
+at the crest and not at the foot.} That is worth knowing for its own sake: it
+says the truncation error of this model is concentrated exactly where the
+profile bends most sharply, which is also where the mesh requirement of
+\cref{sec:wetting:sizing} comes from.
+
+The same quantity is measured a second time, independently, inside the test
+itself. There the droplet is constructed on the spot with fourth-order
+Runge--Kutta, the velocities of \code{LaplacePressure\_WM1D} and
+\code{DisjoiningPressureKernel<WM1D\_Grid>} are added, and the maximum is
+taken. Setting \env{YUZEN\_DBG\_EQ} to \val{1} prints the breakdown.
+
+\begin{plain}
+  [eq] nx=1000 umax=2.0295e+01  at X=-6.843746e-02 H=3.953799e-02
+  [eq] nx=2000 umax=5.1789e+00  at X=6.869474e-02 H=3.599702e-02
+  [eq] nx=4000 umax=1.3013e+00  at X=6.865186e-02 H=3.656075e-02
+\end{plain}
+
+The ratios there are 3.92 and 3.98. \textbf{The table produced by running the
+solver and the independent integration inside the test agree to within
+0.6 \% at $N_x = 4000$, 2 \% at $N_x = 2000$ and 7 \% at $N_x = 1000$} ---
+two separate constructions of the droplet, two separate evaluations of the
+velocity, and the residual is the small difference of two terms each about
+170 times as large, so the two constructions' interpolation errors show in
+it.
+
+The assertion the test actually makes is looser than the numbers above: that
+refining always reduces the residual, and that the ratio lies between 3.0 and
+5.0. The band is wide because the interpolation error of the shape construction
+rides along with the discretization error. It is nevertheless a sharp test,
+because a wrong coefficient or a wrong sign puts the ratio near 1 rather than
+near 4.
+
+\subsection{Two traps in constructing the droplet}
+
+\begin{warn}[Both of these destroy the convergence-order measurement itself]
+  \file{test\_disjoining.cpp} carries both of these as comments in the code,
+  and they are worth understanding rather than merely copying. Neither produces
+  a slightly worse answer. \textbf{Each one makes the measured convergence
+  order meaningless}, which is far harder to notice than a wrong number would
+  be.
+
+  \textbf{(a) The shape must be interpolated with cubic Hermite, not
+  linearly.} Evaluating the second difference on the equilibrium shape divides
+  by $\Delta x^{2}$. The error of a linear interpolation is
+  $O(\Delta X^{2})$ in the step $\Delta X$ of the ordinary-differential-equation
+  integration that built the shape --- which is \textbf{a fixed height error,
+  independent of the mesh spacing $\Delta x$}. Divided by $\Delta x^{2}$ it
+  therefore grows as $\Delta x^{-2}$, and \textbf{the residual velocity
+  increases as you refine the mesh}. Cubic Hermite interpolation makes the
+  error $O(\Delta X^{4})$, which leaves the refinement test alone.
+
+  \textbf{(b) The initial value at the foot must be tuned so that the crest
+  lands exactly on a grid point.} Scaling the foot's initial value $\eta_0$ by
+  a factor $c$ shifts the whole shape along $X$ by $-\ln(c)/\lambda$, and that
+  is the knob used to drive the last integration point onto the crest, where
+  $H' = 0$. Skip it and the last point misses the crest by up to $\Delta X$, so
+  the profile mirrored about the crest has a kink there. The height error of
+  that kink is, once again, independent of the mesh spacing, so it destroys the
+  convergence order for exactly the reason (a) does.
+\end{warn}
+
+\subsection{Time evolution from the equilibrium shape}
+
+The equilibrium droplet at $N_x = 2000$ was then advanced in time for
+\SI{0.01}{\second}. \Cref{tab:eqtime} gives what happens.
+
+\begin{yzntable}{Evolution in time from the analytic equilibrium shape, $N_x = 2000$\label{tab:eqtime}}{@{}d d d d@{}}
+\textsf{\bfseries $t$ [\si{\second}]} &
+\textsf{\bfseries $\max\lvert\Delta h\rvert$ [\si{\micro\metre}]} &
+\textsf{\bfseries relative} & \textsf{\bfseries residual velocity} \\ \midrule
+0       & 0       & 0       & 5.074 \\
+2.5e-3  & 4.23e-5 & 4.23e-6 & 0.709 \\
+5.0e-3  & 5.36e-5 & 5.36e-6 & 0.418 \\
+7.5e-3  & 6.02e-5 & 6.02e-6 & 0.296 \\
+1.0e-2  & 6.48e-5 & 6.48e-6 & 0.229 \\
+\end{yzntable}
+
+The shape barely moves --- $6.5\times10^{-6}$ relative at the end --- and the
+residual velocity \textbf{decreases monotonically}. That is the behavior to
+expect, and the reason is worth stating: the shape it started from is the
+equilibrium of the \emph{continuous} problem, and what it is relaxing toward
+is the equilibrium of the \emph{discrete} one. The two are not the same shape,
+and the difference between them is the truncation error measured in
+\cref{tab:eqresidual}.
+
+The apparent contact angle over the same interval goes from $9.56613^\circ$ to
+$9.56610^\circ$: \textbf{unchanged to five digits}. The discrete equilibrium
+it relaxes toward is the film with a uniform discrete potential, the minimum of
+the discrete free energy (\cref{sec:disc:positivity-one}).
+
+\begin{note}[Switch the steady-state test off to reproduce this table]
+  With the default \key{SteadyStateCriterion} of \val{1e-3} the run is declared
+  steady almost immediately and stops --- correctly, since the shape really is
+  not changing. To produce \cref{tab:eqtime} you have to disable the test; see
+  \cref{sec:verification:reproduce}, and \cref{sec:convergence:termination} for
+  what the criterion means.
+\end{note}
+
+A related and simpler identity is checked in the same file. \textbf{A uniform
+precursor film $H = \Hstar$ is an exact equilibrium}, because
+$\Pihat(\Hstar) = 0$ identically. The test does not merely evaluate the
+velocity there; it \textbf{dirties the velocity field first}, filling it with
+the value 1.0, then calls \code{CalVelocity} and requires the disjoining
+pressure's contribution to be below $10^{-12}$ at every interior \code{Xedge}.
+Writing a zero is thereby distinguished from leaving a zero alone.
+
+\subsection{The precursor bias}
+
+A model with a \emph{finite} precursor does not deliver the angle you asked for
+unless the droplet is thick compared with the precursor. That bias is derived,
+tabulated and turned into sizing rules in
+\cref{sec:wetting:apparent,sec:wetting:sizing}, and \cref{tab:apparent-angle}
+is the table; none of it is repeated here.
+
+What belongs in this chapter is the verification status of that table. It is
+produced by \code{tools/make\_equilibrium\_1d.py --out /dev/null --sweep} at
+$\thetae = 10^\circ$, $\Hstar = 0.02$, $(n,m) = (3,2)$, and two things about it
+are measured rather than asserted. \textbf{The numerically integrated apparent
+angle agrees with the closed form \cref{eq:theta-cap} to four digits.} And
+\textbf{the maximum slope of the profile converges toward $\thetae$ far more
+slowly than the apparent angle does} --- which is why the two columns of
+\cref{tab:apparent-angle} have to be read separately, and why measuring an
+angle off the steepest point of a computed profile needs a thicker droplet
+again than measuring it by parabolic extrapolation.
+
+\section{Spreading and Cox--Voinov}
+\label{sec:verification:spreading}
+
+\subsection{What is measured, and why it is not Tanner's law}
+
+Tanner's law --- $R \sim t^{1/7}$ for a two-dimensional ridge --- is a law of
+\emph{complete} wetting, $\thetae = 0$. This disjoining-pressure form cannot
+represent that case at all, because by \cref{eq:dp-def}
+\textbf{$\thetae \to 0$ implies $\Dpn \to 0$}: the term that produces the
+contact line switches itself off in the limit. Tanner's law is therefore not
+the right target here.
+
+What can be measured in partial wetting is the relation that sits inside
+Tanner's law, the \textbf{Cox--Voinov} relation
+
+\begin{equation}\label{eq:cox-voinov}
+  \theta_d^{3} - \thetae^{3} = 9\,\ln(L/l)\;\Ca,
+  \qquad \Ca = \frac{\mu U}{\sigma}.
+\end{equation}
+
+Measuring it is cheap, and that is worth spelling out. \textbf{Each output time
+of a single run is one $(\theta_d, U)$ point}, so a single calculation yields
+the whole curve; there is no need to follow three decades of time to see the
+relation.
+
+The case is \file{cases/eq/spread\_n500.toml}: an equilibrium droplet built for
+$\thetae = 20^\circ$ is used as the initial condition and the run is made with
+\key{ContactAngle} set to \val{10.0}, so the droplet spreads toward its new
+equilibrium shape. \file{tools/measure\_spreading.py} fits a parabola by least
+squares to the outside of the droplet at each output time and extrapolates it
+to $h = 0$, giving the base radius $R$ and the apparent angle $\theta$.
+
+\begin{plain}
+  theta : 19.1201 -> 9.4397 deg     (t = 0 .. 1 s)
+  R     : 59.744  -> 85.507 um
+  volume proxy theta*R^2 : 1.1911e-09 -> 1.2046e-09   (conserved to within 1.1 %)
+
+  theta^3 - theta_e^3 = 19.6272 * Ca + 5.97e-05
+    => 9 ln(L/l) = 19.627  =>  ln(L/l) = 2.181   (L/l = 8.9)
+  correlation = 0.99791   (108 points, Ca = 1.41e-05 .. 1.12e-03)
+\end{plain}
+
+\textbf{The correlation is 0.99791 over 108 points spanning two decades of
+$\Ca$.} The relation \cref{eq:cox-voinov} therefore holds in form, over a range
+of capillary numbers wide enough that the fit is not an artifact of a short
+lever arm. The intercept $5.97\times10^{-5}$ is about 1 \% of the scale of
+$\theta^{3}$ --- $9.44^\circ$ is \SI{0.165}{\radian}, giving
+$4.5\times10^{-3}$ --- which confirms that the equilibrium angle has been taken
+correctly: a wrong $\thetae$ would show up as an intercept of the same size as
+the signal.
+
+\begin{warn}[The logarithmic factor is not a verified quantity]
+  The fit gives $\ln(L/l) = 2.18$. The naive estimate --- the logarithm of the
+  droplet half-width \SI{85.51}{\micro\metre} over the decay length of the foot
+  \SI{1.196}{\micro\metre} --- is 4.27. These are the same order of magnitude,
+  and that is the entire content of the comparison. \textbf{This logarithm
+  shifts by a factor of about two depending on how the inner and outer lengths
+  are chosen}, so the agreement claims nothing beyond order of magnitude. The
+  value of $\ln(L/l)$ itself has not been verified.
+\end{warn}
+
+\subsection{The end point of spreading against an independent droplet}
+
+The second half of the measurement is stronger, because it has a reference that
+does not come from the solver. Let the spreading run all the way to
+equilibrium, then compare the shape it reaches with an equilibrium droplet
+\textbf{constructed without the solver}, from the ordinary differential
+equation of \cref{sec:wetting:equilibrium}. Both are measured with the same
+parabola fit, at \code{--hcut 1.0} \si{\micro\metre}.
+
+\begin{yzntable}{End point of spreading against an independently constructed equilibrium droplet\label{tab:spreadend}}{@{}d d d d d@{}}
+\textsf{\bfseries $N_x$} & \textsf{\bfseries $\Delta x$ [\si{\micro\metre}]} &
+\textsf{\bfseries end of spreading [deg]} &
+\textsf{\bfseries analytic droplet [deg]} & \textsf{\bfseries difference} \\ \midrule
+500  & 1.2 & 9.4073 & 9.4052 & 0.02 \% \\
+2000 & 0.3 & 9.4101 & 9.4083 & 0.02 \% \\
+\end{yzntable}
+
+The analytic droplet in \cref{tab:spreadend} is built to the same crest height
+as the run it is compared with. The agreement is not only in the fitted angle
+but in the shape itself: \textbf{the maximum difference between the two
+profiles is \SI{0.0022}{\micro\metre} against a crest height of
+\SI{7.0567}{\micro\metre} at $N_x = 2000$, that is 0.03 \%}
+(\SI{0.0032}{\micro\metre} at $N_x = 500$).
+
+The end point is the steady state of the scheme, the film whose discrete
+potential is uniform (\cref{sec:disc:positivity-one}); outside the contact
+line its shape is that of the continuous equilibrium even at $N_x = 500$,
+where $\Delta x = \SI{1.2}{\micro\metre}$ is comparable with the transition
+length $\ell = \SI{1.15}{\micro\metre}$ rather than a fifth of it. The path
+there agrees as well: the apparent angle of the two meshes differs by at most
+\SI{0.06}{\percent} over the first second. (With the arithmetic mean that the
+disjoining pressure once took for its face mobility, the end point at
+$N_x = 500$ was \SI{1.7}{\percent} off and that at $N_x = 2000$
+\SI{0.11}{\percent}.) The rule $\Delta x \le \ell/5$ of
+\cref{sec:wetting:sizing} stays a starting point: this droplet is a lenient
+case, and refining is what tells.
+
+\section{The cost of the coupling}
+\label{sec:verification:coupling}
+
+Thickness and concentration are solved as a block Gauss--Seidel iteration
+inside the outer Newton loop (\cref{sec:time:coupling}). The question measured
+here is how much of that outer iteration the concentration is responsible for.
+
+The setup is \file{cases/eq/spread\_n500.toml} --- $N_x = 500$,
+$\hstar = \SI{0.2}{\micro\metre}$, $\thetae = 10^\circ$, the same case verified
+in \cref{sec:verification:spreading} --- with the concentration coupling turned
+fully on: convection, diffusion, evaporation and Marangoni, with a viscosity
+exponent of 10. \textbf{All conditions are compared at
+\key{EndTime} $=$ \val{0.1}~\si{\second}}. Setting \env{YUZEN\_DEBUG\_RESIDUAL}
+to \val{1} prints the thickness correction and the concentration correction for
+every outer iteration, and the measurement counts the iterations on which the
+concentration correction was the larger of the two.
+
+\begin{yzntable}{Outer-iteration cost on the spreading family\label{tab:couplingspread}}{@{}L{0.25\textwidth} d d d d d@{}}
+\textsf{\bfseries Condition} & \textsf{\bfseries steps} &
+\textsf{\bfseries mean NK} & \textsf{\bfseries max NK} &
+\textsf{\bfseries conc.\ dominated} & \textsf{\bfseries at final iter.} \\ \midrule
+Evap.\ 1e-7, no disjoining pressure   & 1129 & 2.56 & 3 & 57.7 \% & 91.5 \% \\
+Evap.\ 1e-7, with disjoining pressure & 1129 & 2.56 & 3 & 60.7 \% & 88.0 \% \\
+Evap.\ 1e-6, with disjoining pressure & 1129 & 2.69 & 3 & 96.3 \% & 92.3 \% \\
+Evap.\ 1e-5, with disjoining pressure & 1129 & 3.04 & 4 & 98.7 \% & 96.4 \% \\
+\end{yzntable}
+
+The evaporation coefficient of \val{1e-5} moves the concentration from a
+maximum of 0.500 to 0.619 (mean 0.500 to 0.571) within the
+\SI{0.1}{\second}, so as a coupling it is a genuinely demanding condition. The
+stagnation cut-off of \cref{sec:convergence:tests} warned \textbf{zero times} in
+all four.
+
+Laying the corrections out iteration by iteration --- here the 1000th step of
+the two runs at an evaporation coefficient of \val{1e-7} --- shows what is
+happening.
+
+\begin{plain}
+  with disjoining pressure     thickness     2.62e-06 -> 7.23e-11 -> 1.84e-15
+                               concentration 3.21e-06 -> 9.18e-10 -> 3.51e-14
+
+  without disjoining pressure  thickness     6.20e-06 -> 1.38e-10 -> 3.47e-15
+                               concentration 3.70e-06 -> 1.43e-09 -> 7.94e-14
+\end{plain}
+
+With the disjoining pressure on or off, the thickness falls by four to five
+decades an iteration and is at rounding after two. The term is stiff --- $\Pihat \sim H^{-n}$
+is the stiffest thing in the model (\cref{sec:terms:disjoining}) --- but its
+Jacobian is exact (\cref{sec:verification:jacobian}), so it costs no extra
+iterations; before that Jacobian was corrected the same runs took four to
+five. Once the thickness has converged, the concentration correction is on
+many iterations relatively the larger, and the more so the stronger the
+evaporation: on \SI{61}{\percent} of the iterations at \val{1e-7} and on
+\SI{99}{\percent} at \val{1e-5}. That, and nothing more, is what the
+percentages in the table are.
+
+\begin{warn}[Read the percentage the other way round]
+  \textbf{``The fraction of iterations dominated by concentration'' measures how
+  easy the height equation is, not how hard the concentration equation is.} The
+  row with the highest figure in \cref{tab:couplingspread}, 98.7 \%, converges
+  in 3.04 iterations on average, against 2.56 for the rows with the lowest. A
+  large value is not a warning about the concentration solve.
+\end{warn}
+
+The same measurement was made on the cases that strengthen the coupling
+deliberately, \file{cases/stress\_*.toml}, all of them derived from
+\file{allphys\_1d\_reg}. Here too the stagnation cut-off warned zero times in all
+four.
+
+\begin{yzntable}{Outer-iteration cost on the \file{stress\_*} cases\label{tab:couplingstress}}{@{}L{0.19\textwidth} L{0.29\textwidth} d d d d@{}}
+\textsf{\bfseries Case} & \textsf{\bfseries What is changed} &
+\textsf{\bfseries steps} & \textsf{\bfseries mean NK} &
+\textsf{\bfseries max NK} & \textsf{\bfseries conc.\ dom.} \\ \midrule
+\file{stress\_evap}     & Evaporation coefficient $\times 100$ & 675 & 3.01 & 4 & 68.0 \% \\
+\file{stress\_coupling} & Viscosity exponent 10 to 30; concentration coefficient of surface tension $\times 10$ & 675 & 2.19 & 4 & 2.2 \% \\
+\file{stress\_dt}       & $\Delta t \times 100$, fixed (step control off) & 21 & 4.29 & 6 & 14.4 \% \\
+\file{stress\_all}      & All of the above & 21 & 5.05 & 6 & 0.0 \% \\
+\end{yzntable}
+
+\subsection{What this measurement does and does not support}
+
+\textbf{What it supports.} Over the eight conditions measured, the outer
+iteration converged in \textbf{at most 6 iterations}, and the stagnation
+cut-off never once fired. The fraction of iterations on which the concentration
+correction governed the convergence test ranged over \textbf{0 to 99 \%}; at
+the strongest evaporation, where it was highest, the mean was 3.04
+iterations. Because the convergence test looks at both corrections
+(\cref{sec:time:coupling}), the state it converges to is \textbf{the fully
+implicit coupled solution of thickness and concentration together}. Writing the
+off-diagonal blocks of the Jacobian would not change that answer; it would
+change only the number of outer iterations, and that number is currently
+between 2 and 6.
+
+\textbf{What it does not support.} Three limits, each of which matters.
+
+\begin{itemize}
+  \item \textbf{This is a measurement of iteration counts, not of wall-clock
+    time.} How much the cost of a single iteration rises when the coupling is
+    switched on has not been measured at all.
+  \item \textbf{Everything here is 1-D and \val{"WM"} (well-mixed).} It says
+    nothing about two dimensions and nothing about the \val{"CZ"} model
+    (\cref{ch:concentration}).
+  \item \textbf{The step counts are those the adaptive time step chose}, not
+    a comparison at a common step size. On the spreading family the step
+    grew on its schedule without a cut under all four conditions, hence the
+    same 1129 steps; the only thing held fixed by the set-up is the end time
+    of \SI{0.1}{\second}.
+\end{itemize}
+
+\subsection{The coupling passes of \texorpdfstring{\val{"CZ"}}{CZ}}
+\label{sec:verification:czpasses}
+
+With the Marangoni term on, \val{"CZ"} solves the film and the concentration
+of each step again, one stage each, at the midpoint concentration $c_m$ the
+last pass found, until that midpoint settles
+(\cref{sec:time:newton}). Each pass is a map $c_m \mapsto c_{\mathrm{mid}}(c_m)$,
+and Aitken's relaxation takes $c_m + \omega\,(c_{\mathrm{mid}} - c_m)$ with
+$\omega$ from the change of the residual between passes.
+
+\textbf{The gain of a plain pass, derived.} Linearize about a flat film of
+thickness $h$ at rest, with a profile $c_0(\zeta)$ through it, and perturb it
+by a wave $e^{ikx}$: $\eta$ in the film, $\gamma(\zeta)$ in the
+concentration. The film sees $c_m$ only through the Marangoni stress of its
+surface value $\gamma_{m,s}$, and the concentration sees the film only through
+the velocity in $\zeta$ that the Marangoni flow and the film's response to it
+make, which carries the stratification $\partial c_0/\partial\zeta$. A plain
+pass ($\omega = 1$) is therefore of rank one for each wave,
+$\gamma_m \mapsto b + v\,\gamma_{m,s}$, and its one non-zero eigenvalue
+$\lambda_k = v_s$ decides whether the passes converge. For a linear profile,
+$\partial c_0/\partial\zeta = \Delta c$,
+
+\begin{equation}\label{eq:cz-gain}
+  \lambda_k = \frac{\Delta t}{2}\,D_M k^2\,\psi(1), \qquad
+  D_M = \frac{h\,\sigma_c\,\Delta c}{2\mu},
+\end{equation}
+
+where $\psi$ solves
+$\bigl(1 + \tfrac12\Delta t\,D k^2\bigr)\psi - \tfrac{\Delta t\,D}{2h^2}\,\psi''
+ = \zeta(1-\zeta)\,\varphi(\zeta)$ with $\psi'(0) = \psi'(1) = 0$,
+$\varphi = m_k - \frac{a}{1+a}\bigl(1 - \frac{\zeta}{2}\bigr)$ and
+$a = \Delta t\,\sigma h^3 k^4/(6\mu)$, the Crank--Nicolson factor of the
+capillary pressure. $\sigma_c$ is \key{Fluid.SurfaceTension.Coef}, $D$ the
+diffusivity, $k^2$ the film's two-point symbol
+$(2 - 2\cos k\Delta x)/\Delta x^2$, and $m_k$ the velocity's fourth-order
+surface gradient over the film's two-point one (1 on long waves, $7/6$ on
+the shortest). The first term of $\varphi$ is the Marangoni flow, the
+second the return flow of the film it raises. Three properties follow.
+
+\begin{itemize}
+  \item $\lambda_k$ has the sign of $\sigma_c\,\partial c_0/\partial\zeta$
+    and grows with $\Delta t$ and $k$. When the diffusion crosses the film
+    within the step ($\Delta t\,D/h^2 \gg 1$) it tends to
+    $\lambda_k \to \tfrac12 \mathrm{Ma}_h\,\bar s\,\theta/(1+\theta)$, with
+    $\theta = \tfrac12\Delta t\,D k^2$, $\bar s = \int_0^1\zeta(1-\zeta)\varphi\,d\zeta$
+    between $1/24$ (capillary pressure stiff) and $1/6$, and the Marangoni
+    number of the film $\mathrm{Ma}_h = \sigma_c\,\Delta c\,h/(\mu D)$: the
+    gain never passes $|\mathrm{Ma}_h|/12$ ($\times 7/6$ on the shortest
+    waves; at most $0.072\,|\mathrm{Ma}_h|$ over a sweep of $\Delta t$ from
+    $10^{-4}$ to $10^{2}$~\si{\second}, three film thicknesses, three diffusivities
+    and 4 to 32 cells through the film).
+  \item The fixed point of the passes is the implicit midpoint step of the
+    linearized system $\dot y = A_k y$, and
+    $1 - \lambda_k = \det(I - \tfrac12\Delta t A_k)\,/\,[(1+a)\det B_k]$, with
+    $B_k$ the Crank--Nicolson factor of the diffusion through the film; both
+    factors of the denominator are positive. So $\lambda_k > 1$ only where
+    a wave of the model grows faster than $2/\Delta t$, a step on which the
+    implicit midpoint rule turns that growth into a perturbation that
+    changes sign. Where no wave grows, $\lambda_k < 1$ for every wave at
+    every step.
+  \item Aitken's factor settles to $\omega \approx 1/(1-\lambda)$ of the wave
+    that holds the residual: between 0 and 1 for $\lambda < 0$, above 1
+    for $0 < \lambda < 1$, negative for $\lambda > 1$. One wave, or a band
+    of waves of about one gain, is then removed whatever its gain. Waves
+    with gains on both sides of 1 cannot be removed by one factor together.
+\end{itemize}
+
+\file{tools/cz\_coupling.py} evaluates $\lambda_k$ of
+\cref{eq:cz-gain} for every wave of a grid, for a linear profile, the
+boundary layer of an evaporating film, or a column read from a field file,
+together with the largest growth rate of $A_k$ and $1-\lambda_k$ from the
+determinants. \env{YUZEN\_DEBUG\_COUPLING} prints every pass of a run.
+
+\textbf{The gain measured.} An evaporating flat film (\SI{10}{\micro\metre}
+at the start, \key{Physics.Evaporation.Coef} $= 3\times10^{-5}$ with a rate
+that does not depend on $c$, $D = 10^{-9}$, 64 cells over
+\SI{0.5}{\milli\metre}, \key{Grid.Nz} $=11$, a wave of 16 cells and
+amplitude $10^{-3}$ of the film) ran \SI{0.04}{\second}, until
+$\Delta c = 0.039$ to $0.042$ and $h = \SI{8.8}{\micro\metre}$; its last step
+then took ten plain passes. After the first, which removes the drift of the
+profile (gain 0), the residual is held by the shortest wave, and the ratio
+of one pass's movement to the last approaches the largest $|\lambda_k|$ that
+\file{tools/cz\_coupling.py} gives for the column of the run
+(\cref{tab:czgain}): within 0.97 to 1.09 of it for gains of 0.34 to 2.4. At
+\SI{20}{\milli\second}, with gains of 2 to 3, the ratio was still rising
+after six passes. The signs are those of $\sigma_c$: on the same film at
+\SI{10}{\milli\second}, Aitken's factor read $\omega = -0.64$ and $0.28$
+for $\sigma_c = \pm0.05$, which is $\lambda = 1 - 1/\omega = 2.56$ and
+$-2.57$, against $\pm 2.37$ predicted, and in nine passes the relaxed
+ones took the residual down by $10^{4}$ and $10^{6}$ where the plain ones grew
+it by 2.6 a pass.
+
+\begin{yzntable}{Gain of a plain coupling pass on an evaporating flat film:
+  largest $|\lambda_k|$ of \cref{eq:cz-gain} / measured ratio of successive
+  passes\label{tab:czgain}}{@{}L{0.20\textwidth} L{0.17\textwidth} L{0.17\textwidth} L{0.17\textwidth} L{0.17\textwidth}@{}}
+$\sigma_c$ [\si{\newton\per\metre}] & $\Delta t = \SI{2}{\milli\second}$ & \SI{5}{\milli\second} & \SI{10}{\milli\second} & \SI{20}{\milli\second} \\ \midrule
+$+0.03$ & 0.336 / 0.358 & 0.836 / 0.843 & 1.419 / 1.529 & 1.955 / 2.636 \\
+$-0.03$ & 0.336 / --- & 0.836 / --- & 1.419 / 1.539 & 1.955 / 2.602 \\
+$+0.05$ & 0.560 / 0.542 & 1.393 / 1.392 & 2.365 / 2.589 & 3.250 / 4.322 \\
+\end{yzntable}
+
+(---: the residual reached rounding, about $10^{-11}$, before the shortest wave held it.)
+
+\textbf{The passes the runs take.} On the stratified manufactured state of
+\code{cz\_strat\_1d} (\cref{sec:verification:mms}), at a fixed step for
+\SI{0.02}{\second}, the largest number of passes a step took was the same on
+32, 64 and 128 cells: 1 at 0.5 and \SI{1}{\milli\second}, 2 at
+2 and \SI{5}{\milli\second}, 4 or 5 at \SI{10}{\milli\second}, and at
+\SI{20}{\milli\second} the passes did not settle (the midpoint still moved by
+0.56 to 0.68 of the first pass's change after eight). The same holds with
+$\sigma_c$ of the opposite sign and with a fifth of the diffusivity. What
+fails at \SI{20}{\milli\second} is not \cref{eq:cz-gain}: with the viscosity
+independent of $c$ (\key{Fluid.Viscosity.Exponent} $=0$ instead of 3) every
+step on 32 cells settled in 2 passes. A viscosity that depends on $c$ couples the
+concentration of every level to the velocity under the strong flows of that
+state, and the pass is then no longer of rank one; a step of
+\SI{20}{\milli\second} moves its wave by 1.2 radians. With four times the
+$\sigma_c$, a film that is unstable in the model, the passes took up to 8 and
+did not settle from \SI{10}{\milli\second}. An evaporating flat film under
+step control (128 cells over \SI{0.5}{\milli\metre}, $\sigma_c = \pm0.01$ to
+$\pm0.05$, \key{Criterion} $=10^{-2}$ and $10^{-1}$) took 1 to 3 passes a step,
+and up to 8 where $\sigma_c > 0$; in two of those runs one step of 55 did not
+settle. \file{concz\_1d\_reg} with evaporation up to
+$3\times10^{-5}$, $\sigma_c$ up to $\pm0.03$ and 120 to 480 cells never took
+more than 2.
+
+\textbf{What happens when they do not settle.} Found: a step whose passes
+did not settle within eight was kept as the last pass left it, with a
+warning; the time-step control, whose truncation-error test looks at the film
+before the passes, did not see it. On \code{cz\_strat\_1d} at 32 cells with
+the step control on, \key{InitialDt} $=\SI{0.02}{\second}$ and a
+\key{Criterion} of 1, loose enough to accept that step, the error at
+\SI{0.02}{\second} was 2.1 of the film's amplitude; at a \key{Criterion} of
+$10^{-3}$ to 0.3 the truncation-error test cut the step first. Corrected:
+passes that do not settle fail the step, as a linear solve that does not
+converge does. Under step control the step is cut by \key{ChangeFactor} and
+solved again (the first such step is reported in \file{Warnings.txt}, and
+\file{JobInfo.txt} counts them under \code{Steps failed: the passes did not
+settle}); the run above then ends with an error of 0.17, that of the step
+the truncation-error test chooses at a \key{Criterion} of 0.3. At a fixed
+step the run stops, naming the passes as the cause. The midpoint also counts
+as settled once it moves by less than ten times
+\key{Numerics.ConcEquation.LinearSolver.Epsilon}, and no less than
+$10^{-10}$, so that a step whose extrapolation was already exact is not
+failed for the rounding of its solve. \code{coupling\_cz} of
+\file{tools/features.py} checks both behaviors on that state.
+
+\textbf{The safe regime.} Where the film is stable in the model, the plain
+gain stays below 1 on every wave at any step; where $\sigma_c\,\partial
+c/\partial\zeta < 0$ the gain is negative and the relaxation settles it at any
+step, in a number of passes that grows with $|\lambda|$; and below
+$|\mathrm{Ma}_h| \approx 10$ even the plain pass converges. In the runs
+measured, the passes stopped settling only on films unstable in the model
+($\sigma_c\,\partial c/\partial\zeta > 0$ with $\mathrm{Ma}_h$ of about
+100 to 180, and the manufactured state with four times its $\sigma_c$)
+and on steps on which a concentration-dependent viscosity moves the state by
+about a radian; those steps now fail. The gain is derived for the
+linearized flat film only; the viscosity's part is measured, not derived.
+
+\section{The Jacobians}
+\label{sec:verification:jacobian}
+
+The Newton iteration of the film-height equation solves with the Jacobian
+$J = \partial(A(h)h)/\partial h$, assembled as $A$ plus what each term adds for
+the dependence of its coefficients on $h$. A mistake in that second part does
+not change what the iteration converges to, only how fast; every other test
+converges anyway, a little slower, and the first sign in a real run is a time
+step that collapses. \file{test\_jacobian.cpp} therefore compares, term by
+term, in 1-D and 2-D, $J v$ with the central difference $[R(h+\epsilon v) -
+R(h-\epsilon v)]/2\epsilon$ of $R(h) = A(h)h$, on a film that is not flat, over
+a substrate that is not flat, with a concentration that varies, for a
+direction $v$ that is not smooth. What is left when the two agree is
+rounding, $10^{-10}$; the test allows $10^{-7}$. It found three faults:
+
+\begin{itemize}
+  \item The vertical gravity and the disjoining pressure took the derivative
+    of the face mobility $\tfrac12(h_o^3 + h_a^3)/\mu$ at the neighbor for the
+    column of the cell itself as well ($2\times10^{-2}$).
+  \item The disjoining pressure added all of $\hat\Pi'$ to a Jacobian that
+    already held $\hat\Pi/h$ from $A$ (the form in which $\hat\Pi$ is written
+    into the matrix): off by \SI{50}{\percent}.
+  \item The sideways outflow of the 1-D centrifugal term added $2\,\mathrm{Sp}\,h/\mu$
+    where $2\,\mathrm{Sp}\,h^2/\mu$ was due ($3\times10^{-2}$).
+\end{itemize}
+
+The evaporation is not in $J$ at all: the film-height equation takes it at
+the current iterate, and its derivative with respect to $h$, which is zero
+except near the precursor and at the cap, is left to the iteration.
+
+The same file checks the face fluxes the well-mixed concentration is carried
+with (\code{FaceFlux}, \cref{sec:disc:wm-conservative}): for every term and
+every face interpolation of the upwinded ones, in 1-D (with the sideways
+outflow of the centrifugal term) and 2-D, the signed sum of a row's face
+fluxes must be the product of its entries of $A$ with $h$ to $10^{-13}$ of the
+row, and the two cells that share a face must see the same flux to
+$10^{-13}$ of the largest.
+
+The three upwinded terms (in-plane gravity, centrifugal, Marangoni) are
+checked with seven of the convection schemes of \cref{sec:disc:convection}.
+The limited ones are checked on a film with steep fronts and no extremum,
+which reaches every branch of Koren's limiter and stays at least 0.05 from
+any of its kinks, with a finite-difference step of $10^{-7}$: van Leer's
+curvature makes the difference itself $4\times10^{-7}$ off at $10^{-6}$.
+
+\section{Choosing the convection scheme}
+\label{sec:verification:schemes}
+
+\file{test\_finite\_differences.cpp} fixes, for every scheme, the exactness
+of the face value on polynomials (cubic for KK, UTOPIA and Koren where it is
+not limited; quadratic for Central2, Central4, QUICK and Upwind2; linear for
+van Leer), its order on a smooth profile, the bounds of the limited schemes on
+random and step data and the overshoot of the linear ones, the bitwise mirror
+and sign symmetry, the signs of the frozen weights and the derivative against
+a finite difference. \file{tools/advection.py} (\code{ctest}: \code{advection})
+carries a step in $c$ and a sine across a periodic flat film moved by in-plane
+gravity, at a Courant number of 0.4, in both models; \file{tools/mms.py} and
+\file{tools/equivalence.py} take \code{--conc}, \code{--height} and
+\code{--scheme} to run any of their cases with another scheme. The defaults
+were chosen from the comparison below, made with the other key at
+\val{"KK"}.
+
+\begin{yzntable}{Convection schemes on a concentration step and a sine (\file{tools/advection.py})\label{tab:schemes-advection}}{@{}L{0.16\textwidth} L{0.34\textwidth} L{0.40\textwidth}@{}}
+\textsf{\bfseries Scheme} & \textsf{\bfseries Overshoot of the step, WM / CZ} & \textsf{\bfseries Sine, maximum error at 128 cells (order)}\\ \midrule
+KK & \SI{6.3}{\percent} / \SI{7.0}{\percent} & $1.9\times10^{-4}$ (2.99) \\
+UTOPIA & \SI{8.6}{\percent} / \SI{10.4}{\percent} & $6.3\times10^{-5}$ (2.99) \\
+Central4 & \SI{36}{\percent} / \SI{39}{\percent} & $6.4\times10^{-4}$ (2.00) \\
+Koren & 0 & $5.1\times10^{-3}$ (1.56; mean error 2.35) \\
+van Leer & 0 & $1.0\times10^{-2}$ (1.41; mean error 1.98) \\
+\end{yzntable}
+
+The bound holds for a Courant number up to one only: Crank--Nicolson loses it
+beyond, where Koren overshoots \SI{16}{\percent} at 1.5 and even first-order
+upwinding \SI{9}{\percent} at 3. The solver reports a step past one
+(\cref{sec:ref-numerics:convection}), and \file{tools/advection.py} checks
+the report: with Koren, the front of \val{"WM"} is reported for the
+concentration at 1.5 and not at 0.4, that of \val{"CZ"}, whose surface moves
+at $1.5u$, at 1.5 and not at 0.4, and the film height, whose upwinded flux
+moves at $3u$, at 0.4 and not at 0.3. (The film being flat, its report at
+0.4 in the runs of \cref{tab:schemes-advection} has no consequence.)
+
+The sine above is carried along $x$ without diffusion, so it measures the
+convection alone. \file{tools/advection.py} also runs a check of the order
+the well-mixed concentration reaches in 2-D with convection and diffusion
+together (\code{oblique\_wm}, part of \code{advection}; it can be run alone
+with \code{--oblique}). A flat square film, periodic in $x$ and $y$,
+\SI{1}{\milli\metre} across, is carried by in-plane gravity at
+\SI{1}{\milli\metre\per\second} in the direction $(2,1)/\sqrt5$, and its
+concentration is a sine along the diagonal, $c = 0.5 + 0.2\sin k(x+y)$,
+oblique to the flow and to both axes, so that neither the field nor its
+motion is separable, with $D = 5\times10^{-7}$~\si{\metre\squared\per\second}.
+The answer is $c = 0.5 + 0.2\,e^{-D|\mathbf k|^2t}\sin\mathbf
+k\cdot(\mathbf x - \mathbf u t)$. The runs take 16, 32 and 64 cells a side
+and 20, 40 and 80 steps over one decay time, \SI{25}{\milli\second}: the
+time step is refined with the grid. The expected order follows from the
+modified equation of the scheme. The central diffusion under-damps the wave
+by $D(k_x^4+k_y^4)\Delta x^2/12$, UTOPIA over-damps it by
+$(|u_x|k_x^4+|u_y|k_y^4)\Delta x^3/12$, and Crank--Nicolson adds an error in
+$\Delta t^2$, here about \SI{1}{\percent} of the rest. So the error is of
+second order, with a third-order part of the other sign whose share is
+$r = (|u_x|+|u_y|)\Delta x/2D$, $0.67$ times the cell Péclet number. The
+observed order is $2 + \log_2[(1-r)/(1-r/2)]$, below 2 until $r$ is
+small. This is the cancellation that keeps the order of $c$ low in
+\code{wm\_all\_2d} at the diffusivity of 1-D (\cref{sec:verification:mms}).
+Here the cell Péclet number is 0.125 to 0.031 and the formula gives 1.94
+and 1.97. Measured, UTOPIA converges at 1.91 and 1.97, with an error within
+\SI{3}{\percent} of the formula's on every grid ($4.2\times10^{-3}$,
+$1.1\times10^{-3}$, $2.9\times10^{-4}$ of the amplitude). Koren, which clips
+the extrema of the sine to first order, converges at 1.88 and 1.92. The
+check requires, for both, an order between 1.9 and 2.1 on 32 to 64 cells and
+an order on 16 to 32 within 0.1 of it, that is, in the asymptotic range. The
+convection is not lost behind the diffusion: first-order upwinding converges
+at 0.72 and 0.87 here, and KK, with three times UTOPIA's dissipation, at
+1.76 and 1.90. The film stays flat to rounding, so the check says nothing
+about the film height, whose order in 2-D is that of the manufactured
+solutions. The six runs take about \SI{20}{\second} on two cores.
+
+\begin{yzntable}{Convection schemes in the manufactured solutions: error on the finer grid / order in $\Delta x$\label{tab:schemes-mms}}{@{}L{0.20\textwidth} L{0.13\textwidth} L{0.13\textwidth} L{0.13\textwidth} L{0.13\textwidth} L{0.13\textwidth}@{}}
+\textsf{\bfseries Case} & \textsf{\bfseries KK} & \textsf{\bfseries UTOPIA} & \textsf{\bfseries Central4} & \textsf{\bfseries Koren} & \textsf{\bfseries van Leer}\\ \midrule
+\multicolumn{6}{@{}l}{\emph{\key{Concentration} varied; the error of $c$}} \\
+\code{wm\_all\_1d} & $8.3\times10^{-5}$ / 1.80 & $9.0\times10^{-5}$ / 1.94 & $9.1\times10^{-5}$ / 2.00 & $1.0\times10^{-4}$ / 2.21 & $1.3\times10^{-4}$ / 2.04 \\
+\code{wm\_all\_2d} & $6.9\times10^{-4}$ / 2.58 & $4.8\times10^{-4}$ / 2.38 & $6.7\times10^{-4}$ / 1.80 & $2.7\times10^{-3}$ / 1.91 & $3.4\times10^{-3}$ / 2.21 \\
+\code{cz\_conc\_1d} & $4.9\times10^{-4}$ / 1.72 & $5.5\times10^{-4}$ / 1.92 & $6.5\times10^{-4}$ / 2.00 & $5.2\times10^{-4}$ / 1.90 & $4.8\times10^{-4}$ / 1.94 \\
+\code{cz\_strat\_1d} & $2.0\times10^{-3}$ / 2.01 & $1.9\times10^{-3}$ / 1.98 & $1.6\times10^{-3}$ / 1.98 & $2.0\times10^{-3}$ / 2.02 & $2.9\times10^{-3}$ / 2.19 \\
+\code{cz\_strat\_2d} & $9.3\times10^{-3}$ / 1.78$^{\dagger}$ & $9.0\times10^{-3}$ / 1.88 & $7.2\times10^{-3}$ / 1.89 & $1.2\times10^{-2}$ / 2.04 & $1.8\times10^{-2}$ / 1.79 ($u$: 1.67) \\
+\multicolumn{6}{@{}l}{\emph{\key{Height} varied; the error of $h$}} \\
+\code{wm\_1d} & $8.1\times10^{-4}$ / 2.82 & $5.3\times10^{-4}$ / 2.26 & $1.0\times10^{-3}$ / 2.04 & $1.0\times10^{-3}$ / 2.61 & $3.0\times10^{-3}$ / 2.12 \\
+\code{wm\_2d} & $5.5\times10^{-3}$ / 2.89 & $2.5\times10^{-3}$ / 2.50 & $3.4\times10^{-3}$ / 2.13 & $6.7\times10^{-3}$ / 2.78 & $1.3\times10^{-2}$ / 2.32 \\
+\code{wm\_all\_1d} & $2.5\times10^{-4}$ / 1.85 & $2.7\times10^{-4}$ / 1.93 & $3.1\times10^{-4}$ / 2.00 & $2.7\times10^{-4}$ / 1.89 & $4.2\times10^{-4}$ / 2.01 \\
+\end{yzntable}
+\noindent$^{\dagger}$\,Pre-asymptotic, as KK is in \code{wm\_all\_2d} (\cref{sec:verification:mms}): on 24 and 48 cells $c$ converges at 1.93 ($h$ 2.02, $\mathbf u$ 1.96).
+
+Every order in $\Delta t$ is between 1.9 and 2.3. The manufactured state of
+\code{cz\_strat\_*} is one the model keeps stable. Where the surface tension
+rises with $c$ and $c$ rises toward the surface ($\sigma_c\,\partial
+c/\partial\zeta > 0$, over half of each wavelength here), a surface
+concentration that varies along the film drives a Marangoni circulation whose
+vertical velocity carries the stratification, and the viscosity's dependence
+on $c$ feeds the change back to the surface; only the diffusion damps the
+short waves this makes grow. A frozen-coefficient analysis of the linearized
+equations (the lubrication profile with $\mu(c)$, the Marangoni stress, the
+capillary pressure, the vertical advection of the stratification and the
+diffusion, about the manufactured state at each point and time of the run,
+for waves in every direction in 2-D; \file{tools/cz\_stability.py}) gives
+the growth rate of each wavelength. At the diffusivity of the checks,
+$1.5\times10^{-9}$~\si{\metre\squared\per\second}, every wave from a quarter
+of the state's wavelength down to two cells of a grid twice as fine as the
+finest of the checks (256 cells in 1-D, 64 in 2-D) decays, at
+\SI{7.8}{\per\second} (1-D) and \SI{3.5}{\per\second} (2-D) or faster.
+
+The instability was found with the stratified checks first made at
+$3\times10^{-10}$~\si{\metre\squared\per\second}. There the analysis gives
+growth rates of up to $7\times10^{2}$~\si{\per\second} for waves
+\SI{2.6}{\micro\metre} to \SI{5}{\micro\metre} long --- one to three cells of
+128 --- a factor of up to $e^{14}$ over the \SI{20}{\milli\second} of the
+run; with $\sigma_c = 0$ or $\mu$ independent of $c$ the growth falls or
+goes, and with the sign of $\sigma_c$ reversed it moves to where
+$\partial c/\partial\zeta$ has the other sign. With Central4 or Central2,
+\code{cz\_strat\_1d} converged in time to a solution with an oscillation two
+to three cells long along $x$, strongest halfway through the film, the same
+at steps of 0.125 and \SI{0.031}{\milli\second} and with 32 and 64 cells
+through the film --- the growth of a solution, not of a scheme --- and $c$
+converged at 0.48 in $\Delta t$; the dissipation of UTOPIA damped it on 128
+cells and fewer, but on 256 cells the oscillation grew there too. (Central
+schemes had stayed smooth earlier in development only while the layer
+velocities of the concentration equation did not add up to the film's flux
+on the shortest waves; once the volume fluxes were made to add up,
+\cref{sec:disc:cz-conservative}, they grew.) Corrected by raising the
+diffusivity: in 1-D every scheme converges at second order
+(\cref{tab:schemes-mms}), Central2 as well ($c$ 1.90 in $\Delta x$, 2.05 in $\Delta t$), and on 128 and 256 cells
+UTOPIA keeps its orders --- $h$, $c$ and $\mathbf u$ at 2.01, 2.05 and 1.99
+in $\Delta x$, and at 2.31, 2.05 and 2.37 in $\Delta t$ on 256 cells ---
+and so do KK and Central4, within 0.05 of these.
+\code{cz\_strat\_1d\_central4} in \file{tools/mms.py} runs the 1-D case with
+Central4 (\cref{sec:notverified:numerics}). A
+limited concentration scheme clips the extrema that the no-flux conditions at
+the substrate and the surface put into the profile through the film; in
+\val{"CZ"}, where it is settled to the midpoint of the step, that costs up
+to a factor of 2 in the error against UTOPIA, and in the well-mixed 2-D
+case 6--7: it is kept for problems with real fronts. For the film
+height the limiter costs little on a smooth solution (Koren's error is
+1.2--1.3 times KK's) and the linear wave of \cref{sec:verification:analytic}
+shows the same: its speed error at 32 cells per wavelength is
+$6.7\times10^{-4}$ against $5\times10^{-5}$, falling at 2.85.
+
+What it gains shows on a steep film over a thin precursor: a block
+\SI{5}{\micro\metre} high sliding under strong gravity over a precursor of
+\SI{0.1}{\micro\metre}, 100 cells, adaptive step. The lowest film height
+reached is \SI{0.085}{\micro\metre} with KK, \SI{0.028}{\micro\metre} with
+UTOPIA and \SI{0.0998}{\micro\metre} with Koren and van Leer, and Central4
+stops with a step that underflows. Over a precursor of \SI{0.02}{\micro\metre}
+KK, UTOPIA and Central4 all stop; Koren and van Leer finish with the precursor
+intact, and at 200 cells KK still dips to \SI{0.007}{\micro\metre} where Koren
+stays at \SI{0.01998}{\micro\metre}. The face height of a limited scheme lies
+between its neighbors, which is what the positivity-preserving mobility of
+\cref{sec:disc:positivity} assumes of it.
+
+Every scheme passes the 33 checks of \cref{sec:verification:equivalence}
+(worst $6.4\times10^{-9}$), runs every shipped case with the same number of
+steps and cuts of the step as KK, and gives the same answer with 1 and 2
+threads to the last bit. The Newton iterations are the same too, except in
+\file{stress\_all} and \file{stress\_dt}, whose steps are a hundred times
+longer: there Koren and van Leer for the concentration take 142 and 139
+iterations against KK's 104 in \file{stress\_all}, and Koren 87 against 85 in
+\file{stress\_dt}. The shipped cases differ
+from KK by at most $1\times10^{-5}$ of $h$ with another \key{Height} and
+$2\times10^{-6}$ with another \key{Concentration} (\file{stress\_all}:
+$3\times10^{-5}$ and $1\times10^{-4}$); their concentration stays within
+$0.5000$--$0.5020$, so they cannot tell the concentration schemes apart. Hence the defaults: \val{"Koren"} for \key{Height}, \val{"UTOPIA"} for
+\key{Concentration} in both models. With these, every manufactured solution
+passes (\code{wm\_all\_1d}: $c$ 1.94; \code{wm\_all\_2d}: $c$ 2.38, $h$ 2.11).
+
+Comparing the schemes also found a fault in the Marangoni term: it was
+upwinded by the sign of $\Delta c$ rather than of the flux, which with a
+negative \key{Fluid.SurfaceTension.Coef} took the downwind side. No
+shipped case has one.
+
+\section{Features no other check switches on}
+\label{sec:verification:features}
+
+\file{tools/features.py} (\code{ctest} entry \code{features}) runs what the
+cases never use. \code{probe\_wm\_1d}, \code{probe\_wm\_2d} and
+\code{probe\_cz\_1d} put a probe near a point and require the last line of
+\file{Probe00.dat} to be what the field file of the same instant holds at the
+nearest point. The check found that the probes landed on the first point
+within one cell of the one asked for rather than the nearest --- in 2-D the probe of the test
+sat half a cell off --- and \val{"CZ"} compared the meters of the input with
+its dimensionless grid, so its probes landed nowhere near where they were
+asked for. They also check the position the probe file names in its header
+and, in \val{"CZ"}, the level through the film; the header of a 1-D
+well-mixed run named a point one cell short of the one its values came
+from. All three were corrected.
+\code{coupling\_cz} drives the coupling passes of \val{"CZ"} past their limit of
+eight with a step of \SI{0.02}{\second} on \code{cz\_strat\_1d}: at a fixed step the run must
+stop and name the passes, and under a step control loose enough to accept
+that step otherwise the step must be cut, reported once and counted, and the
+error stay below 0.5 of the film's amplitude (0.17; 2.1 with the step kept;
+\cref{sec:verification:czpasses}). \code{stagnation\_wm} starts
+\file{stress\_wetting}, whose first step at \key{InitialDt} stagnates far from
+convergence (\cref{sec:convergence:stagnation}): at a fixed step the run must
+stop and name the stagnation --- taken with a warning, the film went negative
+on the next step and the run ended as diverged --- and under step control the
+step must be cut until it converges (thirteen cuts), reported once and counted,
+the run end normally and \code{VolErr} stay at rounding
+($2\times10^{-15}$). \code{evap\_precursor\_wm} and
+\code{evap\_precursor\_cz} run \file{leveling\_1d\_reg} and
+\file{concz\_1d\_reg}, whose film thins below its precursor at the foot of
+the substrate step, and require \code{EvaporatedVol} never to fall. The
+check found the precursor correction $f_h$ negative below $\Hstar$
+(\cref{sec:terms:evaporation}), which condensed solvent onto the film: over
+\SI{1000}{\second} of \file{allphys\_1d\_reg} as much as \SI{43}{\percent}
+of the initial volume, the mean concentration falling from 0.5 to 0.15.
+Corrected, $f_h$ is zero there. \code{steady\_wm} and
+\code{steady\_cz} require a leveling film
+to stop with \code{Steady state} long before its \key{EndTime}, flat;
+\code{dry\_wm} and \code{dry\_cz} a drying film to stop with \code{Dry out}
+in the step in which the mean concentration passes \key{EndConcValue};
+\code{maxsteps} the run to stop after exactly \key{MaxSteps} steps and say so;
+and \code{adaptive\_dt} a run whose time step starts at \SI{1}{\nano\second}
+to let the step grow and still end within the error it was asked for of a run
+at a fixed small step ($1\times10^{-4}$ of the change, with
+\key{Criterion} $=10^{-4}$). \code{adaptive\_clock\_*} cut and lengthen the step in both models,
+in 1-D and 2-D, and require the reported time to be the sum of the steps
+solved to $10^{-12}$; \code{adaptive\_source} that a relaxing nozzle supplies,
+at the reported times, the volume its time function gives.
+\code{restart\_edited\_wm} and \code{restart\_edited\_cz} raise one column of
+a field file by \SI{1}{\percent} after the run wrote it: the restart must take
+the field as it stands and warn that it is not the state saved beside it,
+while an unedited copy continues without that warning
+(\cref{sec:ref-numerics:restart}). \code{restart\_pinned} restarts a film
+pushed against a \val{"Pinning"} wall and dried until the film at the wall is
+\SI{14}{\percent} of the thickest: the run must go on, with the line of the
+check of the pinned edges as a warning (\cref{sec:ref-bcout:boundary}).
+
+\section{Input fuzzing and random inputs}
+\label{sec:verification:fuzzing}
+
+The readers of the input file (TOML and \file{.inp}) and of the restart files
+(\file{field*.dat}, \file{.vts}, \file{field*.state}) were fuzzed with
+libFuzzer under AddressSanitizer and UndefinedBehaviorSanitizer, about
+\SI{2.7}{\hour} of one core and 14.5 million inputs, from corpora of the
+shipped cases, their \file{.inp} forms and restart files of short runs
+(\file{tools/fuzz\_corpus.py}; configure with \code{-DYUZEN\_BUILD\_FUZZERS=ON},
+Clang only). A refusal is an accepted outcome; a crash, a sanitizer report or
+a hang is not. They found: toml\texttt{++} reaching an unreachable branch on
+a bare key with a non-ASCII character; the \file{.vts} readers trusting a
+block length the grid did not have (a heap overflow), the ASCII readers
+taking a short row with the missing values uninitialized, and the state
+reader throwing on a huge array length; conversions that took trailing text,
+\val{nan}, fractional counts, lists for scalars and dates without a word
+(\cref{sec:inputformat:types}); and values that ran to nonsense --- a
+negative \key{MaxDtFactor}, which never ended, a negative viscosity, a film
+with no liquid, which ran with exit code 0 and NaN in \file{History.dat}.
+All were corrected and are refused, and the well-mixed model stops on a
+field that has broken down, as \val{"CZ"} does (\cref{sec:output:calcinfo}).
+
+\file{tools/proptest.py} draws random valid inputs from a seed --- the model,
+the dimension, small grids, any subset of the terms with parameters over
+orders of magnitude, the edges, the initial shape, the convection scheme,
+fixed or adaptive steps --- runs each for a few dozen steps and checks that it
+ends cleanly with finite fields, a positive film and, for a bounded scheme at
+a Courant number up to one, a bounded concentration; that the volume
+($10^{-9}$) and the solute ($10^{-11}$ well-mixed, with its advection on;
+$10^{-13}$ \val{"CZ"}) are kept, on a closed domain and, for the
+well-mixed model, on one with \val{"FreshInlet"} or \val{"Outlet"} edges,
+what crossed them counted, and that a uniform
+concentration without evaporation stays uniform ($10^{-10}$ well-mixed,
+$10^{-12}$ \val{"CZ"}); and, for a
+part of them, that the transpose and the mirror give the transposed and
+mirrored result, that one and two threads agree, and that a restart chain
+gives the straight run to the bit. About 990 configurations were run. They
+found: a failed concentration solve that left NaN in the starting guess of
+every retry of the step; the corner of two \val{"FreshInlet"} edges, which
+moved at every Newton iteration until the step collapsed; an extra step after
+a restart at the step at which the film dried out; the divergence test of
+\val{"CZ"} skipping the last step; a \file{.pvd} that dropped the entry of the
+field a restart started from when its six-digit time was rounded up; and the
+column labels of the \val{"CZ"} \file{CalcInfo.dat}. They then found the
+faults that follow, all corrected before release.
+
+\begin{itemize}
+  \item The in-plane body forces and the Marangoni stress of the well-mixed
+    model put liquid through a \val{"Symmetry"} or \val{"Pinning"} wall.
+    Their flux is a face value of the film times a drive, not a gradient, and
+    the face value was taken from the ghosts, which at a symmetric wall
+    mirror the film. The wall-face velocity was zero; $A$, the Jacobian and
+    the velocity were not. $|\code{VolErr}|$ reached $2.5\times10^{-4}$ in
+    \code{wall\_balance\_2d}; corrected, it is $10^{-14}$. With it went a 1-D volume
+    that took the ghosts into the edge cells, so that a pinned film seemed to
+    lose $5\times10^{-5}$ of its volume, and a \code{VolErr} that did not
+    count the nozzle. Nor did \code{ResinVolErr} count the solute the
+    nozzle's liquid brings ($0.057$ in seed 1122, $1.9$ at the end of
+    \file{nozzle\_1d\_fixed}); it is counted in \code{SuppliedResin}
+    (\cref{sec:output:history}), and \code{nozzle\_solute} holds it
+    to $10^{-12}$.
+  \item A drying \val{"CZ"} film that was not flat lost 3 to
+    \SI{25}{\percent} of the solute its evaporated fraction should have
+    concentrated, whatever $\Delta t$, $N_x$ and $N_z$: the conditions at the
+    surface and the substrate set only the vertical part of the diffusive
+    flux, and the part along the slope leaked out. The concentration
+    equation was also not conservative, and a uniform concentration drifted
+    by $10^{-6}$, differently in a mirrored run. Corrected, it is solved in
+    conservative form for $hc$ (\cref{sec:disc:cz-conservative}); the solute
+    of a closed film is kept to $10^{-14}$, a uniform concentration stays
+    uniform exactly, and mirrored and transposed runs agree to $10^{-12}$,
+    with the Marangoni term too.
+  \item The in-plane body forces of \val{"CZ"} crossed a \val{"Symmetry"}
+    wall the same way ($2\times10^{-5}$, seed 1015; $3.7\times10^{-3}$ in
+    \code{wall\_balance\_cz}). Every flux, every layer velocity and the
+    in-plane diffusion of a wall face are zero after the correction, and the
+    volume and the
+    solute of a closed box are kept to $10^{-15}$.
+  \item A drying film passed $c = 1$, and the cap deleted the solute above it
+    (well-mixed \code{ResinVolErr} $-0.21$, seed 1206; \val{"CZ"}
+    $4\times10^{-4}$, seed 1118; \code{dried\_wm} lost all of it,
+    \code{dried\_cz} stopped). Corrected, evaporation is limited to the solvent there
+    is (\cref{sec:terms:evaporation}), the solute is kept to $10^{-13}$ and $c$
+    stays at most 1.
+  \item When the time-step control lengthened the step after an accepted
+    one, it did so before the clock was advanced: the clock added the new
+    step, which had never been solved, and ran ahead --- by
+    \SI{0.37}{\percent} at the end of \file{leveling\_1d\_reg}, up to
+    \SI{0.5}{\percent} in the contact-line cases. The nozzle and the
+    manufactured sources were evaluated at the wrong times, the steady-state
+    rate was divided by the wrong step, and in \val{"CZ"} the film update and
+    the concentration of that step used the new step while the film had been
+    solved with the old. Corrected, the longer step applies from the next
+    step.
+  \item In 1-D the centrifugal term flings the film into the $y$ that is not
+    solved for (\cref{sec:terms:centrifugal}), and \code{VolErr} and
+    \code{ResinVolErr} did not count it: a spinning strip between walls
+    showed what it lost as an error ($-0.12$ of the volume in
+    \code{spin\_balance}). Corrected, the film-height equation's own
+    sideways outflow, over the step it solved, is counted in
+    \code{OutflowedVol} and \code{OutflowedResin}, and \val{"CZ"} writes the
+    same balance columns (\cref{sec:output:history}); both balance to
+    $2\times10^{-15}$.
+  \item A film that dried to $c = 1$ against a \val{"Pinning"} wall (seed
+    1035), continued from its state file, was not the run straight through:
+    $c$ differed by up to $3\times10^{-3}$ an output later. The field, and
+    with it the state file, held $c$ capped at 1, while the concentration
+    equation of the run straight through went on from its own uncapped
+    solution. The correction of seed 1206 above (the cap on the equation's
+    own state, the evaporation limited to the solvent there is) removed it.
+  \item The check of the pinned edges, which stops an initial condition whose
+    film does not come down to the wall, was made again on a restart, and
+    refused a film whose edge had evolved under the run's own physics:
+    pushed against the wall and dried, it passed a tenth of the thickest film
+    (seed 1206). The check is of the initial condition alone; on a restart
+    its line is a warning (\cref{sec:ref-bcout:boundary}).
+  \item A \val{"CZ"} film that evaporated a sizeable part of itself in one
+    step changed its solute by $10^{-10}$ (seeds 1054 and 2105, against the
+    $10^{-11}$ the property then allowed). The step puts the linear solver's
+    residual back into the solute as a uniform shift of the change
+    (\cref{sec:disc:cz-conservative}); the shift moves the solvent the
+    surface term takes out as well, and the size it was given left a quarter
+    of the residual in the solute. Across a \val{"Periodic"} seam, where each
+    side forms the flux from its own ghost, the ghosts of the change held
+    their copies only to the solver's residual, which the shift did not
+    see. Corrected, the solute of the 147 closed \val{"CZ"} films among
+    500 seeds is kept to $2.4\times10^{-14}$, the limited schemes included,
+    and the property asks for $10^{-13}$.
+  \item A \val{"Periodic"} edge was accepted with the centrifugal term, whose
+    arm jumps by the length of the domain across the seam: not a periodic
+    problem, with liquid created or lost at the seam. It is refused, except
+    under a manufactured solution (\code{periodic\_centrifugal} in
+    \file{tools/input\_guards.py}).
+  \item An unbounded convection scheme of the well-mixed concentration
+    (KK, UTOPIA, Central4, QUICK; Koren and van Leer past a Courant number
+    of one) overshoots past $c = 1$ at a sharp front, and the cap at 1 on the
+    committed state cut the solute above it: \SI{0.72}{\percent} of the
+    solute as a front from $c = 0.99$ to 0.3 crossed a periodic domain of
+    100 cells once with UTOPIA (falling only as $\Delta x^{0.7}$),
+    \SI{3.0}{\percent} with Central4, \SI{0.23}{\percent} for UTOPIA on a
+    drying front. Corrected, the solute above 1 is moved to the neighboring
+    cells with room (\cref{sec:disc:convection}) and kept to rounding. The
+    cap of the working field, which the coefficients see, also froze the
+    limiter of Koren and van Leer at values that were not those of the
+    iterate, and the advection lost its flux form there: 1 to
+    \SI{2}{\percent} of the solute made over one crossing at a Courant
+    number of 1.5. Corrected, the limiter
+    is frozen at the iterate as solved; the solute is kept to the tolerance
+    of the Newton iteration ($5\times10^{-9}$), and to rounding once the
+    step is completed with the limiter settled at its answer
+    (\cref{sec:disc:wm-conservative}). \code{conc\_overshoot} and
+    \code{conc\_overshoot\_koren} (\cref{sec:verification:analytic}) hold
+    both, and no shipped case overshoots.
+  \item Through a \val{"FreshInlet"} or an \val{"Outlet"} the balances were
+    held only to the error of the scheme: \file{History.dat} counted what
+    crossed the edge from the velocities and the face values of the field
+    after each step, not from the face fluxes the step had carried
+    (\code{ResinVolErr} up to $1.1\times10^{-2}$ over seeds 1000--1099, in
+    seed 1033, a 2-D film fed through an inlet against a wall). Corrected, the
+    step's own face fluxes are counted (\cref{sec:output:history}), and the
+    volume and the solute of an open domain are held as those of a closed
+    one ($4\times10^{-15}$ over the same seeds; \code{inlet\_outlet},
+    \code{solute\_balance}).
+\end{itemize}
+
+A further 100 seeds, run under AddressSanitizer, found that with the
+time-step control off (\key{Numerics.\allowbreak TimeStepControl.\allowbreak Enable} $=$
+\val{false}) a well-mixed step whose Newton
+iteration failed --- here a linear solve that never met its tolerance at a
+step far too long for the film --- was taken as the failed iteration left
+it, the film it started from, and the run ended normally; its mirror image
+diverged instead (seed 3094). Corrected, such a step stops the run with the
+reason, since a fixed step has no shorter one to be retried at
+(\code{wm\_fixed\_unsolved} in \file{tools/input\_guards.py}).
+
+The concentration solves were found to do the same, with the step control
+on as well as off: a linear solve of the well-mixed or the \val{"CZ"}
+concentration that did not meet its tolerance left a warning, and its answer
+was taken. The \val{"CZ"} film-height solve did the same at a fixed step.
+Corrected, a concentration solve that fails fails the step: under step
+control it is cut and solved again, in \val{"CZ"} from the concentration it
+started from, and at a fixed step the run stops, naming the solve.
+\file{tools/input\_guards.py} gives each model's concentration solver one
+iteration at a tolerance of $10^{-30}$ at a fixed step
+(\code{wm\_conc\_fixed\_unsolved}, \code{cz\_conc\_fixed\_unsolved}: refused,
+naming the concentration solve), and one or two iterations without the ILU
+preconditioner under step control, at a tolerance the first step cannot meet
+and its cuts can ($10^{-8}$ and $10^{-10}$), from a first step the case's own
+solver takes without a cut (\code{wm\_conc\_cut}, \code{cz\_conc\_cut}:
+ten and eight steps cut, and the run ends normally). No shipped case has a
+concentration solve that fails; all 28 give the same field files with the
+correction as without it, bit for bit.
+
+The checks of \code{proptest} were tightened with these: on a closed domain
+the solute of \val{"CZ"} must be kept to $10^{-13}$, measured from the field
+files, and a uniform \val{"CZ"} concentration must stay uniform to
+$10^{-12}$.
+\code{ctest} runs 20 small seeds and the fifteen of a regression list (the seeds that found faults, and 1282, a periodic film that dries) as
+\code{proptest} (1035 and 1206 with the restart chain), in a few seconds; \code{--seed N --count M} runs more, and
+\code{--only SEED --keep} reproduces one.
+
+\file{tools/input\_guards.py} also restarts each model from a field file
+with the concentration of one column set to 1.25 or to $-0.25$ --- outside
+$[0, 1]$ on one side only --- and the run must stop at its first step as
+diverged (\code{cz\_conc\_above}, \code{cz\_conc\_below},
+\code{wm\_conc\_below}; the well-mixed model moves what lies above 1 to the
+cells around after every step, so only the lower side applies to it). Both
+models fill a cell below 0 from the cells around it after the solve, and the
+well-mixed step mixes the column back into range by itself, so the test of
+divergence takes the lowest $c$ of the start of the step and of the solve,
+before the fill, as well as that of the field (found: the restarted well-mixed
+run went on; corrected). A well-mixed film read \SI{1}{\micro\metre} below
+zero in one column must stop the same way, the film thickness having gone
+negative (\code{wm\_film\_below}): the run of a fixed step far too long for
+the film, which reached that test before, now stops earlier, its Newton
+correction having stagnated far from convergence (\code{wm\_diverges},
+\cref{sec:convergence:stagnation}). It checks the limit on the size
+of the grid, $(N_x+4)(N_y+4)(N_z+4) \le 5\times10^{7}$, at either side of it,
+with \code{--check-input}, which runs nothing. A string of a \file{.inp}
+file without its closing quote took the rest of the file as its value, and
+every key after it kept its default unless it was required; it is refused,
+naming the key and the line (\code{inp\_unterminated}).
+
+\section{Compilers and optimization}
+\label{sec:verification:compilers}
+
+The shipped cases (capped at 300 steps) and \code{ctest} were run with GCC 13
+and Clang 18 at \code{-O0}, \code{-O2} and \code{-O3}, with and without
+\code{-fno-strict-aliasing}, with uninitialized locals set to a pattern and
+to zero, with scrambled heap memory (\env{MALLOC\_PERTURB\_}), and with the
+checked standard library (\code{-D\_GLIBCXX\_DEBUG}). Every one gives the same
+field files, to the bit, and GCC and Clang agree with each other. GCC 11,
+the system compiler of RHEL 9, builds it as well and passes \code{ctest}
+(it found a header that used \code{size\_t} without including
+\code{<cstddef>}, which the newer compilers forgave; corrected). Fused
+multiply-add (\code{-march=native}, or any arm64 build) and Eigen's vector
+width change $h$ by about $10^{-12}$ of its maximum on ordinary cases. On the
+contact-line cases the difference follows the floor at which the Newton
+correction stagnates and can reach $10^{-8}$ over thousands of steps;
+velocities at equilibrium are residuals and may differ by a few percent. The
+solver's own code gives the same bits on any instruction set; only the
+linear solver's does not. \code{-ffast-math} runs every case normally, but
+three unit tests fail, and \code{-funsafe-math-optimizations} rewrites the
+powers of the disjoining pressure less accurately, which shows at
+$N_x = 4000$: do not build with it. The comparison found an exact-equality
+unit test that failed under \code{-ffp-contract=fast} because two paths of
+the face interpolation were fused differently (corrected: the derivative returns
+the value's own result), and that \code{(int)} of a NaN read from the input is
+undefined. A scan for what MSVC's OpenMP 2.0 rejects (unsigned loop indices,
+\code{collapse}, array or min/max reductions, \code{simd}) and other
+non-standard constructs found none; GCC with \code{-Wall -Wextra -Wpedantic
+-Wvla} warns about nothing.
+
+\section{Memory, threads and floating point}
+\label{sec:verification:sanitizers}
+
+None of the checks above would notice a read past the end of an array that
+happens to find a plausible value, a race between threads that happens to
+resolve the same way, or a NaN that the time-step control quietly retries
+away. These are looked for separately; \cref{tab:sanitizers} gives what was run
+and what it found before the release. CI builds with AddressSanitizer and
+UndefinedBehaviorSanitizer on every push and runs the quicker solver tests
+in that build, since a fault of this kind changes no answer that a test of
+the answers could see (\cref{sec:notverified:mutation}).
+
+\begin{yzntable}{The checks for memory, threads and floating point\label{tab:sanitizers}}{@{}L{0.24\textwidth} L{0.44\textwidth} L{0.24\textwidth}@{}}
+\textsf{\bfseries Tool} & \textsf{\bfseries Run on} & \textsf{\bfseries Found}\\ \midrule
+ASan and UBSan (GCC, assertions on) & the unit tests, every test tool including the whole of \code{mms} and 100 more seeds of \code{proptest}, and every case in \file{cases/} with each convection scheme, 20 steps & see below \\
+Valgrind memcheck & the unit tests, every case in \file{cases/} and the scheme variants, three steps each, the \val{"CZ"} coupling passes, restarts with and without \file{field*.state}, and drying films at the solvent limit & no error, no leak \\
+TSan (Clang, with the Archer tool of LLVM's OpenMP) & the unit tests, 1-D and 2-D runs of both models with every convection scheme, the \val{"CZ"} coupling passes, closed walls, evaporation to the solvent limit and restarts, two to four threads & no race \\
+\code{feenableexcept} for invalid, divide-by-zero and overflow & every case in \file{cases/} with each scheme, and every run of the test tools & see below \\
+clang-tidy (\code{bugprone}, \code{clang-analyzer}, \code{performance}), GCC with \code{-Wshadow -Wconversion -Wduplicated-cond -Wnull-dereference} & every source file & no defect \\
+Coverage (gcovr) & the whole suite and every case & \SI{90}{\percent} of the lines; see below \\
+\end{yzntable}
+
+The checks were first run before the convection schemes and the coupling
+iteration of \val{"CZ"} were added, and repeated after. The first time, the
+floating-point traps fired in three places. The sigmoid that shapes the
+initial film overflows \code{exp} far from its edge and returns the right
+limit, 0 --- harmless. Eigen's BiCGSTAB breaks down on a few linear systems of
+\file{stress\_wetting} and reports it, which the Newton iteration
+handles by shrinking the step. And that is where the third was: the retried
+step built the explicit half of its update from the attempt it had just
+rejected, whose film had reached $10^{76}$, so it failed at once and the step
+was cut again for nothing. That was a fault (\cref{sec:verification:equivalence},
+\code{wm\_retry}), and it is fixed; every rejected step in every case had
+been retried from the wrong film, which moved the results by about
+$10^{-7}$.
+
+The second time the traps fired in two places, both harmless: the sigmoid
+again, and at a pinned wall where the film height is zero the capillary
+velocity of the wall face, which is 0/0 and which the boundary condition
+overwrites before anything reads it. Tested on its own, the van Leer limiter
+was faulty: it formed $2ab/(a+b)$ and its derivatives from the products,
+which underflowed to $0/0$ for differences below about $10^{-162}$ and
+overflowed above $10^{154}$. Corrected, it uses the ratios $a/(a+b)$ and
+$b/(a+b)$, which changed van Leer results only in the last bits. The coverage of the
+code added since the first round (\SI{97}{\percent} of its lines) showed that
+no test drove the \val{"CZ"} coupling passes to their limit of eight;
+\code{coupling\_cz} in \file{tools/features.py} was added to do so. The field files are
+bit-identical at one, two and four threads with every scheme and with the
+coupling passes.
+
+The third time followed the conservative form of the \val{"CZ"}
+concentration, the wall faces of both models, the limit of evaporation to the
+solvent, the clock and the restart state file. UBSan found that two unit
+tests copied an \code{Input} whose flags had never been set, which is
+undefined (in the tests only; corrected). The traps fired at the sigmoid of
+the initial shapes and at the 0/0 velocity of a pinned wall face, in 2-D
+as well, as in the earlier rounds; at the deliberate overflows of the input checks (a
+viscosity exponent tested for overflow, a 3000-digit number in a restart
+file); and in attempts of a step that the time-step control then rejected,
+or in runs that stop as diverged --- never in an accepted step. The 100
+further \code{proptest} seeds found the fixed-step fault of
+\cref{sec:verification:fuzzing}. \SI{95}{\percent} of the lines added in
+this round are covered; what is not is mostly the messages of damaged
+restart files and refusals, and a field file edited after it was written,
+for which \code{restart\_edited\_*} was added to \file{tools/features.py}.
+The field files are bit-identical at one, two and four threads for the 2-D
+well-mixed case with Koren and van Leer, and for \val{"CZ"} in 2-D with the
+Marangoni coupling passes, closed walls and evaporation.
+
+The fourth time followed the face-by-face form of $A\cdot\varphi$ and the
+boundary rows satisfied exactly (\cref{sec:time:apply}). TSan found no race
+at two and four threads (2-D well-mixed runs with Koren and van Leer, closed
+boxes with \val{"Pinning"} and \val{"Symmetry"} edges and gravity, \val{"CZ"}
+in 2-D), Valgrind and the sanitizers nothing, and 100 further \code{proptest}
+seeds under AddressSanitizer no violation. The traps fired at the sigmoid of
+the initial shapes and at the 0/0 velocity of a pinned wall face --- of the
+vertical gravity as well as of the capillary pressure --- which the boundary
+condition overwrites. A unit test of the boundary rows found that the two
+rows of an \val{"Outlet"} or a \val{"FreshInlet"}, each of which refers to
+the other's ghost, were left off by a ninth of what the solve had left, and
+those of a 1-D pinned concentration 729 times further off; corrected, each
+set of rows that refer to each other is solved together, which changes no
+shipped case. \SI{99}{\percent} of the lines of this code are covered; the
+field files are bit-identical at one, two and four threads for the 2-D
+well-mixed case with Koren and van Leer, for \val{"CZ"} in 2-D and for a
+pinned 2-D box.
+
+The fifth time was the last before the release, on the input file in the form
+this manual documents. AddressSanitizer and UndefinedBehaviorSanitizer ran
+the unit tests, \code{input\_guards}, \code{error\_paths},
+\code{restart\_roundtrip}, \code{features} and nine checks each of
+\code{equivalence} and \code{analytic}; Valgrind 20 steps of
+\file{tutorial\_1d} and \file{leveling\_2d\_reg}; TSan with Archer the unit
+tests at two and four threads and 2-D runs of both models with either backend;
+and the three fuzzers ran ten minutes each, 6.2 million inputs. AddressSanitizer
+found that a run whose \file{History.dat} was a device that never ends
+(\file{/dev/full}, in \code{error\_paths}) read it whole to resume it, which
+took all the memory there was before the run could report that it cannot
+write there; corrected, only a regular file is read. Nothing else was found.
+
+To repeat them: configure a build with
+\code{-DCMAKE\_CXX\_FLAGS="-fsanitize=address,undefined"} and
+\code{-DYUZEN\_PREFER\_LIBOMP=OFF} (LLVM's \file{libomp} keeps its thread
+structures to the end of the process, which LeakSanitizer reports as leaks)
+and run \code{ctest} in it; run \code{valgrind --error-exitcode=77 build/bin/yuzen case.toml} with
+\key{Numerics.MaxSteps} set small; build with \code{clang++
+-fsanitize=thread} against \code{libomp} and run with
+\env{OMP\_TOOL\_LIBRARIES} pointing at \file{libarcher.so}. Without Archer,
+TSan reports the OpenMP runtime's own synchronization as races. For the
+traps, a small \code{LD\_PRELOAD} library that calls \code{feenableexcept}
+in every thread (through \code{pthread\_create}) and logs each trap site
+before letting the run continue is enough.
+
+\section{Long runs and large grids}
+\label{sec:verification:long}
+
+The checks above take seconds to minutes each. Two questions need longer runs.
+Do the balances of \file{History.dat} stay at rounding over hundreds of
+thousands of steps, or do they drift? And does memory grow with the step
+count? \Cref{tab:longruns} answers both for the shipped cases run much
+longer than they are, single-threaded. \code{VolErr} and \code{ResinVolErr}
+are the largest over every row of the run. The resident memory is no larger
+at the end than a quarter of the way through.
+
+\begin{yzntable}{Long runs: the balances and the memory\label{tab:longruns}}{@{}L{0.30\textwidth} r r L{0.13\textwidth} L{0.13\textwidth} r@{}}
+\textsf{\bfseries Run} & \textsf{\bfseries Steps} & \textsf{\bfseries $t$ [s]} & \textsf{\bfseries $|$VolErr$|$} & \textsf{\bfseries $|$ResinVolErr$|$} & \textsf{\bfseries Memory}\\ \midrule
+\file{allphys\_1d\_reg}, $\Delta t = 10^{-4}$\,s fixed & 500{,}001 & 50   & $1.1\times10^{-14}$ & $2.3\times10^{-14}$ & 8.0\,MB \\
+\file{allphys\_1d\_reg}, adaptive                       & 100{,}860 & 1000 & $8.6\times10^{-15}$ & $9.7\times10^{-15}$ & 7.9\,MB \\
+\file{concz\_1d\_reg}, $\Delta t = 10^{-4}$\,s fixed    & 200{,}001 & 20   & $4.0\times10^{-15}$ & $5.3\times10^{-15}$ & 8.1\,MB \\
+\file{allphys\_2d\_reg}, adaptive                       & 3{,}612   & 30   & $1.6\times10^{-14}$ & $1.8\times10^{-14}$ & 14.5\,MB \\
+\end{yzntable}
+
+In the adaptive 1000\,s run the film loses \SI{43}{\percent} of its volume,
+\SI{26}{\percent} to evaporation and \SI{17}{\percent} through the sideways
+outflow of 1-D (\cref{sec:output:history}), and its mean concentration rises
+from 0.5 to 0.71; the balance still closes to rounding. No step failed in any of
+the four runs. The fifth run writes a field file at every step, 30{,}001 of
+them. The \file{.pvd} that lists them stays valid, and its time stamps stay
+distinct; what it costs is given in \cref{sec:output:vtk}.
+
+Three grids far larger than any in the test suite were each run for a few
+steps, to measure the memory a step needs. The peak resident memory was:
+\begin{itemize}
+  \item well-mixed 2-D at $1024^{2}$ cells (\file{scaling/bench2d\_n1024}),
+    \SI{3.8}{\giga\byte} with \val{"eigen"} and \SI{3.2}{\giga\byte} with
+    \val{"amgcl"};
+  \item well-mixed 1-D at $N_x = 10^{6}$, \SI{2.0}{\giga\byte};
+  \item \val{"CZ"} 2-D at $200 \times 200 \times 20$ (\file{concz\_2d}),
+    \SI{1.6}{\giga\byte}.
+\end{itemize}
+That is about \SI{3.7}{\kilo\byte} per cell in 2-D, \SI{2.0}{\kilo\byte} in
+1-D and \SI{2.1}{\kilo\byte} per cell of $N_x N_y N_z$ in \val{"CZ"}. These
+runs measure memory and nothing else: whether the linear solver converges as
+well on such grids, and how the rounding accumulates over a long run on them,
+is not measured (\cref{ch:notverified}).
+
+\code{python3 tools/long\_runs.py --exe build/bin/yuzen --workdir runs/long}
+repeats all eight runs in about an hour on one core. It prints the table,
+with the resident memory a quarter of the way through and at the end.
+
+\section{Reproducing every number in this chapter}
+\label{sec:verification:reproduce}
+
+Every command below is run from the root of the repository.
+
+\subsection{The test suite}
+
+This covers \cref{sec:verification:suite,sec:verification:grid,%
+sec:verification:linalg,sec:verification:velocity,sec:verification:bcio} and
+the calibration and equilibrium-droplet tests of
+\cref{sec:verification:disjoining}.
+
+\begin{shell}
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j
+ctest --test-dir build                        # all seventeen entries
+./build/bin/yuzen_tests                       # case and assertion counts
+./build/bin/yuzen_tests -sf="*test_grid.cpp"  # the per-file breakdown
+YUZEN_DBG_EQ=1 ./build/bin/yuzen_tests -sf="*test_disjoining.cpp"
+\end{shell}
+
+The last line prints the in-test residual velocities of
+\cref{sec:verification:disjoining} --- 42.996, 10.801 and 2.7116. To run that
+one case rather than the whole file, use
+\code{-tc="*residual velocity on the equilibrium shape*"}.
+
+\subsection{Thread count and backend}
+
+For \cref{sec:verification:linalg,sec:verification:backends}:
+
+\begin{shell}
+./tools/run_case.sh cases/leveling_1d_reg.toml runs/reg_th1 1
+./tools/run_case.sh cases/leveling_1d_reg.toml runs/reg_th2 2
+python3 tools/compare.py runs/reg_th1 runs/reg_th2            # => 0.000e+00
+
+./tools/run_case.sh cases/allphys_2d_reg.toml runs/2d_th1 1
+./tools/run_case.sh cases/allphys_2d_reg.toml runs/2d_th2 2
+python3 tools/compare.py runs/2d_th1 runs/2d_th2
+\end{shell}
+
+\file{tools/run\_case.sh} is used throughout the recipes below
+(\cref{sec:env:tools}).
+
+\Cref{tab:wholesolver} is \val{"eigen"}. On a build with AMGCL, \val{"auto"}
+resolves to \val{"amgcl"} for the 2-D \file{allphys\_2d\_reg}, and the second
+pair then may differ in the low-order bits
+(\cref{sec:verification:amgclthreads}); write \val{"eigen"} into both
+\key{Backend} keys as below, or configure with \code{-DYUZEN\_WITH\_AMGCL=OFF},
+to reproduce the table.
+
+To change the backend, write \val{"eigen"} or \val{"amgcl"}
+into \key{Numerics.HeightEquation.\allowbreak LinearSolver.Backend} and
+\key{Numerics.ConcEquation.\allowbreak LinearSolver.Backend} and run the same
+commands. \textbf{Both keys have to be written out}: no case under
+\file{cases/} sets \key{Backend} at all, so each equation would otherwise take
+the \val{"auto"} default and resolve it for itself. The
+total BiCGStab iteration count is the sum of the \code{BCG\_iter} column of
+\file{CalcInfo.dat}.
+
+\val{"amgcl"} needs a binary that has it. The build above leaves
+\code{YUZEN\_WITH\_AMGCL} at its default of \val{ON}, but a build that could
+not find or fetch the headers has silently turned it off
+(\cref{sec:install:options}), and so has any build configured with
+\code{-DYUZEN\_WITH\_AMGCL=OFF}; either way the run falls back to
+\val{"eigen"} with a warning, and you measure \val{"eigen"} twice. So
+configure it explicitly and check the \code{Solver Info} section of
+\file{JobInfo.txt} afterwards:
+
+\begin{shell}
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DYUZEN_WITH_AMGCL=ON
+cmake --build build -j
+ctest --test-dir build                        # all seventeen on this build too
+\end{shell}
+
+\subsection{The equilibrium droplet}
+
+The ASCII restart file is produced by \file{tools/make\_equilibrium\_1d.py}.
+The files under \file{cases/eq/} agree with the output of this command byte for
+byte. Adding \code{--sweep} prints the apparent-angle table,
+\cref{tab:apparent-angle}, and writes no file --- but \code{--out} is a
+required argument and is parsed before the sweep branch, so it still has to be
+given, and \file{/dev/null} is the obvious thing to give it.
+
+\begin{shell}
+python3 tools/make_equilibrium_1d.py --out /dev/null --sweep
+
+python3 tools/make_equilibrium_1d.py --out cases/eq/eq_n2000.dat \
+        --nx 2000 --xmin=-0.3e-3 --xmax=0.3e-3 \
+        --hstar 0.02 --theta 10 --hmax 1.0
+
+for n in 1000 2000 4000; do
+  ./tools/run_case.sh cases/eq/eq_n$n.toml runs/eq_n$n 1
+done
+\end{shell}
+
+Take the largest absolute value of the third column (\code{Ux}, in
+\si{\metre\per\second}) of \file{field00000.dat} in each output directory and
+divide it by the velocity scale $U_0 = L_0/T_0$, with
+$T_0 = \mu L_0^{4}/(\sigma h_0^{3})$, to get the dimensionless residual
+velocity. For this case
+
+\[
+  L_0 = 1.749042\times10^{-3}~\si{\metre}, \quad
+  T_0 = 3.119463\times10^{4}~\si{\second}, \quad
+  U_0 = 5.606869\times10^{-8}~\si{\metre\per\second} .
+\]
+
+The scales are printed in the run log of every run as well
+(\cref{sec:output:running}).
+
+The time evolution uses \file{cases/eq/eq\_run.toml}, but the default
+steady-state test fires immediately after the start, so add
+\key{SteadyStateCriterion} $=$ \val{-1} to the \code{[Numerics]} table to
+switch it off. Setting \key{EndTime} to \val{0.0102} gives the five \file{field*.dat} at
+$t = 0, 2.5\times10^{-3}, \dots, 1.0\times10^{-2}$, and a sixth at the end time. The apparent angle is
+measured with \code{fit\_cap} below.
+
+\subsection{Spreading}
+
+\begin{shell}
+./tools/run_case.sh cases/eq/spread_n500.toml runs/spread 2
+python3 tools/measure_spreading.py runs/spread/spread_n500 --dt-out 1e-3 --stride 5
+\end{shell}
+
+\code{--dt-out} must match \key{Output.FieldData.TimeInterval} in the input.
+\code{--stride 5} uses every fifth file; the wider interval over which
+$U = \mathrm{d}R/\mathrm{d}t$ is differenced reduces the noise in $\Ca$.
+
+\begin{note}[The correlation depends on the stride]
+  The numbers in \cref{sec:verification:spreading} are those of
+  \code{--stride 5}. The correlation is 0.984 at \code{--stride 1}, 0.998 at
+  \code{--stride 5} and 0.999 at \code{--stride 10}. It is a property of the
+  differencing as well as of the physics, so quote the stride with it.
+\end{note}
+
+For the comparison of \cref{tab:spreadend}, extend \key{EndTime} to \val{8.0}
+and let the run stop on its own steady-state test --- $t = \SI{2.23}{\second}$
+at $N_x = 500$ and $t = \SI{2.24}{\second}$ at $N_x = 2000$. Read the crest
+height from the last \file{field*.dat}, build an equilibrium droplet of the
+same crest height with
+\code{make\_equilibrium\_1d.py --theta 10 --hmax <crest height/h0>}, and put
+both through \code{fit\_cap()} of \file{measure\_spreading.py}.
+
+\begin{plain}
+import sys; sys.path.insert(0, "tools")
+from measure_spreading import fit_cap
+R, theta, hmax = fit_cap("runs/spread/spread_n500/field02232.dat", 1.0)
+\end{plain}
+
+\subsection{The cost of the coupling}
+
+Copy \file{cases/eq/spread\_n500.toml} and set the following.
+
+\begin{itemize}
+  \item \key{Physics.ConcField.EnableConvection} and \key{EnableDiffusion} to
+    \val{true};
+  \item \key{Physics.SolutoCapillarity.Enable} to \val{true};
+  \item \key{Physics.Evaporation.Enable} to \val{true}, and
+    \key{Physics.Evaporation.Coef} to \val{1e-7}, \val{1e-6} and \val{1e-5} in
+    turn;
+  \item \key{Physics.DisjoiningPressure.Enable} to \val{true} and to
+    \val{false};
+  \item \key{Numerics.EndTime} to \val{0.1}.
+\end{itemize}
+
+\begin{shell}
+YUZEN_DEBUG_RESIDUAL=1 ./build/bin/yuzen case.toml 2> resid.txt
+\end{shell}
+
+Split the \code{[resid] <iteration> <thickness correction> <concentration
+correction>} lines of \file{resid.txt} into time steps at each iteration number
+0, and count on what fraction of lines the concentration correction exceeded
+the thickness correction. The \file{stress\_*} cases of
+\cref{tab:couplingstress} use their inputs exactly as they stand.

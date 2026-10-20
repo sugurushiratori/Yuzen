@@ -1,0 +1,209 @@
+% ch-installation.tex -- requirements, build, options, test suite
+\chapter{Yuzen のビルド}
+\label{ch:installation}
+
+Yuzen は CMake でビルドする。手作業でインストールする依存関係はない。Eigen がなければ CMake が
+取得する。AMGCL がなく、かつ AMGCL を要求した場合も CMake が取得する。取得できなければ、Eigen だけの
+ビルドに切り替える。
+
+\section{必要なもの}
+\label{sec:install:requirements}
+
+\begin{itemize}
+  \item C++17 コンパイラー。CI のマトリクスでは、Linux、macOS、Windows 上の GCC、Clang、MSVC を
+        検査している。
+  \item CMake $\ge$ 3.16。
+  \item 並列ビルドには OpenMP（既定で有効。逐次ビルドも完全にサポートしており、同じ数値が得られる）。
+        GCC を使う場合は、LLVM の\code{libomp}もインストールしておくことが望ましい（\code{apt install libomp-dev}、
+        または Red Hat 系システムの\code{libomp}パッケージ）。ビルド時に GCC 自身のランタイムの代わりに
+        \code{libomp}をリンクし、多数のコアでの計算が速くなる（\cref{sec:parallel:runtime}）。
+        \textbf{MPI への依存はなく、MPI 版のビルドもない}。Yuzen は共有メモリ並列だけに対応する
+        （\cref{ch:parallel}）。
+  \item 必要に応じて Eigen $\ge$ 3.3 と AMGCL。CMake に取得させず、自分で用意する場合に限る。
+        Debian と Ubuntu では\code{apt install libeigen3-dev}、macOS では
+        \code{brew install eigen}、vcpkg では\code{vcpkg install eigen3}でインストールできる。
+\end{itemize}
+
+取得は依存関係が欠けているときにだけ行う。そのため、ネットワークに接続できない計算機では、
+Eigen を（必要なら AMGCL も）あらかじめインストールしておく。
+
+\begin{note}[Windows での非 ASCII ファイル名]
+  ソルバーはファイル名を UTF-8 として扱う。UTF-8 は入力ファイルの文字コードであり、Linux と macOS でも
+  用いられている。MSVC ビルドではマニフェスト（\file{yuzen/src/yuzen.manifest}）を埋め込み、
+  プロセスのコードページを UTF-8 にする。これにより、日本語の文字を含む入力ファイル名、\key{JobName}、
+  \key{Restart.FileName}も、Windows で同じファイルを指す。この機能には Windows 10 バージョン 1903
+  以降が必要である。それより古い Windows では、これらの名前を ASCII にしておく必要がある。260 文字を超える
+  パスには、Windows のロングパス設定も必要である。
+\end{note}
+
+\section{ビルド}
+\label{sec:install:build}
+
+リポジトリの最上位で次を実行する。
+
+\begin{shell}
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j
+ctest --test-dir build
+\end{shell}
+
+\code{ctest --test-dir}には CMake 3.20 以降が必要である。それより古い\code{ctest}はこの
+オプションを無視し、テストを一つも見つけないまま 0 で終了してしまう。そのため、CMake 3.16 から
+3.19 では代わりに\code{cd build \&\& ctest}を実行する。スイート全体の実行には二コアで約 25 分かかる。
+\code{ctest -R yuzen\_tests}なら単体テストだけを数秒で実行できる。
+
+ビルドすると、\file{build/bin/}にソルバー\file{yuzen}とテスト用バイナリ\file{yuzen\_tests}の
+二つの実行ファイルができる。\file{yuzen --version}を実行すると、\code{MAJOR.MINOR.PATCH}の形の
+完全なバージョン（\code{Yuzen-1.0.0}）を表示する。引数なしで実行すると使用法を表示する。
+入力ファイルで指定するのは\code{MAJOR.MINOR}の系列だけである。この区別が何を保証するかは\cref{ch:policy}に、
+各リリースの変更点は\cref{ch:revisions}に示す。ビルドタイプを設定しなければ\val{Release}になる。
+\val{Debug}ビルドで性能を測ってはならない。収束について結論を出すのにも使ってはならない。\val{Debug}ビルドで
+生じる丸めの違いは、調べるべき種類の違いではないからである。
+
+\section{ビルドオプション}
+\label{sec:install:options}
+
+\begin{yzntable}{CMake のオプション\label{tab:cmake-options}}{@{}L{0.30\textwidth} L{0.10\textwidth} L{0.52\textwidth}@{}}
+\textsf{\bfseries オプション} & \textsf{\bfseries 既定値} & \textsf{\bfseries 効果}\\ \midrule
+\code{YUZEN\_ENABLE\_OPENMP}   & \val{ON} & OpenMP による並列化。無効にすると、スレッド不変性を検査する二つの\code{ctest}項目も除かれる。 \\
+\code{YUZEN\_WITH\_AMGCL}      & \val{ON} & AMGCL バックエンドをビルドする。ヘッダーが見つからず取得もできない場合は、警告を出して AMGCL なしでビルドを続ける。 \\
+\code{YUZEN\_STRICT\_WARNINGS} & \val{ON} & \code{-Wall -Wextra}と implicit-fallthrough 警告を有効にする。 \\
+\code{YUZEN\_BUILD\_TESTS}     & \val{ON} & \file{yuzen\_tests}をビルドし、\code{ctest}項目を登録する。 \\
+\code{YUZEN\_PREFER\_LIBOMP}   & \val{ON} & Linux 上の GCC で、LLVM の OpenMP ランタイム\code{libomp}がインストールされていれば、GCC の\code{libgomp}の代わりにリンクする。56 スレッドでは並列領域のコストが四分の一になる（\cref{sec:parallel:runtime}）。 \\
+\code{YUZEN\_OPENMP\_RUNTIME}  & （空） & コンパイラー付属のものの代わりにリンクする OpenMP ランタイムのパス（\file{libomp.so}、\file{libiomp5.so}）。\code{YUZEN\_PREFER\_LIBOMP}より優先する。 \\
+\end{yzntable}
+
+たとえば、AMGCL もテストも含まない最小のビルドは次のとおりである。
+
+\begin{shell}
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+      -DYUZEN_WITH_AMGCL=OFF -DYUZEN_BUILD_TESTS=OFF
+cmake --build build -j
+\end{shell}
+
+\code{YUZEN\_WITH\_AMGCL}はどちらの設定もサポートしている構成であり、どちらでもコンパイルできる。
+両者を区別する\code{\#ifdef}はヘッダーには一切なく、
+\file{yuzen/src/\bk numerics/\bk LinearSolverBackend.cpp}にだけある。AMGCL なしでビルドし、
+入力ファイルで\val{"amgcl"}バックエンドを指定した場合は、警告を出して\val{"eigen"}に切り替える
+（\cref{sec:linsolve:backends}）。
+
+\section{インストール}
+\label{sec:install:install}
+
+ソルバーは\file{build/bin/}からそのまま実行できる。別の場所に置くには次を実行する。
+
+\begin{shell}
+cmake --install build --prefix $HOME/.local
+\end{shell}
+
+これにより、\file{yuzen}がプレフィックス以下の\file{bin/}に、\file{LICENSE}、
+\file{NOTICE}、\file{THIRD\_PARTY\_NOTICES.md}、\file{README.md}が
+\file{share/doc/yuzen/}にコピーされる。ほかには何もインストールしない。Eigen と AMGCL は
+ヘッダーだけのライブラリであり、コンパイル時に組み込まれる。\file{tools/}のスクリプト、ケース、
+本マニュアルはソースツリーから用いる。
+
+\section{テストスイート}
+\label{sec:install:tests}
+
+\begin{shell}
+ctest --test-dir build
+\end{shell}
+
+\code{ctest}には十七個の項目を登録する（SymPy がインストールされていない環境では十六個）。
+
+三つはテスト用バイナリを別々のプロセスで実行する。環境が与えるスレッド数、\env{OMP\_NUM\_THREADS=1}、
+\env{OMP\_NUM\_THREADS=4}で一回ずつである。これは無駄な重複ではない。スレッド不変性はこのスイートが
+保証する性質の一つであり、プロセスを分けなければ検査できない（\cref{ch:reproducibility}）。
+
+十二個はソルバー自体を実行する。
+\code{concz\_vs\_wm}と\code{concz\_vs\_wm\_2d}は、二つの濃度モデルが一致すべきところで
+一致することを確かめる。\code{restart\_roundtrip}は、どちらのモデルでも、1 次元と 2 次元で、リスタートが
+与えた状態と時刻から始まることを確かめる（\cref{sec:ref-numerics:restart}）。リスタート元は
+\file{.vts}（\val{"CZ"}では膜厚と基板を含まないものも）と\file{field*.dat}である。あわせて、
+各\file{.vts}をヘッダーのオフセットに従って読むと、同じ時刻の場ファイルと同じ内容になることも確かめる。
+\code{restart\_chain}は、停止とリスタートを数回繰り返した計算が、どちらの形式から再開しても、途中で
+止めずに実行した計算とビット単位で同じファイルを出力することを確かめる。
+\code{input\_guards}は、放置すると誤った答えのまま黙って実行されてしまう入力を、理由を示して拒否する
+ことを確かめる。対象は、綴りを誤ったキー、片側だけの\val{"Periodic"}、回転する膜での\val{"Periodic"}辺、
+膜厚いっぱいの膜に面したピン止めの辺である。
+\code{error\_paths}は、初めての利用者、満杯のディスク、ジョブスケジューラーが計算に引き起こす事態を
+扱う。誤ったコマンドライン、入力ファイル、結果ディレクトリ、欠けたリスタートファイルや途中で切れた
+リスタートファイル、ファイルサイズの制限や満杯のデバイス、計算途中の\code{SIGINT}、\code{SIGTERM}、
+\code{SIGKILL}、空白や日本語の文字を含むパスである。これらの場合に、パスと理由を示して計算を止め、
+途中で切れたファイルを残さないことを確かめる。また、中断して続行した計算が、途中で止めずに実行した
+計算とビット単位で同一であることも確かめる（\cref{sec:output:failures}）。
+\code{equivalence}は、同じ問題を二通りに設定して同じ答えが得られることを確かめる
+（\cref{sec:verification:equivalence}）。\code{analytic}は、閉じた形の解をもつ問題で、スキームが
+保証する次数でその解が得られることを確かめる（\cref{sec:verification:analytic}）。\code{mms}は、
+各モデルのすべての項を有効にした大振幅の製造解が、空間と時間について二次で収束することを確かめる
+（\cref{sec:verification:mms}）。\code{advection}は、対流スキームが保証する場合には濃度の段差を
+範囲内に保ち、滑らかな分布ではスキームの次数で収束することを確かめる。さらに、鉛直一様モデルの濃度が、
+対流と拡散を合わせて 2 次元で二次精度で収束することも確かめる（\cref{sec:verification:schemes}）。
+\code{features}は、プローブ、定常状態・乾燥・\key{MaxSteps}による停止、適応時間刻みの増大が
+記述どおりに働くことを確かめる（\cref{sec:verification:features}）。\code{proptest}は、
+ランダムな有効入力で計算が正常に終了し、膜厚が正に保たれ、体積と溶質が保存され、不変であるべき量が
+不変であることを確かめる（\cref{sec:verification:fuzzing}）。
+
+一つはソルバーを実行しない。\code{doc\_keys}は、パーサーが読むすべてのキーを、型、既定値、範囲、
+受け付ける値とともに読み出す。これと照合するのは、\cref{ch:ref-domain,ch:ref-physics,ch:ref-bcout,ch:ref-numerics}の
+キー表、本マニュアルの TOML のリスト、\file{cases/}のすべてのファイルである。さらに、各ケースを
+\code{--check-input}でバイナリに読ませる（\cref{sec:inputformat:unknown}）。最後の
+\code{mms\_source\_current}は、SymPy がインストールされている場合にだけ登録する。製造解の生成済み
+ソースが最新であることを確かめる。テスト用バイナリの三つの項目以外はすべて Python
+インタープリターを必要とし、Python がなければ除外される。
+
+テスト用バイナリを直接実行すると、件数を表示する。
+
+\begin{plain}
+$ ./build/bin/yuzen_tests
+[doctest] test cases:    128 |    128 passed | 0 failed | 0 skipped
+[doctest] assertions: 183297 | 183297 passed | 0 failed |
+\end{plain}
+
+これらはスモークテストではなく、解析解、保存則、収束次数と照合して検査している。
+十七個のテストファイルがそれぞれ何を保証するかは\cref{sec:verification:suite}に挙げる。
+
+\section{リポジトリの構成}
+\label{sec:install:layout}
+
+\begin{plain}
+yuzen/src/grid/        structured grid and fields (staggered, type-tagged)
+yuzen/src/numerics/    vectors, CRS matrices, linear solvers, time integrators
+yuzen/src/model/       the physics: pressure terms, equations, model drivers
+yuzen/src/IO/          input parsing, output, restart, probes
+yuzen/src/util/        logging, paths, job information
+yuzen/src/commonFunctions/   shape functions and shape generation
+yuzen/tests/           the test suite
+cases/                 example and regression input files
+tools/                 helper scripts
+docs/                  theory, numerics, validation, and this manual
+third_party/           doctest, toml++
+\end{plain}
+
+ソルバーを改変する読者向けに、\cref{ch:layout}でさらに詳しく説明する。
+
+\section{継続的インテグレーション}
+\label{sec:install:ci}
+
+\file{.github/workflows/ci.yml}では、次の環境でビルドとテストを行う。Ubuntu 上の GCC と Clang
+（RHEL 9 や多くのクラスターのシステムコンパイラーである GCC 11 も含む）、Windows 上の MSVC、macOS 上の
+Clang である。これらはすべて AMGCL \emph{なし}でビルドし、素の構成が常に正しく保たれるようにしている。
+さらに Ubuntu 上で GCC と AMGCL を用いてもう一度ビルドし、AMGCL があるときだけ通るコードパスも
+ビルドとテストの対象にしている。
+
+\section{ビルドが失敗する場合}
+\label{sec:install:trouble}
+
+\begin{description}
+  \item[Eigen が毎回取得される。] CMake が取得を行うのは、
+    \code{find\_package(Eigen3 3.3 QUIET NO\_MODULE)}が失敗したときだけである。Eigen を
+    システム全体にインストールするか、\code{Eigen3\_DIR}でその場所を指定すれば、取得しなくなる。
+  \item[AMGCL を取得できない。] ビルドは警告を出し、\code{YUZEN\_WITH\_AMGCL}を\val{OFF}に
+    して続行する。失われるのは AMGCL だけで、バックエンドが二つから\val{"eigen"}の一つになるに
+    すぎない。
+  \item[macOS で OpenMP が見つからない。] Apple Clang には\code{libomp}が必要である
+    （\code{brew install libomp}）。インストールしたくなければ、\code{-DYUZEN\_ENABLE\_OPENMP=OFF}で
+    構成する。逐次ビルドでもまったく同じ数値が得られる。
+  \item[不要な警告が出る。] \code{-DYUZEN\_STRICT\_WARNINGS=OFF}で構成する。ただし、開発作業では
+    これを既定にすべきではない。これらの警告は意図して有効にしている。
+\end{description}

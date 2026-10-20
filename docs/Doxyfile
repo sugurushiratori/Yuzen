@@ -1,0 +1,153 @@
+# Doxyfile -- API reference for the Yuzen source tree.
+#
+#   cd docs && doxygen Doxyfile
+#   open doxygen/html/index.html
+#
+# This documents the code. The manual in docs/manual/ documents the physics,
+# the discretization and how to run the solver, and is the thing to read
+# first; this is the companion that says what each class and function is.
+#
+# The output is a build product and is not tracked (see .gitignore).
+#
+# Copyright 2017-2026 Suguru Shiratori, Tokyo City University
+# SPDX-License-Identifier: Apache-2.0
+
+#---------------------------------------------------------------------------
+# Project
+#---------------------------------------------------------------------------
+PROJECT_NAME           = "Yuzen"
+PROJECT_NUMBER         = 1.0.0
+PROJECT_BRIEF          = "Thin liquid film flow solver (lubrication approximation)"
+PROJECT_LOGO           = logo/png/yuzen-icon-48.png
+
+OUTPUT_DIRECTORY       = doxygen
+CREATE_SUBDIRS         = NO
+OUTPUT_LANGUAGE        = English
+
+#---------------------------------------------------------------------------
+# What to read
+#---------------------------------------------------------------------------
+INPUT                  = ../yuzen/src \
+                         ../yuzen/tests \
+                         mainpage.dox
+FILE_PATTERNS          = *.h *.cpp *.dox
+RECURSIVE              = YES
+
+#  third_party/ is other people's code (doctest, toml++); it has its own
+#  documentation and its volume would swamp ours.
+EXCLUDE                = ../third_party
+EXCLUDE_PATTERNS       = */build/* */runs/*
+
+#  Paths in the output are relative to the repository root, so a reader sees
+#  yuzen/src/model/... rather than a path from the machine it was built on.
+STRIP_FROM_PATH        = ..
+STRIP_FROM_INC_PATH    = ..
+
+INPUT_ENCODING         = UTF-8
+
+#---------------------------------------------------------------------------
+# What to extract
+#
+# The solver's classes keep their state private and their behavior in
+# protected virtual hooks, so documenting only the public interface would
+# leave out most of what a reader needs in order to change anything. Extract
+# everything, and let the comments carry the weight.
+#---------------------------------------------------------------------------
+EXTRACT_ALL            = YES
+EXTRACT_PRIVATE        = YES
+EXTRACT_STATIC         = YES
+EXTRACT_LOCAL_CLASSES  = YES
+EXTRACT_ANON_NSPACES   = YES
+
+HIDE_UNDOC_MEMBERS     = NO
+HIDE_UNDOC_CLASSES     = NO
+INTERNAL_DOCS          = YES
+
+#  Report what is still undocumented. Treat the list as a to-do rather than
+#  as noise: it is the honest measure of how far the comments reach.
+WARN_IF_UNDOCUMENTED   = YES
+WARN_IF_DOC_ERROR      = YES
+WARN_NO_PARAMDOC       = YES
+WARNINGS               = YES
+WARN_LOGFILE           = doxygen/doxygen-warnings.log
+
+#---------------------------------------------------------------------------
+# How to read it
+#---------------------------------------------------------------------------
+JAVADOC_AUTOBRIEF      = YES
+QT_AUTOBRIEF           = YES
+MULTILINE_CPP_IS_BRIEF = NO
+INHERIT_DOCS           = YES
+TAB_SIZE               = 4
+OPTIMIZE_OUTPUT_FOR_C  = NO
+BUILTIN_STL_SUPPORT    = YES
+
+#  The solver is built around a few templates (GridTraits, the physics
+#  kernels, the well-mixed base classes), and the relations between them are
+#  most of the design. Keep them.
+TEMPLATE_RELATIONS     = YES
+SHOW_INCLUDE_FILES     = YES
+SORT_MEMBER_DOCS       = NO
+SORT_BRIEF_DOCS        = NO
+
+#---------------------------------------------------------------------------
+# Preprocessing
+#
+# The tree is guarded by _DEF_YUZEN_ (the namespace) and switches on optional
+# pieces. Define them so that the documented tree is the one that is actually
+# built, rather than the fallback branches.
+#---------------------------------------------------------------------------
+ENABLE_PREPROCESSING   = YES
+MACRO_EXPANSION        = YES
+EXPAND_ONLY_PREDEF     = NO
+SEARCH_INCLUDES        = YES
+INCLUDE_PATH           = ../yuzen/src
+PREDEFINED             = _DEF_YUZEN_ \
+                         YUZEN_WITH_AMGCL \
+                         _OPENMP \
+                         DOXYGEN_SHOULD_SKIP_THIS
+
+#---------------------------------------------------------------------------
+# Output
+#---------------------------------------------------------------------------
+GENERATE_HTML          = YES
+HTML_OUTPUT            = html
+HTML_DYNAMIC_SECTIONS  = YES
+GENERATE_TREEVIEW      = YES
+SEARCHENGINE           = YES
+DISABLE_INDEX          = NO
+FULL_SIDEBAR           = NO
+
+GENERATE_LATEX         = NO
+GENERATE_MAN           = NO
+GENERATE_XML           = NO
+
+#  Formulas appear in the comments (the mobility, the zeta mapping). Render
+#  them rather than leaving the TeX visible.
+USE_MATHJAX            = YES
+MATHJAX_VERSION        = MathJax_3
+MATHJAX_RELPATH        = https://cdn.jsdelivr.net/npm/mathjax@3
+
+#---------------------------------------------------------------------------
+# Diagrams
+#
+# Graphviz is optional: without it Doxygen falls back to plain lists, which
+# is enough to read the reference. With it, the inheritance of the physics
+# kernels and the well-mixed model becomes much easier to follow.
+#---------------------------------------------------------------------------
+HAVE_DOT               = YES
+DOT_IMAGE_FORMAT       = svg
+INTERACTIVE_SVG        = YES
+CLASS_GRAPH            = YES
+COLLABORATION_GRAPH    = NO
+INCLUDE_GRAPH          = NO
+INCLUDED_BY_GRAPH      = NO
+CALL_GRAPH             = NO
+CALLER_GRAPH           = NO
+DOT_GRAPH_MAX_NODES    = 60
+MAX_DOT_GRAPH_DEPTH    = 3
+
+#---------------------------------------------------------------------------
+# Quiet the run down to what matters
+#---------------------------------------------------------------------------
+QUIET                  = YES

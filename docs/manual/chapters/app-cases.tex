@@ -1,0 +1,252 @@
+% app-cases.tex -- the shipped example and regression cases
+\chapter{The example cases}
+\label{ch:cases}
+
+\file{cases/} holds 30 cases. They are not decoration: most of them are
+regression cases, and several are the exact inputs behind numbers quoted in
+\cref{ch:verification}. \textbf{The cases are the \file{.toml} files}; that is
+what to read, copy and run.
+
+Every case is TOML, which is the input format this manual specifies.
+
+\begin{note}[Every case has its own result directory]
+  Each case under \file{cases/} sets \key{JobName} to its own file name, so a
+  run writes into a directory named after the case it came from:
+  \file{leveling\_1d\_reg.toml} produces \file{leveling\_1d\_reg/}. Two cases
+  run in the same working directory therefore do not overwrite one another.
+\end{note}
+
+\section{The \file{*\_1d*} family --- 1-D regression}
+\label{sec:cases:case01}
+
+A \SI{1}{\milli\metre} domain, $N_x = 300$, a \SI{10}{\micro\metre} height
+scale, an elliptical bump on an elliptical substrate feature, well-mixed
+concentration. \file{allphys\_1d\_reg.toml} exercises every physics term at once
+except the disjoining pressure, slip and the nozzle (\key{Physics.Source} is written
+with \key{Enable = false}), and is the first case to run after changing
+anything in the solver.
+
+\begin{yzntable}{The \file{*\_1d*} family\label{tab:cases-case01}}{@{}L{0.26\textwidth} L{0.09\textwidth} L{0.57\textwidth}@{}}
+\textsf{\bfseries Case} & \textsf{\bfseries End [s]} & \textsf{\bfseries What it is}\\ \midrule
+\file{leveling\_1d\_reg.toml} & 0.2  & Capillary leveling, Marangoni and evaporation. The baseline regression case, and the one used for the backend and thread comparisons of \cref{sec:verification:linalg}. \\
+\file{allphys\_1d\_reg.toml}   & 0.2  & The same case with every term but the disjoining pressure, slip and the nozzle enabled, including vertical and in-plane gravity and the centrifugal term. \\
+\file{allphys\_1d\_neg\_reg.toml}& 0.2 & As above with the signs of the body-force terms reversed, so that a sign error does not cancel. \\
+\file{periodic\_1d\_reg.toml}  & 0.2  & Periodic in $x$ instead of symmetric, with the baseline's step made a plateau centered in the domain so that the film and the substrate meet themselves at the seam. \\
+\file{leveling\_1d\_logout.toml} & 1.0 & A small sinusoid levelling on a periodic film, no concentration, the field written at 141 times spaced logarithmically from $10^{-7}$ to \SI{1}{\second} and landed on (\cref{sec:ref-output:listed}); \code{analytic} checks it against the decay rate. \\
+\file{concz\_1d\_reg.toml}     & 0.5  & The \val{"CZ"} model, $N_x = 60$, concentration resolved through the thickness. \\
+\file{tutorial\_1d.toml}       & 0.5  & The tutorial case of \cref{ch:firstrun}. \\
+\file{smoke\_1d.toml}          & 0.02 & The quickest case in the repository; useful as a smoke test. \\
+\file{nozzle\_1d\_fixed.toml}  & 0.05 & Liquid supplied through a nozzle on a stationary arm. \\
+\file{nozzle\_1d\_rotating.toml}& 0.05 & The same with a rotating arm. \\
+\file{nozzle\_1d\_offset.toml} & 0.05 & The same with the nozzle off the domain center. \\
+\end{yzntable}
+
+\section{The \file{*\_2d*} family --- 2-D regression}
+\label{sec:cases:case2d}
+
+The same physics in plan view. These are the cases that would catch a mistake
+in the 13-point stencil, in the two direction orderings
+(\cref{sec:repro:directions}) or in the row decomposition.
+
+Their initial condition is a straight front crossing the domain at
+about \ang{20} to the $x$ axis. \key{Center = [0.3, 0.2]} with
+\key{Width = [1.0, 0.5]} puts the domain on the flank of an ellipse a
+thousand times its own size, so what falls inside it is a plane ramp aligned
+with neither grid direction. With the feature at \key{[0.5, 0]}, symmetric
+about $y$, the solution would vary along $y$ by well under a percent of its
+own relief --- a two-dimensional case reproducing a one-dimensional answer,
+in which a mistake in the $y$ half of the stencil could pass unnoticed. As
+placed, the two directions carry comparable variation.
+
+The front is softened over about \SI{100}{\micro\metre}: six cells at $60^2$,
+four at $40^2$, twelve at $120^2$. \key{SlopeWidth} sets that, and for an
+\key{EllipseBump} it is measured in the normalized radius rather than in
+meters (\cref{sec:ref-domain:shapes}); written as a length it puts the front
+inside a cell or two, which costs time steps as well as accuracy.
+
+\begin{yzntable}{The \file{*\_2d*} family\label{tab:cases-case2d}}{@{}L{0.24\textwidth} L{0.15\textwidth} L{0.53\textwidth}@{}}
+\textsf{\bfseries Case} & \textsf{\bfseries Mesh, end} & \textsf{\bfseries What it is}\\ \midrule
+\file{leveling\_2d\_reg.toml} & $60^2$, \SI{0.05}{\second}  & The 2-D regression case. \\
+\file{leveling\_2d\bk\_tight\_reg.toml} & $60^2$, \SI{0.05}{\second}  & The same problem with tighter tolerances, for checking that the answer does not move when they are. It does not: the two final fields agree bit for bit. \\
+\file{leveling\_2d\bk\_fine\_reg.toml} & $120^2$, \SI{0.0015}{\second} & The largest 2-D case shipped; the slowest to run, which is why it stops far earlier in physical time than the two above. \\
+\file{allphys\_2d\_reg.toml} & $40^2$, \SI{0.3}{\second}    & The terms of \file{allphys\_1d\_reg.toml} in two dimensions, on a coarse mesh so that it stays quick. \\
+\file{concz\_2d.toml}       & $60^2\times30$, \SI{0.002}{\second} & The \val{"CZ"} model on a two-dimensional film: the pseudo-3D combination. Not a regression case --- it is the worked example, and takes about \SI{70}{\second}. Its diffusivity is set below the value the 1-D cases use so that the evaporative layer at the surface is thinner than the film, but not so far below that it becomes thinner than a cell; the case file gives the measurement behind the choice. It carries twice the usual number of cells through the thickness for the same reason. \\
+\end{yzntable}
+
+\section{The \file{stress\_*} family --- hard coupling}
+\label{sec:cases:stress}
+
+All four derive from \file{allphys\_1d\_reg.toml} and exist to push the
+height--concentration coupling. They are the input for the second coupling
+table in \cref{sec:verification:coupling}, and none of them produced a single
+stagnation warning.
+
+\begin{yzntable}{The \file{stress\_*} family\label{tab:cases-stress}}{@{}L{0.26\textwidth} L{0.66\textwidth}@{}}
+\textsf{\bfseries Case} & \textsf{\bfseries What is made hard}\\ \midrule
+\file{stress\_evap.toml}     & Evaporation coefficient $\times 100$. \\
+\file{stress\_coupling.toml} & Viscosity exponent 10 $\to$ 30, surface-tension concentration coefficient $\times 10$. \\
+\file{stress\_dt.toml}       & Time step $\times 100$, adaptive stepping switched off. \\
+\file{stress\_all.toml}      & All three at once. \\
+\end{yzntable}
+
+\file{stress\_wetting.toml} is of another kind. It stresses the Newton
+iteration and the step control, not the coupling: a slab of liquid
+\SI{10}{\micro\metre} high meets a precursor film of $\Hstar = 0.2$ on a mesh
+of $\Delta x = \SI{1}{\micro\metre}$, far from equilibrium, so the first step
+at \key{InitialDt} stagnates and is cut (\cref{sec:cases:warnings}). The
+stagnation check of \code{features} and the floor measurements of
+\cref{sec:convergence:floor} run it. With a precursor a fifth of the film it
+is not a model of a contact line; the \file{wet\_*} family below is.
+
+\section{The \file{wet\_*} family --- contact lines}
+\label{sec:cases:wet}
+
+These enable disjoining pressure and therefore have a real contact line. They
+use $\Hstar = 0.01$ --- a precursor of \SI{0.1}{\micro\metre} under a
+\SI{10}{\micro\metre} droplet --- on a mesh of $\Delta x = \SI{0.2}{\micro\metre}$
+that resolves the contact line. A droplet with a precursor that thin cannot
+start from a slab: where the slab meets the precursor the velocity is many
+orders of magnitude above the natural scale $U_0$, and the step collapses
+(\cref{sec:trouble:newton}). So every case of the family starts from an
+\emph{analytically constructed equilibrium droplet}, supplied through the
+restart mechanism, with the command that generated its file recorded in a
+comment: the \file{wet\_static*} cases from one of \ang{20}
+(\file{cases/wet\_static\_drop.dat}, \SI{117}{\micro\metre} wide), which then
+spreads to the angle asked for, and \file{wet\_coupled} from one
+of \ang{10} (\file{cases/wet\_coupled\_eq.dat}). They end at apparent angles
+of 9.71, 4.80 and \ang{14.63}, below the requested ones by the
+precursor bias of \cref{sec:wetting:apparent}, and the film around the drop at
+the precursor thickness.
+
+\begin{yzntable}{The \file{wet\_*} family\label{tab:cases-wet}}{@{}L{0.24\textwidth} L{0.13\textwidth} L{0.55\textwidth}@{}}
+\textsf{\bfseries Case} & \textsf{\bfseries $\thetae$, $N_x$} & \textsf{\bfseries What it is}\\ \midrule
+\file{wet\_static.toml}     & \ang{10}, 2000 & A \ang{20} droplet spreading to equilibrium, no concentration coupling. \\
+\file{wet\_static\_5.toml}  & \ang{5},  2000 & The same at a smaller contact angle. \\
+\file{wet\_static\_15.toml} & \ang{15}, 2000 & The same at a larger contact angle. \\
+\file{wet\_coupled.toml}    & \ang{10}, 3000 & A contact line with the full concentration coupling --- convection, diffusion, Marangoni and evaporation. \\
+\end{yzntable}
+
+\file{wet\_coupled.toml} is worth reading as an example even if you never run
+it. Starting from equilibrium, the initial velocity is of order $U_0$ and the
+case runs to completion without a single warning. Its domain is
+$\pm\SI{0.3}{\milli\metre}$, against $\pm\SI{0.2}{\milli\metre}$ for the
+\file{wet\_static*} cases, because its droplet is \SI{235}{\micro\metre} wide.
+It convects the film height with \val{"UTOPIA"} rather than the default
+\val{"Koren"}: at the contact line, on this mesh, a step reaches a Courant
+number of 3.24, past the bound of the limited schemes
+(\cref{sec:ref-numerics:convection}).
+
+\begin{warn}[The \file{wet\_*} cases need their \file{.dat} files]
+  \file{cases/wet\_static\_drop.dat} and \file{cases/wet\_coupled\_eq.dat} are
+  part of the cases, not outputs. Copy them alongside the input file, or the
+  restart fails.
+\end{warn}
+
+\section{\file{cases/eq/} --- the verification cases}
+\label{sec:cases:eq}
+
+These are the inputs behind \cref{sec:verification:disjoining,%
+sec:verification:spreading}. All of them start from an equilibrium droplet
+built by \file{tools/make\_equilibrium\_1d.py}, and the \file{.dat} files in the
+directory are byte-for-byte that script's output.
+
+\begin{yzntable}{Verification cases\label{tab:cases-eq}}{@{}L{0.22\textwidth} L{0.10\textwidth} L{0.60\textwidth}@{}}
+\textsf{\bfseries Case} & \textsf{\bfseries $N_x$} & \textsf{\bfseries What it measures}\\ \midrule
+\file{eq/eq\_n1000.toml} & 1000 & Residual velocity on the analytic equilibrium droplet, $\Delta x = \SI{0.6}{\micro\metre}$. \\
+\file{eq/eq\_n2000.toml} & 2000 & The same at $\Delta x = \SI{0.3}{\micro\metre}$. \\
+\file{eq/eq\_n4000.toml} & 4000 & The same at $\Delta x = \SI{0.15}{\micro\metre}$. Together the three give the measured order of 1.94. \\
+\file{eq/eq\_run.toml}   & 2000 & Time evolution from the equilibrium shape, for the relaxation table. Switch the steady-state test off, or it stops at once. \\
+\file{eq/spread\_n500.toml} & 500 & Spreading from a \ang{20} equilibrium droplet at \key{ContactAngle}~$=$~\val{10.0}; the Cox--Voinov measurement. \\
+\end{yzntable}
+
+These use $\Hstar = 0.02$, so that $\Hmax/\Hstar = 50$ and the apparent angle
+of the equilibrium droplet is within \SI{1}{\percent} of the requested one.
+
+\section{What to expect when you run them}
+\label{sec:cases:warnings}
+
+All 30 cases terminate normally. \Cref{tab:cases-runtimes} is a complete run,
+single-threaded, with \key{Backend} left at its \val{"auto"} default, on one
+core of an otherwise idle node with two Intel Xeon CPU Max 9480 (56 cores
+each, up to \SI{3.5}{\giga\hertz}) --- treat the times as relative, not
+absolute. Each is the shortest of three runs. On
+a build without AMGCL, which is what these were run on, \val{"auto"} resolves
+to \val{"eigen"}. The times are the CPU time of each run, user plus system;
+on one thread that is the wall-clock time of the run on an otherwise idle
+machine. \file{tools/case\_runtimes.py} measures the table
+(\cref{sec:env:tools}).
+
+\begin{yzntable}{All 30 cases, run single-threaded\label{tab:cases-runtimes}}{@{}L{0.21\textwidth} d L{0.30\textwidth} d@{}}
+\textsf{\bfseries Case} & \textsf{\bfseries Time [s]} & \textsf{\bfseries Termination} & \textsf{\bfseries Warnings}\\ \midrule
+\file{smoke\_1d}             &   0.27 & EndTime &    0 \\
+\file{leveling\_1d\_reg}     &   0.55 & EndTime &    0 \\
+\file{periodic\_1d\_reg}     &   0.57 & EndTime &    0 \\
+\file{leveling\_1d\_logout}  &   0.12 & EndTime &    0 \\
+\file{tutorial\_1d}          &   0.70 & EndTime &    0 \\
+\file{allphys\_1d\_reg}      &    1.0 & EndTime &    0 \\
+\file{allphys\_1d\_neg\_reg} &    1.0 & EndTime &    0 \\
+\file{concz\_1d\_reg}        &    1.0 & EndTime &    0 \\
+\file{nozzle\_1d\_offset}    &   0.91 & EndTime &    0 \\
+\file{nozzle\_1d\_fixed}     &   0.92 & EndTime &    0 \\
+\file{nozzle\_1d\_rotating}  &    3.4 & EndTime &    2 \\
+\file{allphys\_2d\_reg}      &   17.6 & EndTime &    0 \\
+\file{leveling\_2d\_reg}     &   19.9 & EndTime &    0 \\
+\file{leveling\_2d\bk\_tight\_reg} &   20.0 & EndTime &    0 \\
+\file{leveling\_2d\_fine\_reg} &   16.3 & EndTime &    0 \\
+\file{concz\_2d}             &   42.8 & EndTime &    0 \\
+\file{stress\_all}           &   0.10 & EndTime &    0 \\
+\file{stress\_dt}            &   0.08 & EndTime &    0 \\
+\file{stress\_coupling}      &    1.1 & EndTime &    0 \\
+\file{stress\_evap}          &    1.3 & EndTime &    0 \\
+\file{stress\_wetting}       &   12.2 & EndTime &    1 \\
+\file{wet\_coupled}          &     40.1 & EndTime &    0 \\
+\file{wet\_static\_5}        &     30.7 & Steady state &    0 \\
+\file{wet\_static\_15}       &     12.6 & Steady state &    0 \\
+\file{wet\_static}           &     15.2 & Steady state &    0 \\
+\file{eq/eq\_run}            &   0.12 & Steady state &    0 \\
+\file{eq/spread\_n500}       &    7.2 & EndTime &    0 \\
+\file{eq/eq\_n1000}          &    4.8 & Steady state &    0 \\
+\file{eq/eq\_n2000}          &    8.0 & Steady state &    0 \\
+\file{eq/eq\_n4000}          &   17.5 & Steady state &    0 \\
+\end{yzntable}
+
+Note that \file{stress\_all} and \file{stress\_dt} finish in about a tenth of a
+second. That is not a silent failure --- they use a time step a hundred times
+larger with adaptive stepping switched off, so they reach \key{EndTime} in
+about twenty steps.
+
+Two cases emit warnings, and those warnings are expected rather than
+symptoms. \file{stress\_wetting} starts from a slab meeting a precursor film,
+far from equilibrium. Its \key{InitialDt} is far too long for that start: in
+the first step the Newton correction stagnates far above the floor of
+\cref{sec:convergence:floor}, at 0.068 to 25 times its first value, and the
+step fails and is cut (\cref{sec:convergence:stagnation}) --- thirteen times,
+among the cuts the truncation-error test makes --- until it converges at a far
+shorter step. Taken past the stagnation, those steps would be rejected
+by the truncation-error test all the same, so the cuts are the same ones and
+so are the results, to the bit. \file{Warnings.txt} reports the first such cut, one line, and
+\file{JobInfo.txt} counts them all under \code{Steps failed: the Newton
+correction stagnated}. \file{nozzle\_1d\_rotating} reports the Courant
+number of the upwinded film-height fluxes past one
+(\cref{sec:ref-numerics:convection}), where the film piles up against the
+wall: two lines, the first such step and the count at the end. When checking that a change
+did no harm, compare the warning counts against the previous run rather than
+requiring zero.
+
+\section{Running them all}
+\label{sec:cases:runall}
+
+There is no single script that runs every case, because they are not a test
+suite --- \code{ctest} is. But the loop is short:
+
+\begin{shell}
+for f in cases/*.toml cases/eq/*.toml; do
+  ./tools/run_case.sh "$f" "runs/$(basename "$f" .toml)" 1
+done
+\end{shell}
+
+\file{tools/run\_case.sh} clears each output directory, fixes the thread count
+and keeps the log (\cref{sec:env:tools}). It also copies across the \file{.dat}
+files that the \file{wet\_*} and \file{eq/} cases restart from, which
+matters here because \key{Restart.FileName} is resolved against the working
+directory the solver runs in.

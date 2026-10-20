@@ -1,0 +1,176 @@
+% app-environment.tex -- environment variables and helper tools
+\chapter{環境変数と補助ツール}
+\label{ch:environment}
+
+\section{環境変数}
+\label{sec:env:vars}
+
+Yuzenは、モデルや数値計算の設定を環境変数から読むことはない。これらはすべて入力ファイルで指定する。
+環境変数で制御するのは、診断出力、ソルバーの実装上の細部の一部、スレッド数である。
+実装上の細部を変えても、答えが変わるのはソルバーの許容誤差の範囲内に限られる。
+
+\begin{yzntable}{環境変数\label{tab:envvars}}{@{}L{0.30\textwidth} L{0.62\textwidth}@{}}
+\textsf{\bfseries 変数} & \textsf{\bfseries 効果}\\ \midrule
+\env{OMP\_NUM\_THREADS}     & OpenMPの通常のスレッド数指定。答えは変わらない。これは仮定ではなくテストで確かめている（\cref{ch:reproducibility}）。ただし\val{"amgcl"}バックエンドは例外であり、そのことは文書に明記している。正の整数でない値はOpenMPランタイムが報告したうえで無視する（GCCでは\code{libgomp: Invalid value for environment variable OMP\_NUM\_THREADS}）。その場合は既定値のプロセッサー数で計算を続け、バナーにはこの値が\code{omp\_get\_max\_threads}として表示される。一つの計算で使うのは最大で一ソケット分のコアであり、GCCの\code{libgomp}では最大$\min(\text{cores of a socket},\ \max(8,\ \lceil\text{cells}/1000\rceil))$スレッドである。これより多く指定すると計算は停止し、指定すべき数を表示する。既定値のままなら、この数を使う（\env{YUZEN\_THREAD\_CAP}、\cref{sec:parallel:cap}）。 \\
+\env{OMP\_WAIT\_POLICY}     & コアを占有できるときは設定しない。\val{passive}にすると、待機中のスレッドはスピンせずに休止するので、並列ループのたびにスレッドを起こすコストがかかる。空のループのコストは、8スレッドで\SI{25}{\micro\second}、112スレッドで\SI{258}{\micro\second}であり、未設定ならそれぞれ\num{1.7}、\SI{24}{\micro\second}である（Xeon Max 9480）。一つの時間刻みでは数千回のループを実行する。一方、コアがほかの処理で埋まっている計算機では逆になり、\val{passive}で計算が五十倍速くなることもある。どちらでも答えは変わらない（\cref{sec:parallel:threads}）。 \\
+\env{YUZEN\_THREAD\_CAP}    & スレッド上限のうち格子サイズで決まる項の、1スレッドあたりのセル数（\cref{sec:parallel:cap}）。未設定の場合、GCCの\code{libgomp}では1000、\code{libomp}と\code{libiomp5}ではサイズ項なしとなる。正の整数を設定すると、どのランタイムでもその値を用いる。\val{0}を設定するとソケットの制限も含めて上限がなくなり、正の整数でない値も同じ扱いになる。このとき計算は\env{OMP\_NUM\_THREADS}で指定したスレッドをすべて使う。\val{"eigen"}では答えは変わらない。 \\
+\env{YUZEN\_GRAIN}         & 未知数$n$個の線形求解に使うスレッド数$\min(T, \lceil n/G\rceil)$を決める（\cref{sec:parallel:runtime}）。\val{lin=}\textit{G}で$G$を指定し、\val{off}では$T$スレッドをすべて使う。未設定の場合、\code{libomp}と\code{libiomp5}では$G = 500$、\code{libgomp}ではoffとなる。それ以外の値は\file{Warnings.txt}に報告したうえで無視する。実際に用いた粒度は\file{JobInfo.txt}に記録される（\code{YUZEN\_GRAIN}）。\val{"eigen"}では答えは変わらない。 \\
+\env{KMP\_HOT\_TEAMS\_MODE}  & \code{libomp}と\code{libiomp5}が読む。設定されていなければ、ソルバーが起動時に\val{1}を設定する。これにより\env{YUZEN\_GRAIN}が効果を発揮する（\cref{sec:parallel:runtime}）。 \\
+\env{YUZEN\_OPT}            & 既定で有効なアルゴリズムを無効にし、置き換える前の方法と計算を比較できるようにする（\file{util/\bk Opt.h}）。\val{-name}で一つを無効にし、\val{none}ですべてを無効に、\val{none,name}で一つだけを有効に、\val{default}ですべてを元に戻す。コンマまたは空白で区切って並べると、順に適用する。名前は次のとおりである。\val{regions}（並列領域を減らす。ビット単位で一致）、\val{assembly}（行列とヤコビアンでセル界面の物性値を共有する。ビット単位で一致）、\val{numa}（大きな配列のfirst-touch配置。ビット単位で一致）、\val{ew}（\cref{sec:linsolve:ew}）、\val{extrap}（\cref{sec:time:newton}）、\val{concpc}（\cref{sec:linsolve:conc}）、\val{bilu}（\cref{sec:linsolve:eigen}）、\val{amgcoarse}（\cref{sec:linsolve:amgcl}）。未知の名前は\file{Warnings.txt}に報告したうえで無視する。実際に有効な組合せは\file{JobInfo.txt}に記録される（\code{YUZEN\_OPT}）。 \\
+\env{YUZEN\_PROFILE}        & \val{0}以外の値を設定すると、組立て、線形求解とその前処理、出力といった計算の各部分に費やした実時間を、終了時に標準エラー出力に書く。各部分につき一行で、形式は\code{[profile] name calls seconds}である（\cref{sec:parallel:profile}）。無効のときは測定できるほどのコストはなく、計算にも影響しない。 \\
+\env{YUZEN\_DEBUG\_RESIDUAL}& 設定すると、ニュートン外側反復ごとに、反復番号、膜厚の修正量、濃度の修正量を一行で標準エラー出力に書く。二つの方程式のどちらが収束を妨げているかを調べるのに使う（\cref{sec:time:coupling}）。反復が停滞したときは\code{[stall]}の行を加える。この行には、反復番号、修正量、その時間刻みの最初の修正量、判定に用いた下限$1000\,\epsmach\,\lvert\varphi\rvert$、時間刻みが受理されたかどうか（受理なら1、失敗なら0）が並ぶ（\cref{sec:convergence:stagnation}）。 \\
+\env{YUZEN\_DEBUG\_FLOOR}   & 設定すると、修正量の下限を決める量（$A\varphi$、右辺、解それぞれの大きさ）を報告する。どこで桁落ちが起きているかを確認できる（\cref{sec:convergence:floor}）。 \\
+\env{YUZEN\_DEBUG\_COUPLING}& 設定すると、マランゴニ項を含む\val{"CZ"}モデルで、連成パスごとに一行を標準エラー出力に書く。内容は、\code{[couple]}、時間刻み開始時の無次元時刻、パス番号（最初が0）、中点濃度の変化量、それを最初のパスの変化量で割った値、次のパスの緩和係数（パスが落ち着いた後は0）である。あるパスの変化量と前のパスの変化量の比が、\cref{sec:verification:czpasses}のゲインである。 \\
+\env{YUZEN\_ILUT\_FILL}     & Eigenの\code{IncompleteLUT}のフィルファクターを上書きする。行列全体に対するものと、ブロック・ヤコビILUTの各ブロックに対するものの両方に効く（既定値10）。下げると前処理は安くなるが、下げすぎると分解が破綻し、解がNaNになる。値を1にすると1次元でも失敗する。 \\
+\env{YUZEN\_DBG\_EQ}        & ソルバーではなくテストスイートが読む。設定すると、\file{test\_disjoining.cpp}が格子ごとの残留速度と、それが液滴上のどこで生じるかを表示する（\cref{sec:verification:disjoining}）。 \\
+\end{yzntable}
+
+環境変数はどれも一度だけ読んで保持するので、計算の途中で設定しても効果はない。
+
+\section{補助ツール}
+\label{sec:env:tools}
+
+\file{tools/}には、\cref{ch:verification}の数値を作成・確認するのに用いたスクリプトを置いている。
+どれも短いので、使う前に一読されたい。各スクリプトの先頭に使い方が書いてある。
+
+\subsection{\file{tools/run\_case.sh}}
+
+\begin{shell}
+./tools/run_case.sh <input> <output dir> [threads]
+\end{shell}
+
+出力ディレクトリを空にしてから、入力ファイルを\emph{拡張子を保ったまま}そこへコピーし、
+\key{Restart}テーブルが参照する\file{.dat}ファイルもコピーする。そのうえで、
+スレッド数を固定してソルバーをそのディレクトリで実行し、標準出力\emph{と}標準エラー出力を
+\file{stdout.txt}に保存する。
+
+二つの計算の間に見かけの差が生じる原因としてよくあるのは、古い結果ディレクトリが残っていることと、
+スレッド数が固定されていないことである。このスクリプトはその両方を取り除き、実行ログも残す。ソルバーは実行ログを
+標準出力に書くだけで、ファイルには書かない（\cref{sec:output:running}）。標準エラー出力も保存するので、
+結果ディレクトリができる前に計算が中断した場合でも、中断の理由を示すメッセージが残る。
+
+\begin{note}[両方の入力形式に対応]
+  拡張子を保つので、\file{.toml}のケースでも、ブロック構造の
+  \file{.inp}のケースでも使える。ソルバーはどちらの場合も適切なパーサーを選ぶ
+  （\cref{sec:inputformat:formats}）。
+\end{note}
+
+\subsection{\file{tools/compare.py}}
+
+\begin{shell}
+python3 tools/compare.py <runA> <runB> [--job <JobName>]
+\end{shell}
+
+二つの結果ディレクトリについて、\file{History.dat}、\file{CalcInfo.dat}、最後の
+\file{field*.dat}を列ごとに比較し、各列の最大差をその列のスケールで割った値を報告する。
+ソルバー診断用の四つの列\code{NK\_iter}、\code{NK\_resid}、\code{BCG\_iter}、
+\code{BCG\_resid}はこの値から除き、四列の中での「差を列のスケールで割った値」の最大値として
+別に報告する。この値は反復回数の合計ではなく、合否判定にも含めない。
+一致するはずの二つの計算では、結果はちょうど\code{0.000e+00}になる
+（\cref{sec:verification:linalg}を参照）。
+
+\subsection{\file{tools/make\_equilibrium\_1d.py}}
+
+\begin{shell}
+python3 tools/make_equilibrium_1d.py --out cases/eq/eq_n2000.dat \
+        --nx 2000 --xmin=-0.3e-3 --xmax=0.3e-3 \
+        --hstar 0.02 --theta 10 --hmax 1.0
+\end{shell}
+
+一本の常微分方程式を積分して\cref{sec:wetting:equilibrium}の解析的な平衡液滴を作り、
+初期条件として使えるようにASCIIのリスタート形式で書き出す。\code{--sweep}を指定すると、ファイルを書く代わりに
+\cref{sec:wetting:apparent}の見かけの接触角の表を表示する。ただし\code{--out}は必須の引数として宣言されており、
+sweepの処理に入る前に解析されるので、\code{--sweep}だけを指定するとargparseのエラーで失敗する。
+書き出し先には捨ててよいパスを渡す。
+
+\begin{shell}
+python3 tools/make_equilibrium_1d.py --out /dev/null --sweep
+\end{shell}
+
+この場合、ファイルには何も書かれない。\file{cases/eq/}のファイルは、このツールの出力とバイト単位で同一である。
+
+接触線を含むケースが、不自然な速度で計算を始めてしまうときも、このツールを使う。
+解析的に作った平衡液滴は静止状態から始まるが、前駆膜につないだ解析的な盛り上がり形状ではそうならない。
+
+\subsection{\file{tools/measure\_spreading.py}}
+
+\begin{shell}
+python3 tools/measure_spreading.py <result dir> --dt-out 1e-3 --stride 5
+\end{shell}
+
+\file{field*.dat}の系列を読み、次の処理を行う。各時刻で液滴の外側部分に放物線を当てはめ、$h = 0$まで外挿して
+底面半径と見かけの接触角を求める。半径の差分から速度とキャピラリー数を求め、Cox--Voinovの関係を
+当てはめる。\code{--dt-out}は\key{Output.FieldData.TimeInterval}と同じ値にする必要がある。
+\code{--stride}は$R$の差分をとる間隔を広げ、$\Ca$のノイズを減らす。
+\cref{sec:verification:spreading}で報告する相関はこの値に依存し、依存の程度も同じ節に示す。
+このスクリプトの\code{fit\_cap()}関数はインポートして使え、一つの場ファイルから見かけの接触角を
+測る処理はこの関数が担う。
+
+\subsection{\file{tools/case\_runtimes.py}}
+
+\begin{shell}
+python3 tools/case_runtimes.py --exe build/bin/yuzen --workdir runs/rt
+python3 tools/case_runtimes.py --exe build/bin/yuzen --workdir runs/rt-be \
+        --backends-only --threads "1 2 4 8"
+\end{shell}
+
+\cref{tab:cases-runtimes}の値を測定する。\file{cases/}以下のすべてのケースを、一つのコアに固定して単一スレッドで
+実行し、CPU時間（ユーザーとシステムの和）、実時間、時間刻み数、
+計算の終わり方、警告の数を記録する。\code{--repeats}を指定すると各ケースを複数回実行し、最も速い値を表に残す。
+\code{--jobs}を指定すると、その数のケースをそれぞれ専用のコアで並行して実行する。\code{--backends}または
+\code{--backends-only}を付けると、\cref{tab:linsolve-timing}も測定する。この場合は
+\file{leveling\_1d\_reg}と\file{leveling\_2d\_reg}を、各バックエンドと\code{--threads}の
+各スレッド数で実行する。\val{"amgcl"}を指定したがAMGCLを含まないビルドだった計算には
+印を付ける。すべての計算結果は、計算機の情報とともに\file{runtimes.tsv}に保存される。
+\file{summary.txt}には表が、\file{table\_cases.tex}と\file{table\_backends.tex}には本マニュアルに
+載せている形式の表の行が書かれる。計算でコアを占有するので、\env{OMP\_WAIT\_POLICY}は設定しない
+（\cref{sec:parallel:threads}）。小さな格子に対するスレッド上限は有効のままである。上限によってスレッド数が
+下がった計算については、実際に使ったスレッド数を\file{summary.txt}に括弧書きで示す
+（\cref{sec:parallel:cap}）。実行時間の制限が短いバッチキュー向けに、\code{--budget SECONDS}を指定すると、
+その時間を過ぎた時点で新しい計算を始めず、実行中の計算も止める（止めた計算は記録しない）。
+\code{--resume}を指定すると、\file{runtimes.tsv}にすでにある計算結果をそのまま使う。未実行の計算が残った場合は
+終了コード3で終了し、表は書かない。したがって、終了コードが0になるまで同じコマンドを繰り返せば、
+一回で最後まで実行した場合と同じ表が得られる。
+
+\subsection{\file{tools/profile\_threads.py}}
+
+\begin{shell}
+python3 tools/profile_threads.py --exe build/bin/yuzen --workdir runs/prof \
+        --threads "1 2 4 8 16" --resume --budget 1500
+\end{shell}
+
+同梱ケースとスケーリング用ケースの一式を、時間刻み数を固定して打ち切る形で実行する。\code{--threads}の
+各スレッド数について、\val{"eigen"}と\val{"amgcl"}のそれぞれで、\env{YUZEN\_PROFILE=1}を設定し、小さな格子に
+対するスレッド上限を無効にして実行する。結果は
+\file{profile.tsv}（計算ごとに一行、計時した各部分を含む）と
+\file{summary.txt}（各部分のスレッド数による変化と、時間刻み一回あたりの速度向上率）に書く。
+\code{--wait "default PASSIVE"}を指定すると、すべての計算を\env{OMP\_WAIT\_POLICY=PASSIVE}でも繰り返す。
+\code{--resume}と\code{--budget}の働きは\file{tools/case\_runtimes.py}と同じである。
+計時する各部分は\cref{tab:profile-parts}に示す。
+
+\subsection{\file{tools/bench.sh}}
+
+\begin{shell}
+./tools/bench.sh <input> [threads ...]
+\end{shell}
+
+一つのケースを複数のスレッド数で実行し、それぞれの実時間を表示する。結果は
+\file{runs/bench\_t<n>/}に書き出す。手早く目安を得るためのツールである。引用に耐える
+スケーリング測定には、\file{tools/scaling/}を使う（\cref{sec:parallel:kit}）。
+こちらは計算ごとの仕事量を固定し、測定値とともに計算機の情報も記録する。
+なお、\cref{sec:linsolve:choosing}の計時は性能の測定であり、検証のための測定ではない。
+速い設定のほうが正しいというわけではない。
+
+\subsection{\file{tools/scaling/}}
+
+\begin{shell}
+python3 tools/scaling/make_cases.py            # regenerate the cases
+tools/scaling/scaling.sh [options]             # sweep and append to a TSV
+python3 tools/scaling/summarize.py <tsv ...>   # text, LaTeX or CSV
+\end{shell}
+
+\cref{sec:parallel:kit}で説明する、共有メモリ並列のスケーリング測定キットである。掃引に用いるケースは、
+掃引スクリプトが読む\file{manifest.tsv}とともに\file{cases/scaling/}に生成される。
+\file{tools/scaling/README.md}には、結果ファイルの形式を列ごとに定め、集計スクリプトが繰り返し測定を
+どう扱うかを記している。\code{make\_cases.py -{}-check}は、リポジトリに登録されたケースが
+現在の生成スクリプトの出力と一致するかを確かめる。

@@ -38,7 +38,7 @@ def read_tsv(paths):
     for p in paths:
         m = {}
         head = None
-        for line in open(p):
+        for line in open(p, encoding="utf-8"):
             line = line.rstrip("\n")
             if line.startswith("#"):
                 bits = line[1:].strip().split("\t", 1)

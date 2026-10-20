@@ -80,12 +80,12 @@ def run(exe, case, steps, backend, threads, cores, rundir, timeout, wait, opt="d
     name = prepare(case, rundir, backend)
     path = os.path.join(rundir, name)
     if steps is not None:
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             text = f.read()
         text, n = re.subn(r"^MaxSteps = .*$", "MaxSteps = %d" % steps, text, count=1, flags=re.M)
         if n != 1:
             text = re.sub(r"^\[Numerics\]\n", "[Numerics]\nMaxSteps = %d\n" % steps, text, count=1, flags=re.M)
-        with open(path, "w") as f:
+        with open(path, "w", encoding="utf-8") as f:
             f.write(text)
     env = dict(os.environ, OMP_NUM_THREADS=str(threads), OMP_PROC_BIND="close", OMP_PLACES="cores",
                YUZEN_PROFILE="1", YUZEN_THREAD_CAP="0")
@@ -102,7 +102,7 @@ def run(exe, case, steps, backend, threads, cores, rundir, timeout, wait, opt="d
             env[k] = v
     t0 = time.perf_counter()
     try:
-        r = subprocess.run([exe, name], cwd=rundir, capture_output=True, text=True, env=env,
+        r = subprocess.run([exe, name], cwd=rundir, capture_output=True, text=True, encoding="utf-8", errors="replace", env=env,
                            timeout=timeout, preexec_fn=lambda: os.sched_setaffinity(0, cores))
         rc, out = r.returncode, r.stdout + r.stderr
     except subprocess.TimeoutExpired:
@@ -114,7 +114,7 @@ def run(exe, case, steps, backend, threads, cores, rundir, timeout, wait, opt="d
     loop, used = "", ""
     try:
         job = os.path.join(rundir, os.path.basename(case))
-        with open(os.path.join(job, "JobInfo.txt"), errors="replace") as f:
+        with open(os.path.join(job, "JobInfo.txt"), errors="replace", encoding="utf-8") as f:
             ji = f.read()
         m = re.search(r"^Time loop \[s\] :\s*(\S+)", ji, re.M)
         loop = m.group(1) if m else ""
@@ -129,7 +129,7 @@ def read_done(path):
     done, rows = set(), []
     if not os.path.exists(path):
         return done, rows
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         cols = None
         for line in f:
             if line.startswith("#") or not line.strip():
@@ -213,10 +213,10 @@ def main():
     done, rows = read_done(path) if args.resume else (set(), [])
     info = host_info(exe)
     if rows:
-        tsv = open(path, "a")
+        tsv = open(path, "a", encoding="utf-8")
         tsv.write("# resumed\t%s\n" % info["date"])
     else:
-        tsv = open(path, "w")
+        tsv = open(path, "w", encoding="utf-8")
         for k, v in info.items():
             tsv.write("# %s\t%s\n" % (k, v))
         tsv.write("\t".join(cols) + "\n")
@@ -270,7 +270,7 @@ def main():
         return 3
     lines = ["host %s; %s; %d cores allowed" % (info["host"], info["cpu"], len(cores)), info["yuzen"]]
     lines += summary(rows, threads)
-    with open(os.path.join(work, "summary.txt"), "w") as f:
+    with open(os.path.join(work, "summary.txt"), "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
     print("\n".join(lines))
     return 1 if any(r["rc"] != "0" for r in rows) else 0

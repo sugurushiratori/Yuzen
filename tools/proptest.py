@@ -465,12 +465,12 @@ def mirrored_x(I):
 # ---------------------------------------------------------------------------
 def run(exe, d, src, threads=1, timeout=300):
     os.makedirs(d, exist_ok=True)
-    with open(os.path.join(d, "in.toml"), "w") as f:
+    with open(os.path.join(d, "in.toml"), "w", encoding="utf-8") as f:
         f.write(src)
     env = dict(os.environ, OMP_NUM_THREADS=str(threads), OMP_WAIT_POLICY="PASSIVE")
     t0 = time.time()
     try:
-        r = subprocess.run([exe, "in.toml"], cwd=d, capture_output=True, text=True,
+        r = subprocess.run([exe, "in.toml"], cwd=d, capture_output=True, text=True, encoding="utf-8",
                            errors="replace", timeout=timeout, env=env)
     except subprocess.TimeoutExpired:
         return None, "timed out after %g s" % timeout, time.time() - t0
@@ -479,7 +479,7 @@ def run(exe, d, src, threads=1, timeout=300):
 
 def table(path):
     """A History/CalcInfo file as (column names, rows of strings)."""
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         head = [c.split("[")[0].strip() for c in f.readline().rstrip("\n").split("\t")]
         rows = [l.rstrip("\n").split("\t") for l in f if l.strip()]
     return head, rows
@@ -487,7 +487,7 @@ def table(path):
 
 def field(path):
     """A field*.dat as {column: [floats]}; rows x fastest."""
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         head = [c.split("[")[0] for c in f.readline().lstrip("#").split()]
         cols = {n: [] for n in head}
         for line in f:
@@ -562,7 +562,7 @@ def check_run(d, m, rc, log):
     ji = os.path.join(rd, "JobInfo.txt")
     if os.path.exists(ji):
         vals = {}
-        for line in open(ji):
+        for line in open(ji, encoding="utf-8"):
             k, _, v = line.partition(" :")
             if k.strip() in ("Sum of the steps solved", "Time at the start of the loop",
                              "Time at the end of the loop"):
@@ -791,7 +791,7 @@ def compare(A, B, A0, point_map, col_map, u0):
 def check_restart(exe, d, I, m, timeout):
     import restart_roundtrip as rr
     path = os.path.join(d, "chain_case")
-    with open(path + ".toml", "w") as f:
+    with open(path + ".toml", "w", encoding="utf-8") as f:
         f.write(I.text())
     steps = m["steps"]
     #  The straight run ends on EndTime (MaxSteps of a part counts from that
@@ -932,7 +932,7 @@ def main():
     nbad = 0
     stops = {}
     t0 = time.time()
-    logf = open(a.log, "a") if a.log else None
+    logf = open(a.log, "a", encoding="utf-8") if a.log else None
     for s in seeds:
         t1 = time.time()
         regression = a.quick and s in REGRESSION_SEEDS

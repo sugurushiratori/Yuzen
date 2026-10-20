@@ -111,7 +111,7 @@ def film(model, nx, dt, steps, interval, scheme):
 def write_restart(src_dat, dst_dat, cfun):
     """Copy a field*.dat with its concentration column replaced by cfun(x)
     (in 2-D by cfun(x, y))."""
-    with open(src_dat) as f:
+    with open(src_dat, encoding="utf-8") as f:
         lines = f.read().split("\n")
     head = lines[0].lstrip("#").split()
     names = [c.split("[")[0] for c in head]
@@ -129,7 +129,7 @@ def write_restart(src_dat, dst_dat, cfun):
         else:
             v[ic] = "%.17e" % cfun(float(v[ix]) * 1e-3, float(v[iy]) * 1e-3)
         out.append("\t".join(v))
-    with open(dst_dat, "w") as f:
+    with open(dst_dat, "w", encoding="utf-8") as f:
         f.write("\n".join(out))
 
 
@@ -323,7 +323,7 @@ def courant_warnings(workdir, exe, model, courant):
     tag = "courant%g" % courant
     advect(workdir, exe, tag, model, "Koren", 100, courant, 0.1, step_c)
     path = os.path.join(workdir, "%s_%s_Koren_n100" % (tag, model), "run", "a", "Warnings.txt")
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         txt = f.read()
     return {k for k in ("Concentration", "Height")
             if 'Courant number above 1' in txt and 'Numerics.Convection.%s = "Koren"' % k in txt}, txt

@@ -222,13 +222,13 @@ def main():
     args = ap.parse_args()
     new = text()
     if args.check:
-        old = open(OUT).read() if os.path.exists(OUT) else ""
+        old = open(OUT, encoding="utf-8").read() if os.path.exists(OUT) else ""
         if old != new:
             print("%s is out of date: run tools/mms_generate.py" % OUT)
             return 1
         print("up to date")
         return 0
-    with open(OUT, "w") as f:
+    with open(OUT, "w", encoding="utf-8") as f:
         f.write(new)
     print("wrote %s (%d lines)" % (OUT, new.count("\n")))
     return 0

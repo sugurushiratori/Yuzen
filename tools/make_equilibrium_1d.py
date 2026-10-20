@@ -286,7 +286,7 @@ def main():
 
     #  ---- Output (same columns as OutputNeutral: xx HS Ux CC HH SS) ----
     #  With Output.Dimensioned = true, film thickness is in um and x in mm.
-    with open(args.out, "w") as f:
+    with open(args.out, "w", encoding="utf-8") as f:
         f.write("xx \t HS \t Ux \t CC \t HH \t SS\n")
         for i in range(nrow):
             hh = H[i] * h0 * 1e6

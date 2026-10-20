@@ -125,7 +125,7 @@ def make_case(path, job, model, nx, nz, dt, endtime, out_interval, ny=None):
     the concentration, so the limit in which concentration does not
     affect h is preserved.
     """
-    src = open(BASE_CASE).read()
+    src = open(BASE_CASE, encoding="utf-8").read()
     sect = {
         "Grid": {"Nx": str(nx), "Nz": str(nz)},
         "Physics.ConcField": {"Model": '"%s"' % model},
@@ -148,14 +148,14 @@ def make_case(path, job, model, nx, nz, dt, endtime, out_interval, ny=None):
             "CreateType": '"add"', "Height": "0.3",
             "Center": "[0.0, 0.0]", "Width": "[0.4e-3, 0.4e-3]",
             "SlopeWidth": "0.1e-3"}
-    open(path, "w").write(edit_toml(src, {"JobName": '"%s"' % job}, sect))
+    open(path, "w", encoding="utf-8").write(edit_toml(src, {"JobName": '"%s"' % job}, sect))
 
 
 def read_history(path):
     #  Column labels carry their unit, as in "maxH [m]". Key the rows on the
     #  bare name so a change of unit in the header does not break the lookup.
     rows, head = [], None
-    for line in open(path):
+    for line in open(path, encoding="utf-8"):
         f = line.rstrip("\n").split("\t")
         if head is None:
             head = [c.split("[")[0].strip() for c in f]

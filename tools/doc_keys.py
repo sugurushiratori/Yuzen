@@ -1026,7 +1026,7 @@ def every_key_file(blocks, keys):
 
 
 def run_check(exe, path, cwd):
-    p = subprocess.run([exe, "--check-input", path], cwd=cwd, capture_output=True, text=True,
+    p = subprocess.run([exe, "--check-input", path], cwd=cwd, capture_output=True, text=True, encoding="utf-8", errors="replace",
                        timeout=120)
     return p.returncode, p.stdout + p.stderr
 
@@ -1034,7 +1034,7 @@ def run_check(exe, path, cwd):
 def check_binary(exe, workdir, blocks, keys, complete, problems):
     os.makedirs(workdir, exist_ok=True)
     f = os.path.join(workdir, "everykey.toml")
-    with open(f, "w") as fh:
+    with open(f, "w", encoding="utf-8") as fh:
         fh.write(every_key_file(blocks, keys))
     rc, out = run_check(exe, f, workdir)
     if rc != 0 or "Input check passed" not in out:
@@ -1044,7 +1044,7 @@ def check_binary(exe, workdir, blocks, keys, complete, problems):
         #  ... and it must be the binary that reads them: one misspelled key more
         #  has to be refused, or the check above proves nothing
         g = os.path.join(workdir, "misspelled.toml")
-        with open(g, "w") as fh:
+        with open(g, "w", encoding="utf-8") as fh:
             fh.write(every_key_file(blocks, keys).replace("\nNx = ", "\nNxx = 1\nNx = ", 1))
         rc, out = run_check(exe, g, workdir)
         if rc == 0 or "Grid.Nxx" not in out:
@@ -1055,7 +1055,7 @@ def check_binary(exe, workdir, blocks, keys, complete, problems):
             problems.append("%s: yuzen --check-input fails:\n%s" % (os.path.relpath(c, ROOT), out[-1500:]))
     for n, (where, src) in enumerate(complete):
         g = os.path.join(workdir, "listing%02d.toml" % n)
-        with open(g, "w") as fh:
+        with open(g, "w", encoding="utf-8") as fh:
             fh.write(src)
         rc, out = run_check(exe, g, workdir)
         if rc != 0:

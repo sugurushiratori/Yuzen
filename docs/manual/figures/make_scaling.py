@@ -47,7 +47,7 @@ plt.rcParams.update({
 def read(path):
     host = ""
     rows = []
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         lines = []
         for line in f:
             if line.startswith("#"):

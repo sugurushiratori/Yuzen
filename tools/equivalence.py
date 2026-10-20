@@ -117,7 +117,7 @@ from concz_vs_wm import edit_toml  # noqa: E402  (section-aware key rewriting)
 #  Input files
 # ----------------------------------------------------------------------
 def case(name):
-    with open(os.path.join(CASES, name + ".toml")) as f:
+    with open(os.path.join(CASES, name + ".toml"), encoding="utf-8") as f:
         return f.read()
 
 
@@ -188,7 +188,7 @@ def bcs(xmin, xmax, ymin, ymax):
 # ----------------------------------------------------------------------
 def read_field(path):
     """A field*.dat as (column dict, nx, ny, nz); rows run x, then y, then z."""
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         head = f.readline().lstrip("#").split()
         names = [c.split("[")[0] for c in head]
         cols = {n: [] for n in names}
@@ -947,11 +947,11 @@ def cz2d_deficit_transpose(exe, workdir, timeout):
         #  Before the edit nothing fell below 0: JobInfo.txt says 0 and the
         #  log has no summary line of the moves (mutation testing: counting
         #  every step as one that moved solute changed nothing else)
-        ji = open(os.path.join(workdir, tag + "0", "JobInfo.txt")).read()
+        ji = open(os.path.join(workdir, tag + "0", "JobInfo.txt"), encoding="utf-8").read()
         m = re.search(r"Solute moved to c < 0 \[-\] :\s*(.*)", ji)
         if not m or m.group(1).strip() != "0" or "Solute moved to c < 0 from" in log:
             return None, "a run without c < 0 reports solute moved: %r" % (m.group(1) if m else None)
-        lines = open(os.path.join(workdir, tag + "0", "field00001.dat")).read().split("\n")
+        lines = open(os.path.join(workdir, tag + "0", "field00001.dat"), encoding="utf-8").read().split("\n")
         hdr = [h.split("[")[0].strip() for h in lines[0].lstrip("#").split("\t")]
         ix, iy, ic = hdr.index("xx"), hdr.index("yy"), hdr.index("CC")
         rows = [l.split("\t") for l in lines[1:] if l.strip()]
@@ -962,7 +962,7 @@ def cz2d_deficit_transpose(exe, workdir, timeout):
                 t[ic] = "-0.05"
                 lines[n] = "\t".join(t)
         os.makedirs(os.path.join(workdir, tag + "_start"), exist_ok=True)
-        with open(os.path.join(workdir, tag + "_start", "field00001.dat"), "w") as f:
+        with open(os.path.join(workdir, tag + "_start", "field00001.dat"), "w", encoding="utf-8") as f:
             f.write("\n".join(lines))
         cont = fixed_steps(src, 1e-5, 10, 1e-4)
         cont = re.sub(r"^\[Restart\]\n(?:[A-Za-z].*\n)*",
@@ -1074,11 +1074,11 @@ def run(exe, d, name, src, timeout):
     os.makedirs(d, exist_ok=True)
     src = with_convection(src)
     src = re.sub(r"^JobName = .*$", 'JobName = "%s"' % name, src, count=1, flags=re.M)
-    with open(os.path.join(d, name + ".toml"), "w") as f:
+    with open(os.path.join(d, name + ".toml"), "w", encoding="utf-8") as f:
         f.write(src)
     try:
         r = subprocess.run([exe, name + ".toml"], cwd=d, capture_output=True,
-                           text=True, timeout=timeout)
+                           text=True, encoding="utf-8", errors="replace", timeout=timeout)
     except subprocess.TimeoutExpired:
         return -1, "timed out after %g s" % timeout
     return r.returncode, r.stdout + r.stderr

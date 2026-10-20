@@ -74,7 +74,7 @@ COLS = ["variant", "rep", "case", "backend", "threads", "used", "rc", "wall_s", 
 
 def read_variants(path):
     out = []
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         for line in f:
             line = line.rstrip("\n")
             if not line.strip() or line.lstrip().startswith("#"):
@@ -97,7 +97,7 @@ def read_rows(path):
     rows = []
     if not os.path.exists(path):
         return rows
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         cols = None
         for line in f:
             if line.startswith("#") or not line.strip():
@@ -240,10 +240,10 @@ def main():
     done = {(d["variant"], d["rep"], d["case"], d["backend"], d["threads"]) for d in rows}
     info = host_info(os.path.abspath(args.exe))
     if rows:
-        tsv = open(path, "a")
+        tsv = open(path, "a", encoding="utf-8")
         tsv.write("# resumed\t%s\n" % info["date"])
     else:
-        tsv = open(path, "w")
+        tsv = open(path, "w", encoding="utf-8")
         for k, v in info.items():
             tsv.write("# %s\t%s\n" % (k, v))
         for name, exe, env, thr in variants:
@@ -308,7 +308,7 @@ def main():
         return 3
     lines = ["host %s; %s; %d cores allowed" % (info["host"], info["cpu"], len(cores)), info["yuzen"]]
     lines += summary(rows, variants, threads)
-    with open(os.path.join(work, "summary.txt"), "w") as f:
+    with open(os.path.join(work, "summary.txt"), "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
     print("\n".join(lines))
     return 1 if any(r["rc"] != "0" for r in rows) else 0

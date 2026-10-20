@@ -75,7 +75,7 @@ def variants(newton, vs):
 
 
 def set_case(path, steps):
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         text = f.read()
     if steps is not None:
         text, n = re.subn(r"^MaxSteps = .*$", "MaxSteps = %d" % steps, text, count=1, flags=re.M)
@@ -83,7 +83,7 @@ def set_case(path, steps):
             text = re.sub(r"^\[Numerics\]\n", "[Numerics]\nMaxSteps = %d\n" % steps, text, count=1, flags=re.M)
     #  the final state, for dH and dC (written after the loop)
     text = re.sub(r"^NeutralFile = false", "NeutralFile = true", text, flags=re.M)
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         f.write(text)
 
 
@@ -94,7 +94,7 @@ def final_field(job):
 
 def read_cols(path):
     """The HH and CC columns of a field .dat file."""
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         head = f.readline().split()
         if head and head[0] == "#":
             head = head[1:]         # the ConcZ files start their header with "# "
@@ -133,7 +133,7 @@ def run(exe, case, steps, backend, threads, cores, rundir, timeout, variant, num
         env["YUZEN_OPT"] = "none," + variant
     t0 = time.perf_counter()
     try:
-        r = subprocess.run(cmd, cwd=rundir, capture_output=True, text=True, env=env,
+        r = subprocess.run(cmd, cwd=rundir, capture_output=True, text=True, encoding="utf-8", errors="replace", env=env,
                            timeout=timeout, preexec_fn=lambda: os.sched_setaffinity(0, cores))
         rc, out = r.returncode, r.stdout + r.stderr
     except subprocess.TimeoutExpired:
@@ -145,7 +145,7 @@ def run(exe, case, steps, backend, threads, cores, rundir, timeout, variant, num
     job = os.path.join(rundir, os.path.basename(case))
     info = {}
     try:
-        with open(os.path.join(job, "JobInfo.txt"), errors="replace") as f:
+        with open(os.path.join(job, "JobInfo.txt"), errors="replace", encoding="utf-8") as f:
             ji = f.read()
         for key, pat in (("loop", r"^Time loop \[s\] :\s*(\S+)"), ("steps", r"^Time steps :\s*(\S+)"),
                          ("nk", r"^Newton iterations :\s*(\S+)"), ("lin", r"^Linear iterations :\s*(\S+)"),
@@ -163,7 +163,7 @@ def read_done(path):
     done, rows = set(), []
     if not os.path.exists(path):
         return done, rows
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         cols = None
         for line in f:
             if line.startswith("#") or not line.strip():
@@ -256,10 +256,10 @@ def main():
     done, rows = read_done(path) if args.resume else (set(), [])
     info = host_info(exe)
     if rows:
-        tsv = open(path, "a")
+        tsv = open(path, "a", encoding="utf-8")
         tsv.write("# resumed\t%s\n" % info["date"])
     else:
-        tsv = open(path, "w")
+        tsv = open(path, "w", encoding="utf-8")
         for k, v in info.items():
             tsv.write("# %s\t%s\n" % (k, v))
         tsv.write("# numactl\t%s\n" % (numactl or "none"))
@@ -334,7 +334,7 @@ def main():
         return 3
     lines = ["host %s; %s; %d cores allowed" % (info["host"], info["cpu"], len(cores)), info["yuzen"]]
     lines += summary(rows, threads)
-    with open(os.path.join(work, "summary.txt"), "w") as f:
+    with open(os.path.join(work, "summary.txt"), "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
     print("\n".join(lines))
     return 1 if any(r["rc"] != "0" for r in rows) else 0

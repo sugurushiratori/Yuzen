@@ -192,7 +192,7 @@ def run_cases(workdir, plan=None):
                 shutil.copy(os.path.join(CASES, dat), workdir)
         print("  running %s ..." % case, flush=True)
         r = subprocess.run([exe, case + ".toml"], cwd=workdir,
-                           capture_output=True, text=True)
+                           capture_output=True, text=True, encoding="utf-8", errors="replace")
         if r.returncode != 0:
             sys.exit("make_examples.py: %s failed:\n%s" % (case, r.stdout[-2000:]))
     return workdir

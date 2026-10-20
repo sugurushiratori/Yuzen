@@ -82,12 +82,12 @@ def small(job, extra=None):
     sect.setdefault("", {})["JobName"] = '"%s"' % job
     for k, v in (extra or {}).items():
         sect.setdefault(k, {}).update(v)
-    return rr.toml_edit(open(os.path.join(CASES, "smoke_1d.toml")).read(), sect)
+    return rr.toml_edit(open(os.path.join(CASES, "smoke_1d.toml"), encoding="utf-8").read(), sect)
 
 
 def write(path, text, mode="w"):
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    with open(path, mode) as f:
+    with open(path, mode, **({} if "b" in mode else {"encoding": "utf-8"})) as f:
         f.write(text)
 
 
@@ -248,7 +248,7 @@ def case_restart(exe, wd):
     write(os.path.join(wd, "cut2", "field.state"), st[:len(st) - 100], "wb")
     write(os.path.join(wd, "u.toml"), restart_input("u", "cut2/field.vts"))
     rc, out, err = run(exe, ["u.toml"], wd)
-    warn = open(os.path.join(wd, "u", "Warnings.txt")).read() if os.path.isdir(os.path.join(wd, "u")) else ""
+    warn = open(os.path.join(wd, "u", "Warnings.txt"), encoding="utf-8").read() if os.path.isdir(os.path.join(wd, "u")) else ""
     c.expect(rc == 0 and "continuing exactly" not in out and "is damaged" in out and "is damaged" in warn,
              "truncated .state: rc=%d %s / %s" % (rc, short(out[-400:]), short(warn)))
     return c
@@ -258,9 +258,9 @@ def no_cut_files(c, d, what):
     """Every field file, .state and .pvd in d is whole (the readers and
     the format say so); a stray .tmp is allowed."""
     for p in glob.glob(os.path.join(d, "field*.dat")):
-        rows = [ln for ln in open(p).read().split("\n")[1:] if ln.strip()]
+        rows = [ln for ln in open(p, encoding="utf-8").read().split("\n")[1:] if ln.strip()]
         c.expect(rows and all(len(r.split()) == len(rows[0].split()) for r in rows)
-                 and open(p).read().endswith("\n"), "%s: %s cut short" % (what, os.path.basename(p)))
+                 and open(p, encoding="utf-8").read().endswith("\n"), "%s: %s cut short" % (what, os.path.basename(p)))
     for p in glob.glob(os.path.join(d, "field*.vts")):
         c.expect(open(p, "rb").read().rstrip().endswith(b"</VTKFile>"),
                  "%s: %s cut short" % (what, os.path.basename(p)))
@@ -291,7 +291,7 @@ def case_diskfull(exe, wd):
     write(os.path.join(wd, "a.toml"), small("full"))
     rc, out, err = run(exe, ["a.toml"], wd, preexec=limit)
     d = os.path.join(wd, "full")
-    fatal = open(os.path.join(d, "FatalErrors.txt")).read() if os.path.isdir(d) else ""
+    fatal = open(os.path.join(d, "FatalErrors.txt"), encoding="utf-8").read() if os.path.isdir(d) else ""
     c.expect(rc == 1 and "Could not write" in err and "field00000.vts" in err and "field00000.vts" in fatal,
              "file size limit: rc=%d %s" % (rc, short(err)))
     left = sorted(os.listdir(d)) if os.path.isdir(d) else []
@@ -300,7 +300,7 @@ def case_diskfull(exe, wd):
     c.expect(not [p for p in left if p.endswith(".tmp")], "file size limit: .tmp left: %s" % left)
     no_cut_files(c, d, "file size limit")
     if os.path.isfile(os.path.join(d, "JobInfo.txt")):
-        c.expect("abort" in open(os.path.join(d, "JobInfo.txt")).read(), "file size limit: JobInfo.txt not 'abort'")
+        c.expect("abort" in open(os.path.join(d, "JobInfo.txt"), encoding="utf-8").read(), "file size limit: JobInfo.txt not 'abort'")
 
     if os.path.exists("/dev/full"):
         d = os.path.join(wd, "devfull")
@@ -323,7 +323,7 @@ def chain_input(job, restart=None, chain="wm1d"):
     s.setdefault("", {})["JobName"] = '"%s"' % job
     if restart:
         s["Restart"] = restart
-    base = open(os.path.join(CASES, CHAIN["case"] + ".toml")).read()
+    base = open(os.path.join(CASES, CHAIN["case"] + ".toml"), encoding="utf-8").read()
     return rr.toml_edit(base, s, rr.PROBE + CHAIN.get("append", ""))
 
 
@@ -381,8 +381,8 @@ def continue_and_compare(c, exe, cwd, d, ud, what, chain="wm1d"):
     c.expect(not surplus, "%s: field times the straight run has not: %s" % (what, surplus[:4]))
     for t, f in ue:
         if t in ce:
-            a = open(os.path.join(ud, f[:-4] + ".dat")).read()
-            b = open(os.path.join(d, ce[t][:-4] + ".dat")).read()
+            a = open(os.path.join(ud, f[:-4] + ".dat"), encoding="utf-8").read()
+            b = open(os.path.join(d, ce[t][:-4] + ".dat"), encoding="utf-8").read()
             c.expect(a == b, "%s: t = %s: field*.dat differs" % (what, t))
             c.expect(rr.vts_payload(os.path.join(ud, f)) == rr.vts_payload(os.path.join(d, ce[t])),
                      "%s: t = %s: .vts arrays differ" % (what, t))
@@ -414,7 +414,7 @@ def case_sigint(exe, wd, ud):
             continue
         c.expect(rc == 128 + sig and "Stopped by " + name in out,
                  "%s: rc=%d, %s" % (chain, rc, short(out[-300:] + err)))
-        info = open(os.path.join(d, "JobInfo.txt")).read()
+        info = open(os.path.join(d, "JobInfo.txt"), encoding="utf-8").read()
         c.expect("interrupted (%s)" % name in info, "%s: JobInfo.txt does not say interrupted" % chain)
         no_cut_files(c, d, name + " " + chain)
         c.expect(not glob.glob(os.path.join(d, "*.tmp")), "%s %s: .tmp files left" % (name, chain))

@@ -15,7 +15,7 @@ import sys, os, glob
 
 
 def read_table(path):
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         head = f.readline().rstrip("\n").split("\t")
         rows = []
         for line in f:

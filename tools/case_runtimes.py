@@ -94,7 +94,7 @@ def host_info(exe):
     info = {"host": socket.gethostname(), "date": datetime.datetime.now().isoformat(timespec="seconds"),
             "platform": platform.platform(), "python": platform.python_version()}
     try:
-        with open("/proc/cpuinfo") as f:
+        with open("/proc/cpuinfo", encoding="utf-8") as f:
             m = re.search(r"^model name\s*:\s*(.*)$", f.read(), re.M)
             info["cpu"] = m.group(1).strip() if m else "?"
     except OSError:
@@ -102,11 +102,11 @@ def host_info(exe):
     info["cores_allowed"] = len(os.sched_getaffinity(0))
     try:
         info["lscpu"] = "; ".join(l.strip() for l in subprocess.run(
-            ["lscpu"], capture_output=True, text=True).stdout.splitlines()
+            ["lscpu"], capture_output=True, text=True, encoding="utf-8", errors="replace").stdout.splitlines()
             if re.match(r"(Socket|Core|Thread|NUMA node\(s\)|CPU max MHz|Model name)", l))
     except OSError:
         pass
-    v = subprocess.run([exe, "--version"], capture_output=True, text=True, cwd=ROOT)
+    v = subprocess.run([exe, "--version"], capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=ROOT)
     info["yuzen"] = " ".join((v.stdout + v.stderr).split())[:200]
     return info
 
@@ -119,7 +119,7 @@ def prepare(case, rundir, backend=None):
     if os.path.exists(rundir):
         shutil.rmtree(rundir)
     os.makedirs(rundir)
-    with open(src) as f:
+    with open(src, encoding="utf-8") as f:
         text = f.read()
     for d in set(re.findall(r'"([^"]+\.dat)"', text)):
         if os.path.exists(os.path.join(srcdir, d)):
@@ -133,7 +133,7 @@ def prepare(case, rundir, backend=None):
                 text = re.sub(r"^\[" + re.escape(blk) + r"\]\n", r'[%s]\nBackend = "%s"\n' % (blk, backend),
                               text, count=1, flags=re.M)
     name = os.path.basename(case) + ".toml"
-    with open(os.path.join(rundir, name), "w") as f:
+    with open(os.path.join(rundir, name), "w", encoding="utf-8") as f:
         f.write(text)
     return name
 
@@ -150,7 +150,7 @@ def run_one(exe, case, rundir, threads, cores, backend=None, keep=False, timeout
     def pin():
         os.sched_setaffinity(0, cores)
     t0 = time.perf_counter()
-    with open(os.path.join(rundir, "stdout.txt"), "w") as out:
+    with open(os.path.join(rundir, "stdout.txt"), "w", encoding="utf-8") as out:
         p = subprocess.Popen([exe, name], cwd=rundir, stdout=out, stderr=subprocess.STDOUT, env=env,
                              preexec_fn=pin)
         deadline = None if timeout is None else t0 + timeout
@@ -165,7 +165,7 @@ def run_one(exe, case, rundir, threads, cores, backend=None, keep=False, timeout
             time.sleep(0.01)
     wall = time.perf_counter() - t0
     rc = os.waitstatus_to_exitcode(status)
-    with open(os.path.join(rundir, "stdout.txt"), errors="replace") as f:
+    with open(os.path.join(rundir, "stdout.txt"), errors="replace", encoding="utf-8") as f:
         log = f.read()
     if "is more threads than this run can use" in log:
         end = "refused"         # above the solver's thread limit (util/ThreadCap.h)
@@ -178,7 +178,7 @@ def run_one(exe, case, rundir, threads, cores, backend=None, keep=False, timeout
     job = os.path.join(rundir, os.path.basename(case))
     steps, warns, used, tused = "", 0, "", ""
     try:
-        with open(os.path.join(job, "JobInfo.txt"), errors="replace") as f:
+        with open(os.path.join(job, "JobInfo.txt"), errors="replace", encoding="utf-8") as f:
             ji = f.read()
         m = re.search(r"^Time steps :\s*(\d+)", ji, re.M)
         steps = m.group(1) if m else ""
@@ -189,7 +189,7 @@ def run_one(exe, case, rundir, threads, cores, backend=None, keep=False, timeout
     except OSError:
         pass
     try:
-        with open(os.path.join(job, "Warnings.txt"), errors="replace") as f:
+        with open(os.path.join(job, "Warnings.txt"), errors="replace", encoding="utf-8") as f:
             warns = sum(1 for l in f if l.strip())
     except OSError:
         pass
@@ -215,7 +215,7 @@ def read_rows(path):
     if not os.path.exists(path):
         return rows, version
     cols = None
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         for line in f:
             line = line.rstrip("\n")
             if line.startswith("# yuzen\t"):
@@ -278,10 +278,10 @@ def main():
         sys.exit("runtimes.tsv was written by %r, this binary is %r: use another --workdir"
                  % (prev_version, info["yuzen"]))
     if prev:
-        tsv = open(path, "a")
+        tsv = open(path, "a", encoding="utf-8")
         tsv.write("# resumed\t%s on %s\n" % (info["date"], info["host"]))
     else:
-        tsv = open(path, "w")
+        tsv = open(path, "w", encoding="utf-8")
         for k, v in info.items():
             tsv.write("# %s\t%s\n" % (k, v))
         tsv.write("# repeats\t%d\n# jobs\t%d\n" % (args.repeats, jobs))
@@ -395,7 +395,7 @@ def main():
         tex.append("%-28s & %6s & %s & %4d \\\\" % (tex_file(c), fmt_time(best["cpu"]),
                                                      best["end"], best["warnings"]))
     if cases:
-        with open(os.path.join(work, "table_cases.tex"), "w") as f:
+        with open(os.path.join(work, "table_cases.tex"), "w", encoding="utf-8") as f:
             f.write("\n".join(tex) + "\n")
     else:
         lines = []
@@ -428,12 +428,12 @@ def main():
                 be = "\\textbf{%s s}" % fmt_time(e) if e < a else "%s s" % fmt_time(e)
                 ba = "\\textbf{%s s}" % fmt_time(a) if a < e else "%s s" % fmt_time(a)
                 tex.append("%-40s & %d & %s & %s \\\\" % (tex_file(case) if t == shown[0] else "", t, be, ba))
-        with open(os.path.join(work, "table_backends.tex"), "w") as f:
+        with open(os.path.join(work, "table_backends.tex"), "w", encoding="utf-8") as f:
             f.write("\n".join(tex) + "\n")
 
     hdr = ["host %s; %s; %d cores allowed" % (info["host"], info["cpu"], len(cores)),
            info.get("lscpu", ""), info["yuzen"], ""]
-    with open(os.path.join(work, "summary.txt"), "w") as f:
+    with open(os.path.join(work, "summary.txt"), "w", encoding="utf-8") as f:
         f.write("\n".join(hdr + lines) + "\n")
     print("\n".join([""] + lines))
     bad = [c for c in cases if any(r["end"].startswith("failed") for r in res[c])]

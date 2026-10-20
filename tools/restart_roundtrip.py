@@ -66,7 +66,7 @@ PLAN = [("leveling_1d_reg", 40),
 
 def read_field(path):
     """A field*.dat as {column name: [values]}."""
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         head = f.readline().lstrip("#").strip().split("\t")
         names = [c.split("[")[0].strip() for c in head if c.strip()]
         cols = [[] for _ in names]
@@ -232,11 +232,11 @@ def check_vts(vts, ref, tol=1e-13):
 
 def run(exe, d, name, src, timeout):
     os.makedirs(d, exist_ok=True)
-    with open(os.path.join(d, name + ".toml"), "w") as f:
+    with open(os.path.join(d, name + ".toml"), "w", encoding="utf-8") as f:
         f.write(src)
     try:
         r = subprocess.run([exe, name + ".toml"], cwd=d, capture_output=True,
-                           text=True, timeout=timeout)
+                           text=True, encoding="utf-8", errors="replace", timeout=timeout)
     except subprocess.TimeoutExpired:
         return -1, "timed out after %g s" % timeout
     return r.returncode, r.stdout + r.stderr
@@ -246,7 +246,7 @@ def pvd_entries(d):
     p = glob.glob(os.path.join(d, "*.pvd"))
     if not p:
         return []
-    return re.findall(r'timestep="([^"]+)" file="([^"]+)"', open(p[0]).read())
+    return re.findall(r'timestep="([^"]+)" file="([^"]+)"', open(p[0], encoding="utf-8").read())
 
 
 def maxrel(a, b):
@@ -466,7 +466,7 @@ JOBINFO_SUMS = ("Time steps", "Newton iterations", "Linear iterations",
 
 def jobinfo_counts(path):
     d = {}
-    for line in open(path):
+    for line in open(path, encoding="utf-8"):
         k, _, v = line.partition(":")
         if k.strip() in JOBINFO_SUMS:
             d[k.strip()] = int(v.split()[0])
@@ -477,7 +477,7 @@ def timeline_rows(path):
     """{time string: row} of a History/CalcInfo/Probe file, and the times in
     the order written (a time twice means an output written twice)."""
     rows, order = {}, []
-    for line in open(path):
+    for line in open(path, encoding="utf-8"):
         tok = line.split("\t", 1)[0].strip()
         try:
             float(tok)
@@ -495,7 +495,7 @@ def vts_payload(path):
 
 def run_chain(exe, workdir, name, v, timeout):
     """Run U and C; return the list of problems and a one-line summary."""
-    base = open(os.path.join(CASES, v["case"] + ".toml")).read()
+    base = open(os.path.join(CASES, v["case"] + ".toml"), encoding="utf-8").read()
     d = os.path.join(workdir, "chain", name)
 
     def src(job, maxsteps, restart):
@@ -593,7 +593,7 @@ def run_chain(exe, workdir, name, v, timeout):
             continue
         a, b = read_field(os.path.join(ud, f[:-4] + ".dat")), read_field(ce[t][:-4] + ".dat")
         if v["state"]:
-            if open(os.path.join(ud, f[:-4] + ".dat")).read() != open(ce[t][:-4] + ".dat").read():
+            if open(os.path.join(ud, f[:-4] + ".dat"), encoding="utf-8").read() != open(ce[t][:-4] + ".dat", encoding="utf-8").read():
                 problems.append("t = %s: field*.dat differs" % t)
             if vts_payload(os.path.join(ud, f)) != vts_payload(ce[t]):
                 problems.append("t = %s: .vts arrays differ" % t)
@@ -682,7 +682,7 @@ def main():
 
     bad = 0
     for case, steps in PLAN:
-        base = open(os.path.join(CASES, case + ".toml")).read()
+        base = open(os.path.join(CASES, case + ".toml"), encoding="utf-8").read()
         d0 = os.path.join(args.workdir, case, "source")
         rc, log = run(exe, d0, "src", edit(base, steps, "src"), args.run_timeout)
         fields = sorted(glob.glob(os.path.join(d0, "src", "field*.dat")))

@@ -115,7 +115,7 @@ def wave(model, twoD):
 
 
 def last_lines(path, n=1):
-    rows = [l.split() for l in open(path) if l.strip() and not l.lstrip().startswith("#")
+    rows = [l.split() for l in open(path, encoding="utf-8") if l.strip() and not l.lstrip().startswith("#")
             and re.match(r"\s*[-+0-9.]", l)]
     return rows[-n:]
 
@@ -153,7 +153,7 @@ def probe(model, twoD):
         #  it is printed with), and that point is on the side of the probe:
         #  the film is symmetric about x = 0, so the data alone would not
         #  tell the probe from its mirror image.
-        head = open(pf).readline()
+        head = open(pf, encoding="utf-8").readline()
         m = re.search(r"\[mm\] = \(([-+0-9.eE]+)(?:, ([-+0-9.eE]+))?", head)
         if not m:
             return None, "no position in the header of Probe00.dat: " + head.strip()
@@ -168,7 +168,7 @@ def probe(model, twoD):
             #  Z over the thickness of the probe's column at the start
             #  (the concentration of this film is the same at every level,
             #  so only the header tells which cell was taken).
-            m = re.search(r"zeta = ([-+0-9.eE]+)", open(pf).readline())
+            m = re.search(r"zeta = ([-+0-9.eE]+)", open(pf, encoding="utf-8").readline())
             if not m:
                 return None, "no zeta in the header of Probe00.dat"
             want = 2.0 / float(last_lines(pf, 10 ** 6)[0][5])     # Z / h, both in um
@@ -236,7 +236,7 @@ def restart_edited(model):
         for sub, edit in (("u", False), ("e", True)):
             os.makedirs(os.path.join(d, sub))
             shutil.copy(os.path.join(d, "a", "field00001.state"), os.path.join(d, sub))
-            lines = open(os.path.join(d, "a", "field00001.dat")).read().split("\n")
+            lines = open(os.path.join(d, "a", "field00001.dat"), encoding="utf-8").read().split("\n")
             if edit:
                 #  every row of that column (ConcZ writes one per level)
                 head = [c.lstrip("#").split("[")[0].strip() for c in lines[0].split("\t")]
@@ -250,7 +250,7 @@ def restart_edited(model):
                         i = head.index(name)
                         row[i] = repr(float(row[i]) * 1.01)
                     lines[k] = "\t".join(row)
-            open(os.path.join(d, sub, "field00001.dat"), "w").write("\n".join(lines))
+            open(os.path.join(d, sub, "field00001.dat"), "w", encoding="utf-8").write("\n".join(lines))
         out = {}
         for sub in ("u", "e"):
             r = edit_toml(s, {}, {"Restart": {"Enable": "true", "ASCII": "true",
@@ -260,7 +260,7 @@ def restart_edited(model):
             rc, log = run(exe, d, "r" + sub, r, 600)
             if rc != 0:
                 return None, "restart from %s failed: %s" % (sub, log[-400:])
-            warn = open(os.path.join(d, "r" + sub, "Warnings.txt")).read()
+            warn = open(os.path.join(d, "r" + sub, "Warnings.txt"), encoding="utf-8").read()
             out[sub] = (warn, read_field(os.path.join(d, "r" + sub, "field00002.dat"))[0])
         if "is not the state saved beside it" in out["u"][0]:
             return None, "the unedited copy was reported as edited"
@@ -294,7 +294,7 @@ def restart_pinned(workdir, exe):
     rc, log = run(exe, d, "r", r, 600)
     if rc != 0:
         return None, "the restart was refused: " + log[-400:]
-    warn = open(os.path.join(d, "r", "Warnings.txt")).read()
+    warn = open(os.path.join(d, "r", "Warnings.txt"), encoding="utf-8").read()
     if "Pinning Xmin: the restarted film reaches" not in warn or "taken as it is" not in warn:
         return None, "no warning about the film at the pinned wall: " + warn[-300:]
     return 0.0, None
@@ -346,7 +346,7 @@ def adaptive_dt(workdir, exe):
 
 
 def jobinfo_value(path, title):
-    for line in open(path):
+    for line in open(path, encoding="utf-8"):
         if line.startswith(title + " :"):
             return float(line.split(":", 1)[1])
     raise ValueError("%s: no '%s'" % (path, title))
@@ -406,7 +406,7 @@ def adaptive_source(workdir, exe):
         return None, "run failed: " + log[-400:]
     if "dt+" not in log:
         return None, "the step was never lengthened"
-    hist = [l.split("\t") for l in open(os.path.join(d, "a", "History.dat"))]
+    hist = [l.split("\t") for l in open(os.path.join(d, "a", "History.dat"), encoding="utf-8")]
     k = [c.split("[")[0].strip() for c in hist[0]].index("SuppliedVol")
     ratios = []
     for r in hist[1:]:
@@ -446,10 +446,10 @@ def coupling_cz(workdir, exe):
     except RuntimeError as e:
         return None, "run failed: " + str(e)[-400:]
     res = os.path.join(wd, "CZa_1d_n32_dt0.02", "a")
-    warn = open(os.path.join(res, "Warnings.txt")).read()
+    warn = open(os.path.join(res, "Warnings.txt"), encoding="utf-8").read()
     if warn.count("did not settle in 8 coupling passes") != 1 or "the step is cut" not in warn:
         return None, "not one warning that the passes did not settle and the step was cut"
-    ji = open(os.path.join(res, "JobInfo.txt")).read()
+    ji = open(os.path.join(res, "JobInfo.txt"), encoding="utf-8").read()
     m = re.search(r"Steps failed: the passes did not settle :\s*(\d+)", ji)
     if not m or int(m.group(1)) < 1:
         return None, "steps failed for the passes: %s, not 1 or more" % (m.group(1) if m else "?")
@@ -471,7 +471,7 @@ def evap_precursor(model):
         rc, log = run(exe, d, "a", s, 900)
         if rc != 0:
             return None, "run failed: " + log[-400:]
-        hist = [l.rstrip("\n").split("\t") for l in open(os.path.join(d, "a", "History.dat"))]
+        hist = [l.rstrip("\n").split("\t") for l in open(os.path.join(d, "a", "History.dat"), encoding="utf-8")]
         names = [c.split("[")[0].strip() for c in hist[0]]
         iv, ie, ih = names.index("Volume"), names.index("EvaporatedVol"), names.index("minH")
         rows = [[float(r[k]) for k in (iv, ie, ih)] for r in hist[1:] if len(r) == len(names)]
@@ -512,16 +512,16 @@ def stagnation_wm(workdir, exe):
     if rc != 0:
         return None, "run failed: " + log[-400:]
     res = os.path.join(d, "a")
-    warn = open(os.path.join(res, "Warnings.txt")).read()
+    warn = open(os.path.join(res, "Warnings.txt"), encoding="utf-8").read()
     if warn.count("stagnated far from convergence") != 1 or "the step is cut" not in warn:
         return None, "not one warning that the correction stagnated and the step was cut"
-    ji = open(os.path.join(res, "JobInfo.txt")).read()
+    ji = open(os.path.join(res, "JobInfo.txt"), encoding="utf-8").read()
     m = re.search(r"Steps failed: the Newton correction stagnated :\s*(\d+)", ji)
     if not m or int(m.group(1)) < 1:
         return None, "steps failed on a stagnation: %s, not 1 or more" % (m.group(1) if m else "?")
     if not re.search(r"Termination Type :\s*normal", ji):
         return None, "the run did not end normally"
-    hist = [l.split("\t") for l in open(os.path.join(res, "History.dat"))]
+    hist = [l.split("\t") for l in open(os.path.join(res, "History.dat"), encoding="utf-8")]
     k = [c.split("[")[0].strip() for c in hist[0]].index("VolErr")
     return max(abs(float(r[k])) for r in hist[1:]), None
 

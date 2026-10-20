@@ -48,7 +48,7 @@ CASES = os.path.join(os.path.dirname(HERE), "cases")
 
 
 def case(name):
-    with open(os.path.join(CASES, name + ".toml")) as f:
+    with open(os.path.join(CASES, name + ".toml"), encoding="utf-8") as f:
         return f.read()
 
 
@@ -485,7 +485,7 @@ def conc_out_of_range(exe, workdir):
         for job, text in (("a", s), ("b", None)):
             if text is None:
                 #  one column (the cell nearest x = 0, every layer) set to val
-                lines = open(os.path.join(d, "src", "field00001.dat")).read().split("\n")
+                lines = open(os.path.join(d, "src", "field00001.dat"), encoding="utf-8").read().split("\n")
                 hdr = [h.strip() for h in lines[0].lstrip("#").split("\t")]
                 ic = hdr.index(col)
                 x0 = min({float(l.split("\t")[0]) for l in lines[1:] if l.strip()}, key=abs)
@@ -497,16 +497,16 @@ def conc_out_of_range(exe, workdir):
                             t[hdr.index("HS[um]")] = repr(float(t[hdr.index("SS[um]")]) + val)
                         lines[n] = "\t".join(t)
                 os.makedirs(os.path.join(d, "start"))
-                with open(os.path.join(d, "start", "field00001.dat"), "w") as f:
+                with open(os.path.join(d, "start", "field00001.dat"), "w", encoding="utf-8") as f:
                     f.write("\n".join(lines))
                 text = sub(sub(s, r"^JobName = .*$", 'JobName = "rst"'), r"^EndTime = .*$", "EndTime = 5e-3")
                 text = sub(text, r"^\[Restart\]\n(?:[A-Za-z].*\n)*",
                            '[Restart]\nEnable = true\nASCII = true\nFileName = "start/field00001.dat"\n'
                            "RestartTime = 1e-3\nFileIndex = 2\n")
-            with open(os.path.join(d, job + ".toml"), "w") as f:
+            with open(os.path.join(d, job + ".toml"), "w", encoding="utf-8") as f:
                 f.write(text)
             try:
-                r = subprocess.run([exe, job + ".toml"], cwd=d, capture_output=True, text=True, timeout=300)
+                r = subprocess.run([exe, job + ".toml"], cwd=d, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
                 outs.append((r.returncode, r.stdout + r.stderr))
             except subprocess.TimeoutExpired:
                 outs.append((-1, "timed out"))
@@ -538,10 +538,10 @@ def grid_size(exe, workdir):
         d = os.path.join(workdir, name)
         os.makedirs(d)
         s = sub(sub(two, r"^Nx = .*$", "Nx = 3000"), r"^Ny = .*$", "Ny = %d" % ny)
-        with open(os.path.join(d, "a.toml"), "w") as f:
+        with open(os.path.join(d, "a.toml"), "w", encoding="utf-8") as f:
             f.write(s)
         r = subprocess.run([exe, "--check-input", "a.toml"], cwd=d, capture_output=True,
-                           text=True, timeout=120)
+                           text=True, encoding="utf-8", errors="replace", timeout=120)
         out = r.stdout + r.stderr
         expect = "(Grid.Nx+4)*(Grid.Ny+4)*(Grid.Nz+4) must not exceed 50000000"
         if (r.returncode == 0) != ok or (not ok and expect not in out):
@@ -558,9 +558,9 @@ def inp_unterminated(exe, workdir):
     value, and every key after it kept its default.)"""
     d = os.path.join(workdir, "inp_unterminated")
     os.makedirs(d)
-    with open(os.path.join(d, "a.inp"), "w") as f:
+    with open(os.path.join(d, "a.inp"), "w", encoding="utf-8") as f:
         f.write('SolverName = "Yuzen-1.0"\nJobName = "a\nblock Grid\n  Nx = 10\nend\n')
-    r = subprocess.run([exe, "--check-input", "a.inp"], cwd=d, capture_output=True, text=True, timeout=120)
+    r = subprocess.run([exe, "--check-input", "a.inp"], cwd=d, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
     out = r.stdout + r.stderr
     expect = "a.inp:2: unterminated string for 'JobName'"
     if r.returncode == 0 or expect not in out:
@@ -584,9 +584,9 @@ def thread_requests(exe, workdir):
     #  has nothing to check here. It is recognized by the runtime it reports.
     d = os.path.join(workdir, "threads_probe")
     os.makedirs(d)
-    with open(os.path.join(d, "probe.toml"), "w") as f:
+    with open(os.path.join(d, "probe.toml"), "w", encoding="utf-8") as f:
         f.write(re.sub(r"^JobName = .*$", 'JobName = "probe"', text, count=1, flags=re.M))
-    r = subprocess.run([exe, "probe.toml"], cwd=d, capture_output=True, text=True, timeout=300)
+    r = subprocess.run([exe, "probe.toml"], cwd=d, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
     if r.returncode == 0 and "OMP_MAX_THREADS" not in r.stdout + r.stderr:
         print("skip threads_*             built without OpenMP")
         return 0
@@ -600,12 +600,12 @@ def thread_requests(exe, workdir):
         d = os.path.join(workdir, name)
         os.makedirs(d)
         t = re.sub(r"^JobName = .*$", 'JobName = "%s"' % name, text, count=1, flags=re.M)
-        with open(os.path.join(d, name + ".toml"), "w") as f:
+        with open(os.path.join(d, name + ".toml"), "w", encoding="utf-8") as f:
             f.write(t)
         e = dict(os.environ, **env)
         if "YUZEN_THREAD_CAP" not in env:
             e.pop("YUZEN_THREAD_CAP", None)
-        r = subprocess.run([exe, name + ".toml"], cwd=d, capture_output=True, text=True, timeout=300, env=e)
+        r = subprocess.run([exe, name + ".toml"], cwd=d, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300, env=e)
         out = r.stdout + r.stderr
         ran = (r.returncode == 0)
         made = os.path.isdir(os.path.join(d, name))
@@ -632,11 +632,11 @@ def main():
         d = os.path.join(args.workdir, name)
         os.makedirs(d)
         text = re.sub(r"^JobName = .*$", 'JobName = "%s"' % name, text, count=1, flags=re.M)
-        with open(os.path.join(d, name + ".toml"), "w") as f:
+        with open(os.path.join(d, name + ".toml"), "w", encoding="utf-8") as f:
             f.write(text)
         try:
             r = subprocess.run([exe, name + ".toml"], cwd=d, capture_output=True,
-                               text=True, timeout=300)
+                               text=True, encoding="utf-8", errors="replace", timeout=300)
             rc, out = r.returncode, r.stdout + r.stderr
         except subprocess.TimeoutExpired:
             rc, out = -1, "timed out"

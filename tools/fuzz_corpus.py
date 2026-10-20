@@ -147,12 +147,12 @@ def write_inputs(out):
         if tomllib:
             with open(f, "rb") as fh:
                 doc = tomllib.load(fh)
-            with open(os.path.join(idir, base + ".inp"), "w") as fh:
+            with open(os.path.join(idir, base + ".inp"), "w", encoding="utf-8") as fh:
                 fh.write("\n".join(to_inp(doc)) + "\n")
     #  The .inp samples removed in b94a8a0
     try:
         names = subprocess.run(["git", "-C", ROOT, "ls-tree", "-r", "--name-only", "b94a8a0^"],
-                               capture_output=True, text=True, check=True).stdout.split()
+                               capture_output=True, text=True, encoding="utf-8", errors="replace", check=True).stdout.split()
         for name in names:
             if name.endswith(".inp"):
                 body = subprocess.run(["git", "-C", ROOT, "show", "b94a8a0^:" + name],
@@ -174,11 +174,11 @@ def write_restart(out, exe):
         name = "%s_%s" % (model, dim)
         d = os.path.join(work, name)
         os.makedirs(d, exist_ok=True)
-        with open(os.path.join(d, "r.toml"), "w") as fh:
+        with open(os.path.join(d, "r.toml"), "w", encoding="utf-8") as fh:
             #  A 1-D film is the line y = 0 of the shapes: the bump is centered on it.
             cy = "0.5e-3" if dim == "xyh" else "0.0"
             fh.write(RESTART_TEMPLATE.format(model=model, dim=dim, nx=nx, ny=ny, nz=nz, cy=cy))
-        p = subprocess.run([exe, "r.toml"], cwd=d, env=env, capture_output=True, text=True)
+        p = subprocess.run([exe, "r.toml"], cwd=d, env=env, capture_output=True, text=True, encoding="utf-8", errors="replace")
         if p.returncode != 0:
             sys.exit("fuzz_corpus: the restart run %s failed:\n%s%s" % (name, p.stdout[-2000:], p.stderr))
         for k in (0, 2):
@@ -214,7 +214,7 @@ def write_dicts(out):
     words.update(["end", "true", "false", "nan", "inf", "-inf", "1e308", "-1e308", "0",
                   "-1", "1e-308", "4e-324", "2147483648", "9223372036854775808", "[]", "( )",
                   "{}", "=", "\"\"", "'''", '"""', "0x7fffffff", "1_000", "+inf"])
-    with open(os.path.join(out, "input.dict"), "w") as fh:
+    with open(os.path.join(out, "input.dict"), "w", encoding="utf-8") as fh:
         for w in sorted(words):
             fh.write(dict_entry(w) + "\n")
     rwords = ["# Yuzen restart state 1", "binary", "vector ", "text ", "model",
@@ -226,7 +226,7 @@ def write_dicts(out):
               "<YuzenData", "/>", "Nx=\"", "Ny=\"", "Nz=\"", "Model=\"ConcZ\"",
               "<AppendedData encoding=\"raw\">", "   _", "Name=\"FilmThickness\"",
               "\xff\xff\xff\xff", "\x00\x00\x00\x00", "nan", "inf", "-1", "1e308", "\t", "#"]
-    with open(os.path.join(out, "restart.dict"), "w") as fh:
+    with open(os.path.join(out, "restart.dict"), "w", encoding="utf-8") as fh:
         for w in rwords:
             fh.write(dict_entry(w) + "\n")
 

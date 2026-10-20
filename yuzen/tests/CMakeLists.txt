@@ -264,6 +264,19 @@ if(Python3_FOUND)
   endforeach()
 endif()
 
+# The scripts read and write UTF-8 (input files with Japanese paths, the
+# solver's output) and say so in every open(); UTF-8 mode also covers what
+# they print, which Windows would otherwise encode in the ANSI code page.
+if(Python3_FOUND)
+  foreach(t concz_vs_wm concz_vs_wm_2d restart_roundtrip restart_chain input_guards
+            error_paths doc_keys equivalence analytic mms advection features
+            mms_source_current proptest)
+    if(TEST ${t})
+      set_property(TEST ${t} APPEND PROPERTY ENVIRONMENT "PYTHONUTF8=1")
+    endif()
+  endforeach()
+endif()
+
 # Confirm in separate processes that changing the thread count does not
 # change the results
 if(YUZEN_ENABLE_OPENMP)

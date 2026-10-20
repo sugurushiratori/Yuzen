@@ -115,7 +115,7 @@ def check_mathjax(pkg, node=None):
         "  catch (e) { console.log(f+' :: '+e.message); process.exit(3); } }"
         % json.dumps(pkg))
     r = subprocess.run([node, "-e", probe, "--"] + list(MATHJAX_FILES),
-                       capture_output=True, text=True)
+                       capture_output=True, text=True, encoding="utf-8", errors="replace")
     if r.returncode == 3:
         f, _, why = r.stdout.strip().partition(" :: ")
         return "%s does not parse as JavaScript (%s)" % (f, why)
@@ -348,10 +348,10 @@ fs.writeFileSync(process.argv[4], JSON.stringify(out));
                         os.path.join(tmp, "macros.tex"),
                         os.path.join(tmp, "out.json"),
                         pkg],
-                       cwd=tmp, env=env, capture_output=True, text=True)
+                       cwd=tmp, env=env, capture_output=True, text=True, encoding="utf-8", errors="replace")
     if r.returncode != 0:
         sys.exit("MathJax failed:\n" + r.stderr[-3000:])
-    res = json.load(open(os.path.join(tmp, "out.json")))
+    res = json.load(open(os.path.join(tmp, "out.json"), encoding="utf-8"))
     bad = [(_math_jobs[i]["tex"], x.get("err")) for i, x in enumerate(res) if not x["ok"]]
     # MathJax does not throw on an unknown macro: it renders an error node in
     # place of the formula. That is a silent mistranslation, so treat it as a

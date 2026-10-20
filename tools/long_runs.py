@@ -65,7 +65,7 @@ RUNS = [
 
 
 def make_case(src, subs, job):
-    s = open(os.path.join(CASES, src + ".toml")).read()
+    s = open(os.path.join(CASES, src + ".toml"), encoding="utf-8").read()
     for pat, rep in subs + [key("JobName", '"%s"' % job)]:
         s, n = re.subn(pat, rep, s, count=1, flags=re.M)
         if n != 1:
@@ -75,7 +75,7 @@ def make_case(src, subs, job):
 
 def rss_kb(pid):
     try:
-        with open("/proc/%d/status" % pid) as f:
+        with open("/proc/%d/status" % pid, encoding="utf-8") as f:
             for line in f:
                 if line.startswith("VmRSS:"):
                     return int(line.split()[1])
@@ -86,7 +86,7 @@ def rss_kb(pid):
 
 def history(path):
     """Largest |VolErr|, |ResinVolErr| and the last time of a History.dat."""
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         head = f.readline().rstrip("\n").split("\t")
         names = [h.split(" ")[0] for h in head]
         iv, ir = names.index("VolErr"), names.index("ResinVolErr")
@@ -103,7 +103,7 @@ def history(path):
 
 
 def jobinfo(path, label):
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         for line in f:
             if line.startswith(label):
                 return line.split(":", 1)[1].strip()
@@ -114,11 +114,11 @@ def run_one(exe, workdir, name, src, subs, keep):
     d = os.path.join(workdir, name)
     shutil.rmtree(d, ignore_errors=True)
     os.makedirs(d)
-    with open(os.path.join(d, "case.toml"), "w") as f:
+    with open(os.path.join(d, "case.toml"), "w", encoding="utf-8") as f:
         f.write(make_case(src, subs, name))
     env = dict(os.environ, OMP_NUM_THREADS="1")
     t0 = time.time()
-    with open(os.path.join(d, "run.log"), "w") as log:
+    with open(os.path.join(d, "run.log"), "w", encoding="utf-8") as log:
         p = subprocess.Popen([exe, "case.toml"], cwd=d, stdout=log, stderr=subprocess.STDOUT, env=env)
         samples = []
         while True:
@@ -168,11 +168,11 @@ def main():
         r = run_one(exe, a.workdir, name, src, subs, a.keep)
         rows.append(r)
         print("\t".join(str(r[c]) for c in cols), flush=True)
-    with open(os.path.join(a.workdir, "long_runs.tsv"), "w") as f:
+    with open(os.path.join(a.workdir, "long_runs.tsv"), "w", encoding="utf-8") as f:
         f.write("\t".join(cols) + "\n")
         for r in rows:
             f.write("\t".join(str(r[c]) for c in cols) + "\n")
-    with open(os.path.join(a.workdir, "summary.txt"), "w") as f:
+    with open(os.path.join(a.workdir, "summary.txt"), "w", encoding="utf-8") as f:
         w = [max(len(c), *(len(str(r[c])) for r in rows)) for c in cols]
         f.write("  ".join(c.ljust(n) for c, n in zip(cols, w)) + "\n")
         for r in rows:

@@ -356,7 +356,7 @@ def main():
             if not os.path.exists(p):
                 print("MISSING  %s" % p)
                 bad += 1
-            elif open(p).read() != txt:
+            elif open(p, encoding="utf-8").read() != txt:
                 print("DIFFERS  %s" % p)
                 bad += 1
         if bad:
@@ -367,7 +367,7 @@ def main():
     os.makedirs(args.outdir, exist_ok=True)
     for fname, txt in sorted(cases.items()):
         p = os.path.join(args.outdir, fname)
-        with open(p, "w") as f:
+        with open(p, "w", encoding="utf-8") as f:
             f.write(txt)
         print("wrote %s" % os.path.relpath(p, ROOT))
 

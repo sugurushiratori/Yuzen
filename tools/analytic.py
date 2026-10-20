@@ -211,7 +211,7 @@ RHO, MU, SIG, G = 1000.0, 0.1, 30.0e-3, 9.80665
 
 
 def case(name):
-    with open(os.path.join(CASES, name + ".toml")) as f:
+    with open(os.path.join(CASES, name + ".toml"), encoding="utf-8") as f:
         return f.read()
 
 
@@ -368,7 +368,7 @@ def check_eq_slip(workdir, exe, slip=1e-6, T=0.0102):
 def read_energy(d):
     """Energy.dat as a list of rows (t, F, D, int D dt, balance)."""
     rows = []
-    with open(os.path.join(d, "Energy.dat")) as f:
+    with open(os.path.join(d, "Energy.dat"), encoding="utf-8") as f:
         for line in f:
             if line.startswith("#") or not line.strip():
                 continue
@@ -536,7 +536,7 @@ def check_potential(workdir, exe, nx=32, p=1.0 / 3.0, g=500.0):
     if rc != 0:
         return None, "run failed: " + log[-400:]
     path = os.path.join(d, "a", "field00000.dat")
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         head = f.readline()
     if "PHI[Pa]" not in head:
         return None, "no PHI[Pa] column in " + path
@@ -1275,7 +1275,7 @@ def check_nozzle_area(workdir, exe, dt=1e-3, steps=5):
         rc, log = run(exe, d, "a", s, 900)
         if rc != 0:
             return None, "run failed: " + log[-400:]
-        hist = [l.split("\t") for l in open(os.path.join(d, "a", "History.dat"))]
+        hist = [l.split("\t") for l in open(os.path.join(d, "a", "History.dat"), encoding="utf-8")]
         cols = [c.split("[")[0].strip() for c in hist[0]]
         t, sup = float(hist[-1][cols.index("Time")]), float(hist[-1][cols.index("SuppliedVol")])
         worst = max(worst, abs(sup / (rate * math.pi * R * R * t) - 1.0))
@@ -1283,7 +1283,7 @@ def check_nozzle_area(workdir, exe, dt=1e-3, steps=5):
 
 
 def max_volerr(d, col="VolErr"):
-    hist = [l.split("\t") for l in open(os.path.join(d, "History.dat"))]
+    hist = [l.split("\t") for l in open(os.path.join(d, "History.dat"), encoding="utf-8")]
     k = [c.split("[")[0].strip() for c in hist[0]].index(col)
     return max(abs(float(r[k])) for r in hist[1:])
 
@@ -1482,7 +1482,7 @@ def check_conc_overshoot(workdir, exe, scheme, courant, twoD=False, nx=50, passa
     rc, log = run(exe, os.path.join(d, "init"), "a", overshoot_film(twoD, nx, dt, 1, scheme, evap)[0], 300)
     if rc != 0:
         return None, "initial run failed: " + log[-400:]
-    with open(os.path.join(d, "init", "a", "field00000.dat")) as f:
+    with open(os.path.join(d, "init", "a", "field00000.dat"), encoding="utf-8") as f:
         lines = f.read().split("\n")
     names = [c.split("[")[0] for c in lines[0].lstrip("#").split()]
     ix, ic = names.index("xx"), names.index("CC")
@@ -1496,7 +1496,7 @@ def check_conc_overshoot(workdir, exe, scheme, courant, twoD=False, nx=50, passa
             v[ic] = "%.17e" % (front[0] if math.cos(2 * math.pi * (x + y) / L) > 0 else front[1])
             ln = "\t".join(v)
         out.append(ln)
-    with open(os.path.join(d, "start.dat"), "w") as f:
+    with open(os.path.join(d, "start.dat"), "w", encoding="utf-8") as f:
         f.write("\n".join(out))
     s = overshoot_film(twoD, nx, dt, steps, scheme, evap)[0]
     s = edit_toml(s, {}, {"Restart": {"Enable": "true", "ASCII": "true", "FileName": '"../start.dat"',
@@ -1514,7 +1514,7 @@ def check_conc_overshoot(workdir, exe, scheme, courant, twoD=False, nx=50, passa
 
 
 def min_column(d, col):
-    hist = [l.split("\t") for l in open(os.path.join(d, "History.dat"))]
+    hist = [l.split("\t") for l in open(os.path.join(d, "History.dat"), encoding="utf-8")]
     k = [c.split("[")[0].strip() for c in hist[0]].index(col)
     return min(float(r[k]) for r in hist[1:])
 
@@ -1681,11 +1681,11 @@ def check_nozzle_supplied(workdir, exe, twoD=False, cs=0.9):
     if rc != 0:
         return None, "run failed: " + log[-400:]
     res = os.path.join(d, "a")
-    hist = [l.split("\t") for l in open(os.path.join(res, "History.dat"))]
+    hist = [l.split("\t") for l in open(os.path.join(res, "History.dat"), encoding="utf-8")]
     cols = [c.split("[")[0].strip() for c in hist[0]]
     moved = max(abs(float(r[cols.index(k)]) - 0.5) for r in hist[1:] for k in ("minC", "maxC"))
     cuts = 0
-    for l in open(os.path.join(res, "JobInfo.txt")):
+    for l in open(os.path.join(res, "JobInfo.txt"), encoding="utf-8"):
         if l.startswith("Steps failed: the Newton correction stagnated :"):
             cuts = int(l.rsplit(":", 1)[1])
     return (max_volerr(res), max_volerr(res, "ResinVolErr"), moved, cuts), None
@@ -1807,7 +1807,7 @@ def nozzle_balance(twoD):
 
 
 def jobinfo_value(path, title, default=None):
-    for line in open(path):
+    for line in open(path, encoding="utf-8"):
         if line.startswith(title + " :"):
             return float(line.split(":", 1)[1])
     if default is not None:
@@ -1853,7 +1853,7 @@ def check_leveling_adaptive(workdir, exe, model="WM", nx=32, criterion="1e-5"):
     #  The field files and the History.dat rows are written at the same steps
     #  (the same interval); the time is taken from History.dat
     times = []
-    for line in open(os.path.join(res, "History.dat")):
+    for line in open(os.path.join(res, "History.dat"), encoding="utf-8"):
         if line.strip() and not line.startswith(("#", "Time")):
             times.append(float(line.split()[0]))
     fs = sorted(glob.glob(os.path.join(res, "field*.dat")))

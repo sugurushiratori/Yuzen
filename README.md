@@ -1,5 +1,7 @@
 <img src="docs/logo/yuzen-lockup-h.svg" alt="Yuzen" height="72">
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23502846.svg)](https://doi.org/10.5281/zenodo.23502846)
+
 **A thin liquid film flow solver based on the lubrication approximation.**
 
 Yuzen computes how a thin liquid layer on a substrate evolves: how it levels
@@ -347,7 +349,14 @@ Versions, license texts and the toml++ change are in
 
 If you use Yuzen in published work, please cite it using the metadata in
 [`CITATION.cff`](CITATION.cff) (GitHub's "Cite this repository" button
-produces APA and BibTeX from it).
+produces APA and BibTeX from it). Every release is archived on Zenodo:
+
+- all versions (resolves to the latest):
+  [10.5281/zenodo.23502846](https://doi.org/10.5281/zenodo.23502846)
+- Yuzen 1.0.0:
+  [10.5281/zenodo.23502847](https://doi.org/10.5281/zenodo.23502847)
+
+To make a result reproducible, cite the DOI of the version you used.
 
 ## Author
 

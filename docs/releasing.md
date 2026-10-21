@@ -73,9 +73,12 @@ git tag -a vMAJOR.MINOR.PATCH -m "Yuzen MAJOR.MINOR.PATCH"
 git push origin vMAJOR.MINOR.PATCH
 ```
 
-- [ ] The release workflow passes. The release then carries
-      `yuzen-manual.pdf`, `yuzen-manual.html` and the text from
-      `CHANGELOG.md`, and GitHub adds the source archives.
+- [ ] The release workflow passes. The release then carries the manual
+      (`yuzen-manual.pdf`, `yuzen-manual.html` and the Japanese edition),
+      the solver for Linux, macOS and Windows (each run on the tutorial case
+      before it is attached), and the text from `CHANGELOG.md`, and GitHub
+      adds the source archives. To add the files to a release made before,
+      run the workflow by hand (Actions > Release > Run workflow) with its tag.
 - [ ] Download the source archive, build it and run `ctest -R yuzen_tests`.
       This checks that the archive is complete and that Eigen can be fetched
       when it is not installed.

@@ -146,6 +146,24 @@ thickness. `CZ` resolves it instead, at the cost of a grid in `z`.
   on your own machine, with cases built so that every run does exactly the
   same work.
 
+## Ready-built binaries
+
+Each [release](https://github.com/sugurushiratori/Yuzen/releases) carries the
+solver ready to run, next to the manual:
+
+| Archive | Runs on | Linear solvers |
+|---|---|---|
+| `yuzen-<version>-linux-x86_64.tar.gz` | x86-64 Linux with glibc 2.28 or later (RHEL/Rocky/Alma 8+, Ubuntu 20.04+) | Eigen, AMGCL |
+| `yuzen-<version>-macos-arm64.tar.gz` | macOS on Apple silicon (the oldest version is in the archive's `README-binary.txt`) | Eigen |
+| `yuzen-<version>-windows-x64.zip` | 64-bit Windows 10 or later | Eigen |
+
+Unpack it and run a case from the directory that holds it, for example
+`cd cases && ../bin/yuzen tutorial_1d.toml`. The OpenMP runtime is included.
+On macOS, if the system refuses the unsigned binary on its first run, run
+`xattr -dr com.apple.quarantine <unpacked directory>` once. The Linux binary
+uses GCC's OpenMP runtime; a build from source with LLVM's libomp (below) is
+faster on many cores.
+
 ## Building
 
 Requirements: a C++17 compiler and CMake ≥ 3.16.

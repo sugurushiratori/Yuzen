@@ -1,8 +1,13 @@
-# On a tag, build the manual (PDF and HTML, English and Japanese) and attach
-# it to the Release,
-# whose text is the tag's section of CHANGELOG.md.
+# On a tag, build the manual (PDF and HTML, English and Japanese) and the
+# solver for Linux, macOS and Windows, and attach them to the Release, whose
+# text is the tag's section of CHANGELOG.md.
 #
 #   git tag -a v1.0.0 -m "Yuzen 1.0.0" && git push origin v1.0.0
+#
+# Run by hand (Actions > Release > Run workflow) with a tag, it builds that
+# tag and attaches the files to its existing release, which is how files are
+# added to a release made before this workflow built them. Without a tag it
+# only builds, and the files are left as artifacts of the run.
 #
 # This is why the PDF and HTML are not kept in the repository. The HTML is
 # close to 6 MB, and a one-line fix to a chapter would fatten the whole
@@ -16,10 +21,19 @@ name: Release
 on:
   push:
     tags: [ 'v*' ]
-  workflow_dispatch:          # For getting the artifacts without a tag
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to build and attach to (e.g. v1.0.0); empty: build only'
+        required: false
+        default: ''
 
 permissions:
   contents: write             # Needed to attach files to the Release
+
+env:
+  # The tag being released: the pushed tag, or the one given by hand
+  TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || (startsWith(github.ref, 'refs/tags/') && github.ref_name || '') }}
 
 jobs:
   manual:
@@ -27,6 +41,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG || github.ref }}
 
       # LuaLaTeX is required. The preamble uses fontspec and unicode-math, so
       # pdflatex / xelatex cannot build it.
@@ -70,6 +86,171 @@ jobs:
             docs/manual/yuzen-manual-ja.pdf
             docs/manual/yuzen-manual-ja.html
 
+
+  # The solver, ready to run: bin/yuzen with the OpenMP runtime it needs
+  # beside it, the example cases, and the license files. Each archive is run
+  # on the tutorial case before it is uploaded.
+  binaries:
+    name: Binary (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    container: ${{ matrix.container }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # manylinux_2_28 (AlmaLinux 8, glibc 2.28): the binary runs on
+          # RHEL/Rocky/Alma 8 and later, Ubuntu 20.04 and later, and most
+          # clusters. GCC's libgomp is bundled (libomp is not available
+          # there); a build from source with libomp is faster on many cores.
+          - name: linux-x86_64
+            os: ubuntu-latest
+            container: quay.io/pypa/manylinux_2_28_x86_64
+            amgcl: 'ON'
+          - name: macos-arm64
+            os: macos-latest
+            container: ''
+            amgcl: 'OFF'
+          - name: windows-x64
+            os: windows-latest
+            container: ''
+            amgcl: 'OFF'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG || github.ref }}
+
+      - name: Version
+        shell: bash
+        run: |
+          v="${TAG#v}"
+          [ -n "$v" ] || v="$(git rev-parse --short HEAD)"
+          echo "PKG=yuzen-$v-${{ matrix.name }}" >> "$GITHUB_ENV"
+
+      - name: Tools (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          /opt/python/cp312-cp312/bin/pip install cmake
+          ln -sf /opt/python/cp312-cp312/bin/cmake /usr/local/bin/cmake
+
+      - name: Tools (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install libomp
+          echo "OpenMP_ROOT=$(brew --prefix libomp)" >> "$GITHUB_ENV"
+
+      # Eigen is fetched by CMake (3.4.0) on every platform, so that all
+      # three binaries are built against the same version.
+      - name: Configure
+        shell: bash
+        run: >
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          -DYUZEN_BUILD_TESTS=OFF -DYUZEN_WITH_AMGCL=${{ matrix.amgcl }}
+          -DCMAKE_OSX_DEPLOYMENT_TARGET=13.0
+
+      - name: Build
+        shell: bash
+        run: cmake --build build --config Release -j 2
+
+      - name: Assemble the package
+        shell: bash
+        run: |
+          set -eux
+          P="$PKG"; mkdir -p "$P/bin" "$P/lib" "$P/licenses"
+          case "${{ runner.os }}" in
+            Windows) cp build/bin/Release/yuzen.exe "$P/bin/" ;;
+            *)       cp build/bin/yuzen "$P/bin/" ;;
+          esac
+          cp -r cases "$P/"
+          cp LICENSE NOTICE THIRD_PARTY_NOTICES.md README.md CITATION.cff "$P/"
+          cp LICENSES/* "$P/licenses/"
+          case "${{ runner.os }}" in
+            Linux)
+              # libgomp and anything else outside glibc, beside the binary
+              omp=$(ldd "$P/bin/yuzen" | awk '/libgomp|libomp/ {print $3}')
+              cp -L "$omp" "$P/lib/"
+              patchelf --set-rpath '$ORIGIN/../lib' "$P/bin/yuzen"
+              echo "lib/$(basename "$omp"): GCC runtime library (libgomp), GPL-3.0 with the GCC Runtime Library Exception 3.1." > "$P/licenses/RUNTIME.txt"
+              ;;
+            macOS)
+              omp=$(otool -L "$P/bin/yuzen" | awk '/libomp/ {print $1}')
+              cp -L "$(brew --prefix libomp)/lib/libomp.dylib" "$P/lib/"
+              chmod u+w "$P/lib/libomp.dylib"
+              install_name_tool -id @rpath/libomp.dylib "$P/lib/libomp.dylib"
+              install_name_tool -change "$omp" @rpath/libomp.dylib "$P/bin/yuzen"
+              install_name_tool -add_rpath @executable_path/../lib "$P/bin/yuzen"
+              codesign --force -s - "$P/lib/libomp.dylib" "$P/bin/yuzen"
+              # the oldest macOS both files load on, for README-binary.txt
+              minos=$( (vtool -show-build "$P/bin/yuzen"; vtool -show-build "$P/lib/libomp.dylib") \
+                       | awk '/minos/ {print $2}' | sort -t. -k1,1n -k2,2n | tail -1)
+              :
+              lic=$(find "$(brew --prefix libomp)/" -maxdepth 2 -iname 'LICENSE*' | head -1)
+              { echo "lib/libomp.dylib: LLVM OpenMP runtime, Apache-2.0 WITH LLVM-exception."
+                [ -n "$lic" ] && { echo; cat "$lic"; } ; } > "$P/licenses/RUNTIME.txt"
+              ;;
+            Windows)
+              # the OpenMP runtime and the C++ runtime of MSVC, deployed
+              # beside the executable (Visual Studio redistributable files)
+              vs=$("/c/Program Files (x86)/Microsoft Visual Studio/Installer/vswhere.exe" -latest -property installationPath)
+              redist=$(ls -d "$(cygpath "$vs")"/VC/Redist/MSVC/*/x64 | sort -V | tail -1)
+              cp "$redist"/Microsoft.VC*.OpenMP/vcomp140.dll "$P/bin/"
+              cp "$redist"/Microsoft.VC*.CRT/*.dll "$P/bin/"
+              rmdir "$P/lib"
+              echo "bin/*.dll: Microsoft Visual C++ runtime and OpenMP runtime, redistributable files of Visual Studio." > "$P/licenses/RUNTIME.txt"
+              ;;
+          esac
+          cat > "$P/README-binary.txt" <<EOF
+          Yuzen ${TAG:-snapshot}, ${{ matrix.name }}
+
+          Run a case from the directory that holds it:
+            cd cases && ../bin/yuzen tutorial_1d.toml
+          The results go to a directory named after the case's JobName. The
+          manual is attached to the release next to this archive.
+
+          Built with the Eigen backend$( [ "${{ matrix.amgcl }}" = ON ] && echo " and AMGCL" ).
+          The OpenMP runtime is in lib/ (bin/ on Windows) and is found there.
+          A build from source is the fastest on many cores; see README.md.
+          $( [ -n "${minos:-}" ] && echo "Requires macOS $minos or later." )
+          macOS: on the first run, if the system refuses the unsigned binary,
+          run   xattr -dr com.apple.quarantine <this directory>   once.
+          EOF
+
+      - name: Run the tutorial with the packaged binary
+        shell: bash
+        run: |
+          set -eux
+          here="$PWD"; t="$RUNNER_TEMP/smoke"; mkdir -p "$t"
+          cp "$PKG/cases/tutorial_1d.toml" "$t/"
+          cd "$t" && "$here/$PKG/bin/yuzen" tutorial_1d.toml
+          test -s "$t"/*/History.dat
+          ! test -s "$t"/*/FatalErrors.txt
+
+      - name: Archive
+        shell: bash
+        run: |
+          if [ "${{ runner.os }}" = Windows ]; then 7z a -tzip "$PKG.zip" "$PKG" >/dev/null; echo "ARCHIVE=$PKG.zip" >> "$GITHUB_ENV"
+          else tar czf "$PKG.tar.gz" "$PKG"; echo "ARCHIVE=$PKG.tar.gz" >> "$GITHUB_ENV"; fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: binary-${{ matrix.name }}
+          path: ${{ env.ARCHIVE }}
+
+  publish:
+    name: Attach to the release
+    needs: [manual, binaries]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        if: env.TAG != ''
+        with:
+          ref: ${{ env.TAG }}
+      - uses: actions/download-artifact@v4
+        if: env.TAG != ''
+        with:
+          path: dist
+          merge-multiple: true
+
       # The release text is the tag's section of CHANGELOG.md ("## [1.0.0]"
       # for v1.0.0, up to the next "## ["). A tag without a section fails
       # here, so that a release is never published without its notes. A tag
@@ -77,9 +258,9 @@ jobs:
       # without a section, and is published as a pre-release, which is how
       # this workflow is tried out before the real tag.
       - name: Release notes from CHANGELOG.md
-        if: startsWith(github.ref, 'refs/tags/')
+        if: env.TAG != ''
         run: |
-          v="${GITHUB_REF_NAME#v}"
+          v="${TAG#v}"
           awk -v h="## [$v]" 'index($0, "## [") == 1 { on = ($0 == h); next } on' \
             CHANGELOG.md > "$RUNNER_TEMP/notes.md"
           if [ ! -s "$RUNNER_TEMP/notes.md" ]; then
@@ -90,15 +271,12 @@ jobs:
           fi
 
       - name: Attach to the release
-        if: startsWith(github.ref, 'refs/tags/')
+        if: env.TAG != ''
         uses: softprops/action-gh-release@v2
         with:
-          name: Yuzen ${{ github.ref_name }}
+          tag_name: ${{ env.TAG }}
+          name: Yuzen ${{ env.TAG }}
           body_path: ${{ runner.temp }}/notes.md
-          prerelease: ${{ contains(github.ref_name, '-') }}
-          files: |
-            docs/manual/yuzen-manual.pdf
-            docs/manual/yuzen-manual.html
-            docs/manual/yuzen-manual-ja.pdf
-            docs/manual/yuzen-manual-ja.html
+          prerelease: ${{ contains(env.TAG, '-') }}
+          files: dist/*
           fail_on_unmatched_files: true

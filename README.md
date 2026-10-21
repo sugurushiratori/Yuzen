@@ -376,6 +376,12 @@ produces APA and BibTeX from it). Every release is archived on Zenodo:
 
 To make a result reproducible, cite the DOI of the version you used.
 
+The paper describing Yuzen (preprint, submitted to SoftwareX):
+
+> S. Shiratori, Yuzen: a finite-difference solver for thin liquid films of
+> evaporating binary solutions in the lubrication approximation (2026).
+> [10.5281/zenodo.23537972](https://doi.org/10.5281/zenodo.23537972)
+
 ## Author
 
 Suguru Shiratori, Tokyo City University.

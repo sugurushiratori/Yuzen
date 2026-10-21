@@ -45,3 +45,13 @@ keywords:
 license: Apache-2.0
 version: 1.0.0
 date-released: 2026-10-20
+references:
+  - type: article
+    title: "Yuzen: a finite-difference solver for thin liquid films of evaporating binary solutions in the lubrication approximation"
+    authors:
+      - family-names: Shiratori
+        given-names: Suguru
+        orcid: "https://orcid.org/0000-0003-0158-6798"
+    year: 2026
+    doi: 10.5281/zenodo.23537972
+    notes: "Preprint, submitted to SoftwareX"

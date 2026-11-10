@@ -259,6 +259,22 @@ ILUを用いた\val{"eigen"}バックエンド & 同じ問題を二回 &
 外し、差を別に報告する。これは妥当な扱いである。これらの列は答えではなく
 ソルバーの性質を表すからである。
 
+\subsection{コミットごとの確認}
+\label{sec:verification:backendsci}
+
+AMGCL を含むビルドでは、\code{ctest}が\file{tools/backend\_agreement.py}（\code{backend\_agreement}）を実行する。五つのケースを、両方の式について\val{"eigen"}と\val{"amgcl"}で1スレッドで計算する。最後の場ファイルと\file{History.dat}の物理量の各列は、その列の最大値の$10^{-7}$以内で一致しなければならない。丸め誤差である\code{VolErr}と\code{ResinVolErr}は、両方の実行で$10^{-11}$未満でなければならない。最大の差を\Cref{tab:backendci}に示す。
+
+\begin{yzntable}{\code{backend\_agreement}：列のスケールに対する最大の差\label{tab:backendci}}{@{}L{0.30\textwidth} L{0.30\textwidth} L{0.28\textwidth}@{}}
+\textsf{\bfseries ケース} & \textsf{\bfseries モデル} & \textsf{\bfseries 最大の差} \\ \midrule
+\file{leveling\_1d\_reg} & 鉛直一様、1次元 & 6.1e-11（\code{Ux}） \\
+\file{allphys\_1d\_reg}  & 鉛直一様、1次元 & 7.5e-11（\code{Ux}） \\
+\file{concz\_1d\_reg}    & \val{"CZ"}、1次元  & 2.0e-11（\code{Uz}） \\
+\file{allphys\_2d\_reg}  & 鉛直一様、2次元 & 2.3e-13（\code{Ux}） \\
+\file{concz\_2d}（\SI{0.5}{\milli\second}まで） & \val{"CZ"}、2次元 & 3.7e-12（\code{Uz}） \\
+\end{yzntable}
+
+差は\cref{tab:backendagreement}と同じく線形ソルバーの許容誤差の大きさである。$10^{-7}$という上限は、計算機が変わっても余裕があり、異なる系を解いたバックエンドは捉えられる。
+
 \subsection{\val{"amgcl"}はスレッド数を変えると結果が変わる}
 \label{sec:verification:amgclthreads}
 

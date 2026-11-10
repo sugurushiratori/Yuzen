@@ -221,6 +221,18 @@ if(Python3_FOUND)
             --workdir ${CMAKE_CURRENT_BINARY_DIR}/features)
   set_tests_properties(features PROPERTIES TIMEOUT 900)
 
+  # The two linear-solver backends on the same inputs (tools/backend_agreement.py):
+  # well-mixed and CZ, 1-D and 2-D, every physical column within 1e-7 of its
+  # scale. Only a build with AMGCL has both.
+  if(YUZEN_WITH_AMGCL)
+    add_test(NAME backend_agreement
+      COMMAND ${Python3_EXECUTABLE}
+              ${CMAKE_SOURCE_DIR}/tools/backend_agreement.py
+              --exe $<TARGET_FILE:yuzen>
+              --workdir ${CMAKE_CURRENT_BINARY_DIR}/backend_agreement)
+    set_tests_properties(backend_agreement PROPERTIES TIMEOUT 1800)
+  endif()
+
   # The manufactured-solution source is generated with SymPy
   # (tools/mms_generate.py). Where SymPy is installed, check that the
   # generated file is what the generator makes of the equations now.
@@ -257,7 +269,7 @@ endif()
 # cores are free, and the answers do not depend on it.
 if(Python3_FOUND)
   foreach(t concz_vs_wm concz_vs_wm_2d restart_roundtrip restart_chain input_guards
-            equivalence analytic mms features advection proptest)
+            equivalence analytic mms features advection proptest backend_agreement)
     if(TEST ${t})
       set_property(TEST ${t} APPEND PROPERTY ENVIRONMENT "OMP_WAIT_POLICY=PASSIVE")
     endif()
@@ -270,7 +282,7 @@ endif()
 if(Python3_FOUND)
   foreach(t concz_vs_wm concz_vs_wm_2d restart_roundtrip restart_chain input_guards
             error_paths doc_keys equivalence analytic mms advection features
-            mms_source_current proptest)
+            mms_source_current proptest backend_agreement)
     if(TEST ${t})
       set_property(TEST ${t} APPEND PROPERTY ENVIRONMENT "PYTHONUTF8=1")
     endif()

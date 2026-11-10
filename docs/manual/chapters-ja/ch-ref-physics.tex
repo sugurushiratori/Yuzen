@@ -68,8 +68,8 @@
   と出力される（\cref{sec:output:warnings}）。前駆膜の大きさは形式的に埋める値ではなく、モデリング上の判断で決める。\cref{sec:terms:disjoining}を参照されたい。
 \end{warn}
 
-\begin{note}[\val{"CZ"}モデルはこのブロックを一切使わない]
-  \key{Physics.ConcField.Model = "CZ"}の場合、膜厚の式を構成するのは毛管圧、溶質マランゴニ効果、遠心力、鉛直重力、水平重力だけである。\key{Physics.DisjoiningPressure}と\key{Physics.Source}全体は、警告なしに効果を持たない。接触線を含む問題は鉛直一様モデルで扱う。
+\begin{note}[\val{"CZ"}モデルではこのブロックを指定できない]
+  \key{Physics.ConcField.Model = "CZ"}の場合、膜厚の式を構成するのは毛管圧、溶質マランゴニ効果、遠心力、鉛直重力、水平重力だけである。\key{Physics.DisjoiningPressure}または\key{Physics.Source}を有効にすると、計算は始まる前にそのキーを示すメッセージを出して停止する。接触線を含む問題は鉛直一様モデルで扱う。
 \end{note}
 
 \section{\key{Physics.VerticalGravity}}

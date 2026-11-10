@@ -240,6 +240,14 @@ static bool CheckMeaningful(Input &inp)
 	if(inp.Physics.Slip.Enable && inp.Physics.ConcField.Model.compare("CZ") == 0)
 		r.Refuse("Physics.Slip.Enable", 1,
 		         "Physics.Slip is not implemented for Physics.ConcField.Model = \"CZ\"");
+	//  CZ has no disjoining-pressure term and no source term: refused by
+	//  name, as slip is, rather than run without them.
+	if(inp.Physics.DisjoiningPressure.Enable && inp.Physics.ConcField.Model.compare("CZ") == 0)
+		r.Refuse("Physics.DisjoiningPressure.Enable", 1,
+		         "Physics.DisjoiningPressure is not implemented for Physics.ConcField.Model = \"CZ\" (use \"WM\" for a contact line)");
+	if(inp.Physics.Source.Enable && inp.Physics.ConcField.Model.compare("CZ") == 0)
+		r.Refuse("Physics.Source.Enable", 1,
+		         "Physics.Source is not implemented for Physics.ConcField.Model = \"CZ\"");
 	if(inp.Physics.Slip.Enable && inp.Physics.Slip.Length == 0)
 		Global::Warning<<"Physics.Slip.Enable = true with Physics.Slip.Length = 0: no slip, the run is the same as without the block."<<nl;
 	if(inp.Physics.Source.Enable)

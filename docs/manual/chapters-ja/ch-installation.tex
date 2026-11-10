@@ -109,7 +109,7 @@ cmake --install build --prefix $HOME/.local
 ctest --test-dir build
 \end{shell}
 
-\code{ctest}には十七個の項目を登録する（SymPy がインストールされていない環境では十六個）。
+\code{ctest}には十七個の項目を登録する（SymPy がインストールされていない環境では十六個）。AMGCL を含むビルドでは、さらに\code{backend\_agreement}が加わる。
 
 三つはテスト用バイナリを別々のプロセスで実行する。環境が与えるスレッド数、\env{OMP\_NUM\_THREADS=1}、
 \env{OMP\_NUM\_THREADS=4}で一回ずつである。これは無駄な重複ではない。スレッド不変性はこのスイートが

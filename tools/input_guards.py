@@ -106,7 +106,15 @@ def edge_film(s):
 #  (name, input text, whether it must run, text the output must contain)
 def plan():
     lv = few_steps(case("leveling_1d_reg"))
+    cz = few_steps(case("concz_1d_reg"))
     return [
+        #  CZ has neither term; it refuses them rather than running without
+        ("cz_disjoining",
+         sub(cz, r"^\[Physics\.Source\]$", "[Physics.DisjoiningPressure]\nEnable = true\nContactAngle = 10\n\n[Physics.Source]"),
+         False, "Physics.DisjoiningPressure is not implemented for Physics.ConcField.Model = \"CZ\""),
+        ("cz_source",
+         sub(cz, r"(\[Physics\.Source\]\n)Enable = false", r"\1Enable = true"),
+         False, "Physics.Source is not implemented for Physics.ConcField.Model = \"CZ\""),
         ("misspelled_key",
          sub(lv, r"^PrecursorRatio = 0\.5$", "PrecursorRatoi = 0.5"), False,
          "did you mean Initial.SurfaceShape.PrecursorRatio?"),

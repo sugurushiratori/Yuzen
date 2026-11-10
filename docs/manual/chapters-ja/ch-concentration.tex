@@ -103,7 +103,7 @@ $N_x \times N_z$に増える。さらに重要なのは、使える物理項が�
 \begin{warn}[\val{"CZ"}では分離圧もソース項も使えない]
   \val{"CZ"}で使える項は、毛管圧、溶質マランゴニ効果、鉛直重力、面内重力、遠心力、蒸発である。
   \key{Physics.DisjoiningPressure}と\key{Physics.Source}全体は\textbf{使えず}、
-  診断メッセージを出さずに無視される（\cref{sec:ref-physics:disjoining}）。接触線は分離圧によって
+  どちらかを有効にすると、計算は始まる前にそのキーを示すメッセージを出して停止する（\cref{sec:ref-physics:disjoining}）。接触線は分離圧によって
   生じるので、\textbf{接触線の問題にはすべて}\val{"WM"}\textbf{を用いなければならない}。
   現在のソルバーでは、膜厚方向に解像した濃度と移動する接触線を組み合わせることはできない。
 \end{warn}

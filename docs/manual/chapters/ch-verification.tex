@@ -291,6 +291,30 @@ and the three other diagnostic columns, out of the pass/fail decision and
 report their difference separately --- quite correctly, since they are a
 property of the solver rather than of the answer.
 
+\subsection{On every commit}
+\label{sec:verification:backendsci}
+
+On a build with AMGCL, \code{ctest} runs \file{tools/backend\_agreement.py}
+(\code{backend\_agreement}): five cases, each with \val{"eigen"} and with
+\val{"amgcl"} for both equations, on one thread. Every physical column of the
+last field file and of \file{History.dat} must agree to $10^{-7}$ of the
+largest value of the column, and \code{VolErr} and \code{ResinVolErr}, which
+are rounding, must stay below $10^{-11}$ in both runs.
+\Cref{tab:backendci} gives the largest differences.
+
+\begin{yzntable}{\code{backend\_agreement}: largest difference over column scale\label{tab:backendci}}{@{}L{0.30\textwidth} L{0.30\textwidth} L{0.28\textwidth}@{}}
+\textsf{\bfseries Case} & \textsf{\bfseries Model} & \textsf{\bfseries Largest difference} \\ \midrule
+\file{leveling\_1d\_reg} & well-mixed, 1-D & 6.1e-11 (\code{Ux}) \\
+\file{allphys\_1d\_reg}  & well-mixed, 1-D & 7.5e-11 (\code{Ux}) \\
+\file{concz\_1d\_reg}    & \val{"CZ"}, 1-D  & 2.0e-11 (\code{Uz}) \\
+\file{allphys\_2d\_reg}  & well-mixed, 2-D & 2.3e-13 (\code{Ux}) \\
+\file{concz\_2d} (to \SI{0.5}{\milli\second}) & \val{"CZ"}, 2-D & 3.7e-12 (\code{Uz}) \\
+\end{yzntable}
+
+The differences are of the order of the linear solvers' tolerances, as in
+\cref{tab:backendagreement}, and the bound of $10^{-7}$ leaves room for a
+different machine while catching a backend that solved a different system.
+
 \subsection{\val{"amgcl"} is not thread-invariant}
 \label{sec:verification:amgclthreads}
 

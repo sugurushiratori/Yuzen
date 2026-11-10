@@ -48,7 +48,8 @@ ctest --test-dir build
 ```
 
 `ctest` registers **seventeen entries** (sixteen where SymPy is not installed;
-all but the three test-binary entries need Python).
+all but the three test-binary entries need Python), and an eighteenth,
+`backend_agreement`, on a build with AMGCL.
 
 | Entry | What it requires |
 |---|---|
@@ -65,6 +66,7 @@ all but the three test-binary entries need Python).
 | `features` | probes, the stop conditions, the adaptive step and its clock, edited restart files (§12) |
 | `proptest` | random valid inputs end cleanly, keep the film positive and the volume and solute, and are invariant where they must be (§13) |
 | `doc_keys` | runs no solver: every key the parser reads, with its type, default, range and accepted values, against the key tables of the manual and of [`numerics.md`](numerics.md), the manual's TOML listings and every file in `cases/`, each also read by `yuzen --check-input` |
+| `backend_agreement` | only on a build with AMGCL: five cases (well-mixed and `CZ`, 1-D and 2-D) run with `"eigen"` and with `"amgcl"` agree to 1e-7 of each column's scale |
 | `mms_source_current` | only where SymPy is installed: the generated manufactured source is what the generator makes of the current equations |
 
 Calling the test binary directly prints the counts.

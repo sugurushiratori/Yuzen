@@ -138,15 +138,15 @@ step toward a verification is known, it is named.
     Nor has it been verified that the truncation-error estimate driving the
     adaptive time step corresponds to the actual error, beyond
     \code{adaptive\_dt} (\cref{sec:verification:features}).
-  \item \textbf{The \val{"amgcl"} backend is outside the test suite.} Its
-    agreement with \val{"eigen"} and the size of its difference
-    between one thread and two have both been measured
-    (\cref{sec:verification:backends,sec:verification:amgclthreads}), but that
-    is a single regression case run by hand --- not a property \code{ctest}
-    confirms on every commit. \code{ctest} passes on an AMGCL build, where the
-    2-D runs of \code{restart\_roundtrip} resolve \val{"auto"} to
-    \val{"amgcl"}, but that checks a restart, not the backend;
-    \code{equivalence} sets \val{"eigen"} explicitly. The claim of
+  \item \textbf{The \val{"amgcl"} backend is checked against \val{"eigen"},
+    not on its own.} On a build with AMGCL, \code{backend\_agreement} runs
+    five cases --- the well-mixed and \val{"CZ"} models, in one and two
+    dimensions --- with each backend and requires every physical column to
+    agree to $10^{-7}$ of its scale (\cref{sec:verification:backends}); the
+    AMGCL job of the continuous integration runs it on every commit. Every
+    other check sets \val{"eigen"} or resolves \val{"auto"} to it, so the
+    accuracy claims of this manual rest on \val{"eigen"}, and
+    \val{"amgcl"} inherits them through that comparison. The claim of
     \cref{sec:verification:linalg} --- that bit-identity across thread counts
     is \emph{asserted by a test} --- is about \val{"eigen"} alone, and
     \val{"amgcl"} can never join it: it is not bit-reproducible by

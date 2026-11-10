@@ -120,7 +120,8 @@ ctest --test-dir build
 \end{shell}
 
 \code{ctest} registers seventeen entries (sixteen where SymPy is not
-installed). Three run the test binary in separate
+installed), and an eighteenth, \code{backend\_agreement}, on a build with
+AMGCL. Three run the test binary in separate
 processes: once with whatever thread count the environment gives, once with
 \env{OMP\_NUM\_THREADS=1} and once with \env{OMP\_NUM\_THREADS=4}. That is not
 redundancy. Thread invariance is one of the claims the suite makes, and it can

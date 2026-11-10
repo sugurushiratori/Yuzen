@@ -142,8 +142,8 @@ importantly, the set of physics terms available shrinks:
   The terms \val{"CZ"} supports are capillary pressure, solutal capillarity,
   vertical gravity, in-plane gravity, centrifugal force and evaporation.
   \key{Physics.DisjoiningPressure} and the whole of \key{Physics.Source} are
-  \textbf{not available}, and are ignored without a diagnostic
-  (\cref{sec:ref-physics:disjoining}). Since disjoining pressure is what
+  \textbf{not available}; enabling either stops the run before it starts,
+  with a message naming the key (\cref{sec:ref-physics:disjoining}). Since disjoining pressure is what
   produces a contact line, \textbf{every contact-line problem must use}
   \val{"WM"}. There is no way to combine a resolved cross-film concentration
   with a moving contact line in the present solver.

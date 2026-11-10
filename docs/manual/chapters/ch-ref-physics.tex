@@ -126,12 +126,12 @@ margin the stiffest term in the model. See \cref{sec:terms:disjoining}.
   not a formality: see \cref{sec:terms:disjoining}.
 \end{warn}
 
-\begin{note}[The \val{"CZ"} model ignores this block entirely]
+\begin{note}[The \val{"CZ"} model refuses this block]
   With \key{Physics.ConcField.Model = "CZ"} the height equation is built from
   capillary pressure, solutocapillarity, centrifugal force, vertical gravity
-  and horizontal gravity only. \key{Physics.DisjoiningPressure} and the whole
-  of \key{Physics.Source} have no effect, silently. Contact-line problems
-  belong to the well-mixed models.
+  and horizontal gravity only. An enabled \key{Physics.DisjoiningPressure}
+  or \key{Physics.Source} stops the run before it starts, with a message
+  naming the key. Contact-line problems belong to the well-mixed models.
 \end{note}
 
 \section{\key{Physics.VerticalGravity}}

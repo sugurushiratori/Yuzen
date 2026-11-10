@@ -5,13 +5,14 @@ Peclet numbers.
     python3 tools/wm_cz_evaporation.py --exe build/bin/yuzen --workdir runs/wmcz --run
 
 Six runs, all made from cases/concz_1d_reg.toml: a one-
-dimensional film on a substrate step, 5 um thick on the low side and 10 um
-on the high side (top flat), resin fraction 0.5 at the start, evaporating at
-E0 = 1 um/s (Raoult), capillary leveling on, solutal Marangoni off (with it, the
-stratified film is unstable in the model at Pe >= 1; see the manual,
-"What has not been verified"), for 1.5 s. The diffusivity D is constant and takes three
-values, D = 1e-10, 1e-11, 1e-12 m^2/s, so that the Peclet number
-Pe = E0 h0 / D, h0 = 10 um, is 0.1, 1 and 10. Each D is run with the CZ
+dimensional film 5 um thick over a substrate step 5 um high (the free
+surface at 5 um on one side and 10 um on the other), resin fraction 0.5 at
+the start, evaporating at E0 = 1 um/s (Raoult), capillary leveling on,
+solutal Marangoni off (with it, the stratified film is unstable in the model
+at Pe >= 1; see the manual, "What has not been verified"), for 1.5 s. The
+diffusivity D is constant and takes three values, D = 5e-11, 5e-12,
+5e-13 m^2/s, so that the Peclet number Pe = E0 h / D on the film thickness
+h = 5 um is 0.1, 1 and 10. Each D is run with the CZ
 model and with the WM model on the same grid (Nx = 120, Nz = 121).
 
 With --run the cases are written to --workdir and run there (one thread
@@ -36,7 +37,7 @@ import numpy as np
 HERE = os.path.dirname(os.path.abspath(__file__))
 CASES = os.path.join(os.path.dirname(HERE), "cases")
 DATA = None                                        # --out
-PE = [("pe01", 1e-10, "0.1"), ("pe1", 1e-11, "1"), ("pe10", 1e-12, "10")]
+PE = [("pe01", 5e-11, "0.1"), ("pe1", 5e-12, "1"), ("pe10", 5e-13, "10")]
 E0 = 1e-6
 
 
@@ -119,7 +120,7 @@ def write(name, head, rows):
 
 
 def extract(wd):
-    flat = 0.3                                     # x > 0.3 mm: the flat 10 um side
+    flat = 0.3                                     # x > 0.3 mm: flat, over the raised substrate
     out_t, summary = {}, []
     for tag, D, pe in PE:
         for m in ("cz", "wm"):
@@ -143,9 +144,9 @@ def extract(wd):
                   ["%s %s, Pe = %s: evaporation rate averaged over the 1 mm domain" % (tag, m.upper(), pe),
                    "t[s] rate[um/s]"], zip(t, rate))
             write("wmcz_%s_%s_c.dat" % (tag, m),
-                  ["%s %s, Pe = %s: surface concentration over x > %g mm (WM: its only value)" % (tag, m.upper(), pe, flat),
+                  ["%s %s, Pe = %s: surface concentration over x > %g mm, over the raised substrate (WM: its only value)" % (tag, m.upper(), pe, flat),
                    "t[s] c_surface"], zip(ts, cs))
-            summary.append((tag, m, ev[-1], cs[-1]))
+            summary.append((tag, m, np.interp(1.5, t, ev), cs[30]))   # at t = 1.5 s
             if (tag, m) == ("pe1", "wm"):
                 x, h, _, _, _, hs, ss = field(fs[0])
                 write("wmcz_init_x.dat", ["t = 0 (every run)", "x[mm] h[um] surface[um] substrate[um]"], zip(x, h, hs, ss))

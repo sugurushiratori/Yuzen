@@ -40,9 +40,9 @@ unchanged, with bit-identical output. No input file needs editing.
   The `amgcl` backend was compared with `eigen` before, but by hand; it is
   now checked on every commit.
 - **`tools/wm_cz_evaporation.py`** runs the well-mixed and the CZ model on
-  the same evaporating film at Péclet numbers 0.1, 1 and 10. At 0.1 they
-  agree to 0.2 % in evaporated volume; at 10 the CZ skin cuts the evaporated
-  volume to 0.655 of the well-mixed one. The manual gives the table, and the
+  the same evaporating film at Péclet numbers 0.1, 1 and 10 (on the film
+  thickness). At 0.1 they agree to 0.4 % in evaporated volume; at 10 the CZ
+  skin halves the evaporated volume (0.494 of the well-mixed one). The manual gives the table, and the
   limit it found: with the solutal Marangoni stress, the stratified CZ film
   is unstable in the model at Pe ≥ 1 and the result depends on the grid.
 - **Manual:** how the Cox–Voinov slope moves with the precursor thickness

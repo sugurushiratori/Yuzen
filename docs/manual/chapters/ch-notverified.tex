@@ -135,6 +135,15 @@ step toward a verification is known, it is named.
     shows at the scale of a few cells is that instability, cut off by the
     grid and the scheme, and no check says what a converged answer there
     would be.
+    The film of \file{tools/wm\_cz\_evaporation.py} (\cref{tab:wm-cz-pe})
+    with \key{Physics.SolutoCapillarity} on is such a film: evaporation
+    enriches the surface and $\sigma_c = \SI{10}{\milli\newton\per\metre}$
+    makes it the stronger side. At $\Pen = 0.1$ the Marangoni number
+    $\sigma_c\,\Delta c\,h/(\mu D)$, with $\Delta c$ across the film, is about
+    20 and the run is smooth; at $\Pen = 1$ it is about $2\times10^{3}$, and
+    the surface shows waves a few cells long whose length changes between
+    $N_x = 60$, 120 and 240; at $\Pen = 10$ the film dries out locally and the
+    run stops.
     Nor has it been verified that the truncation-error estimate driving the
     adaptive time step corresponds to the actual error, beyond
     \code{adaptive\_dt} (\cref{sec:verification:features}).

@@ -22,7 +22,7 @@ Open an issue and include:
 * what you ran — the input file, or the smallest edit to a shipped case that
   reproduces it;
 * the version, from `yuzen --version` or the start-up banner
-  (`Yuzen-1.0.0 (build at: ...)`);
+  (`Yuzen-1.0.1 (build at: ...)`);
 * the linear-solver backend and `OMP_NUM_THREADS`, both of which are recorded
   in `JobInfo.txt`;
 * the whole of `JobInfo.txt`, and `FatalErrors.txt` if it is not empty.

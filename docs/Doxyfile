@@ -16,7 +16,7 @@
 # Project
 #---------------------------------------------------------------------------
 PROJECT_NAME           = "Yuzen"
-PROJECT_NUMBER         = 1.0.0
+PROJECT_NUMBER         = 1.0.1
 PROJECT_BRIEF          = "Thin liquid film flow solver (lubrication approximation)"
 PROJECT_LOGO           = logo/png/yuzen-icon-48.png
 

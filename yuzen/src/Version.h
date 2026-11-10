@@ -22,7 +22,7 @@
 //  1.0 is the first released version.
 #define YUZEN_VERSION_Major	1
 #define YUZEN_VERSION_Minor	0
-#define YUZEN_VERSION_Rev	0
+#define YUZEN_VERSION_Rev	1
 
 
 //////////////////////////////////////////

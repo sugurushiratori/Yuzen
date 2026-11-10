@@ -118,6 +118,19 @@ in \cref{sec:verification:spreading} depends on it, and the dependence is
 quoted there. Its \code{fit\_cap()} function is importable and is what measures
 the apparent angle of a single field file.
 
+\subsection{\file{tools/wm\_cz\_evaporation.py}}
+
+\begin{shell}
+python3 tools/wm_cz_evaporation.py --exe build/bin/yuzen --workdir runs/wmcz --run
+\end{shell}
+
+Writes six cases from \file{cases/concz\_1d\_reg.toml} --- the well-mixed and
+the \val{"CZ"} model at three diffusivities --- runs them, two at a time on one
+thread each (about ten minutes on two cores), and prints what
+\cref{tab:wm-cz-pe} lists. Without \code{--run} it reads runs already in
+\code{--workdir}; \code{--out} writes the time series and profiles as text.
+Needs NumPy; not part of \code{ctest}.
+
 \subsection{\file{tools/case\_runtimes.py}}
 
 \begin{shell}

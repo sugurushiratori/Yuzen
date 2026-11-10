@@ -8,6 +8,55 @@ moved a number, the case and the size of the difference) is set out there.
 The section of a release is used as the text of its GitHub release, so it is
 written for someone deciding whether to download it.
 
+## [1.0.1]
+
+A patch release. Two input combinations that 1.0.0 accepted and silently
+did not compute are now refused; every input that 1.0.0 ran correctly runs
+unchanged, with bit-identical output. No input file needs editing.
+
+### Fixed
+
+- **The CZ model refuses the disjoining pressure and the source.**
+  `Physics.ConcField.Model = "CZ"` has neither term, but 1.0.0 accepted
+  `[Physics.DisjoiningPressure]` and `[Physics.Source]` with `Enable = true`
+  and ran without them. Such an input now stops at the input check with a
+  message naming the key, as `Physics.Slip` already did. If you ran CZ with
+  either table enabled, those results did not contain the term; re-run with
+  `"WM"` for a contact line or a nozzle. No shipped case is affected.
+- **The Python tools read and write UTF-8 on every platform.** On Windows
+  with a non-UTF-8 code page (Japanese cp932, for example) some tools failed
+  on the manual's sources and on solver output; every `open()` and
+  subprocess now names the encoding, and `ctest` runs them in UTF-8 mode.
+
+### Added
+
+- **Ready-built binaries** for x86-64 Linux, macOS on Apple silicon and
+  64-bit Windows are attached to each release, each run on the tutorial case
+  before it is attached (see *Ready-built binaries* in the README).
+- **`backend_agreement`**, an eighteenth `ctest` entry on builds with AMGCL:
+  five cases (well-mixed and CZ, 1-D and 2-D) run with each linear-solver
+  backend must agree to 1e-7 of each column's scale, and both must conserve
+  volume and solute to 1e-11. The largest difference measured is 7.5e-11.
+  The `amgcl` backend was compared with `eigen` before, but by hand; it is
+  now checked on every commit.
+- **`tools/wm_cz_evaporation.py`** runs the well-mixed and the CZ model on
+  the same evaporating film at Péclet numbers 0.1, 1 and 10. At 0.1 they
+  agree to 0.2 % in evaporated volume; at 10 the CZ skin cuts the evaporated
+  volume to 0.655 of the well-mixed one. The manual gives the table, and the
+  limit it found: with the solutal Marangoni stress, the stratified CZ film
+  is unstable in the model at Pe ≥ 1 and the result depends on the grid.
+- **Manual:** how the Cox–Voinov slope moves with the precursor thickness
+  (each doubling of h\* lowers it by 5.93–5.95, against 9 ln 2 = 6.24).
+- The Zenodo DOIs (all versions: 10.5281/zenodo.23502846) and the preprint
+  describing Yuzen (10.5281/zenodo.23537972) in the README and
+  `CITATION.cff`.
+
+### Results
+
+No result changes. The solver differs from 1.0.0 only in the input check
+above and the version number; the shipped cases give output identical to
+1.0.0 in every column (`tools/compare.py`: 0.000e+00).
+
 ## [1.0.0]
 
 The first public release.

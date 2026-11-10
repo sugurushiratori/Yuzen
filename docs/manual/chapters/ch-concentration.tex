@@ -32,6 +32,28 @@ evaporation removes solvent from the surface, that is, when the P\'eclet number
 is small. A thin film of a low-viscosity solvent that dries slowly is well
 mixed to a very good approximation.
 
+How small is measured by \file{tools/wm\_cz\_evaporation.py}, which runs the
+film of \file{concz\_1d\_reg} (\SI{5}{\micro\metre} on one side of a substrate
+step and \SI{10}{\micro\metre} of surface height on the other, $c_0 = 0.5$,
+$E_0 = \SI{1}{\micro\metre\per\second}$ with Raoult's law, no Marangoni stress)
+for \SI{1.5}{\second} with both models on the same grid ($N_x = 120$,
+$N_z = 121$) and a constant diffusivity:
+
+\begin{yzntable}{The well-mixed and the \val{"CZ"} model on the same evaporating film, at $t = \SI{1.5}{\second}$\label{tab:wm-cz-pe}}{@{}d d d d d@{}}
+\textsf{\bfseries $D$ [\si{\metre\squared\per\second}]} & \textsf{\bfseries $\Pen$} &
+\textsf{\bfseries surface $c$, \val{"CZ"}} & \textsf{\bfseries $c$, \val{"WM"}} &
+\textsf{\bfseries evaporated, \val{"CZ"}/\val{"WM"}} \\ \midrule
+$10^{-10}$ & 0.1 & 0.702 & 0.695 & 0.998 \\
+$10^{-11}$ & 1   & 0.765 & 0.695 & 0.975 \\
+$10^{-12}$ & 10  & 0.970 & 0.695 & 0.655 \\
+\end{yzntable}
+
+At $\Pen = 0.1$ the well-mixed model is good to a few parts in a thousand; at
+$\Pen = 1$ it misses the surface concentration by 0.07; at $\Pen = 10$ the
+skin has cut the evaporation rate to 43 \% of the well-mixed rate by the end,
+and the well-mixed film has lost 1.5 times as much solvent. Halving both
+cells changes the evaporated volume by less than $1.4\times10^{-3}$ of itself.
+
 When $\Pen$ is not small the assumption fails, and it fails in a specific and
 consequential way. Only the region near the free surface becomes concentrated,
 and in reality that region forms a hard skin which then slows all subsequent

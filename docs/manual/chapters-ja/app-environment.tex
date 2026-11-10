@@ -106,6 +106,17 @@ python3 tools/measure_spreading.py <result dir> --dt-out 1e-3 --stride 5
 このスクリプトの\code{fit\_cap()}関数はインポートして使え、一つの場ファイルから見かけの接触角を
 測る処理はこの関数が担う。
 
+\subsection{\file{tools/wm\_cz\_evaporation.py}}
+
+\begin{shell}
+python3 tools/wm_cz_evaporation.py --exe build/bin/yuzen --workdir runs/wmcz --run
+\end{shell}
+
+\file{cases/concz\_1d\_reg.toml}から六つのケース（鉛直一様モデルと\val{"CZ"}モデル、それぞれ三つの拡散係数）
+を書き出して実行し（一スレッドずつ二つ同時に。二コアで約十分）、\cref{tab:wm-cz-pe}の内容を表示する。
+\code{--run}を付けなければ、\code{--workdir}にある既存の実行結果を読む。\code{--out}を付けると、
+時系列と分布をテキストで書き出す。NumPyが必要で、\code{ctest}には含まない。
+
 \subsection{\file{tools/case\_runtimes.py}}
 
 \begin{shell}

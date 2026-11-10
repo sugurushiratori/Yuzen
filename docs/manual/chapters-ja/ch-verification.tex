@@ -61,7 +61,8 @@ Yuzenの主張はすべてが同じ段階にあるわけではない。そこで
 
 \begin{itemize}
   \item \textbf{Cox--Voinov則}（\cref{sec:verification:spreading}）。確認したのは
-    関係式の\emph{形}とフィットの相関である。対数因子$\ln(L/l)$は独立に
+    関係式の\emph{形}、フィットの相関、および前駆膜厚に対する傾きの動き
+    （係数 9 を約 5 \%で再現、\cref{tab:cv-hstar}）である。対数因子$\ln(L/l)$は独立に
     検証しておらず、素朴な見積もりとの一致もオーダーが合うことしか意味しない。
   \item \textbf{連成のコスト}（\cref{sec:verification:coupling}）。1次元・鉛直一様モデルの
     一群のケースについて、反復回数で測った結果である。2次元の場合、\val{"CZ"}モデルの場合、
@@ -1127,6 +1128,40 @@ Tannerの法則（二次元の稜線状液膜に対する$R \sim t^{1/7}$）は�
   一致は桁が合うことしか意味しない。$\ln(L/l)$の値自体は
   検証していない。
 \end{warn}
+
+二つの長さを選ばずに検証できるのは、内側の長さに対して傾きがどう動くかである。
+\cref{eq:dp-def}の分離圧では、微視的長さは$\Hstar/\thetae$に比例する（裾の減衰長である）。
+したがって液滴と$\thetae$を固定すれば、$\Hstar$を二倍にすると傾き$9\ln(L/l)$は
+$L$によらず$9\ln 2 = 6.24$だけ下がると予測される。同じ濡れ広がりを$N_x = 2000$で、
+$\Hstar = 0.01$、$0.02$、$0.04\,h_0$の前駆膜上に\ang{20}用に構成した液滴から、
+いずれも\key{ContactAngle}~$=$~\val{10.0}として計算した。
+
+\begin{yzntable}{前駆膜厚に対するCox--Voinovの傾き（$N_x = 2000$）\label{tab:cv-hstar}}{@{}d d d d d@{}}
+\textsf{\bfseries $\Hstar/h_0$} & \textsf{\bfseries 傾き（\code{--hcut 1.0}）} &
+\textsf{\bfseries 相関} & \textsf{\bfseries 傾き（\code{--hcut 2.0}）} &
+\textsf{\bfseries 相関} \\ \midrule
+0.01 & 25.605 & 0.99981 & 26.187 & 0.99988 \\
+0.02 & 19.672 & 0.99968 & 20.337 & 0.99979 \\
+0.04 & 13.726 & 0.99901 & 14.535 & 0.99932 \\
+\end{yzntable}
+
+\textbf{$\Hstar$を二倍にするごとに傾きは 5.93 と 5.95 下がり（もう一方の切断では
+5.85 と 5.80）、予測の 6.24 の 95 \%である}。二回の倍増で変化は同じである。
+したがって係数 9 と、微視的長さの$\Hstar$への依存は約 5 \%で再現されている。
+残りは、主要次の関係が省く$\theta^2$の次数と$1/\ln(L/l)$の次数の補正と同じ大きさである。
+$\ln(L/l)$の絶対値はやはり検証していない。
+
+\begin{shell}
+for r in 0.01 0.02 0.04; do
+  python3 tools/make_equilibrium_1d.py --out h$r.dat --nx 2000 \
+          --xmin=-0.3e-3 --xmax=0.3e-3 --hstar $r --theta 20 --hmax 1.0
+  sed -e "s/^Nx = 500/Nx = 2000/" -e "s/^PrecursorRatio = 0.02/PrecursorRatio = $r/" \
+      -e "s/spread_n500.dat/h$r.dat/" -e "s/^JobName = .*/JobName = \"h$r\"/" \
+      cases/eq/spread_n500.toml > h$r.toml
+  ./build/bin/yuzen h$r.toml
+  python3 tools/measure_spreading.py h$r --dt-out 1e-3 --stride 5 --hcut 1.0
+done
+\end{shell}
 
 \subsection{濡れ広がりの終点と独立に構成した液滴の比較}
 

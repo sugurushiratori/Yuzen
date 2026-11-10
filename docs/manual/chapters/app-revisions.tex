@@ -12,6 +12,41 @@ public release}, and the numbering starts here. The same entries are kept in
 \file{CHANGELOG.md} at the top of the repository, whose section for a version
 is the text of that release on GitHub.
 
+\section{Version 1.0.1}
+\label{sec:rev:1-0-1}
+
+\textbf{Release date:} the date of the \code{v1.0.1} tag.
+
+A patch release. Two input combinations that 1.0.0 accepted and silently did
+not compute are now refused; every input that 1.0.0 ran correctly runs
+unchanged, and no input file needs editing.
+
+\begin{plain}
+1.0.1
+  fix: Physics.ConcField.Model = "CZ" refuses [Physics.DisjoiningPressure]
+       and [Physics.Source] with Enable = true. 1.0.0 accepted both and ran
+       without the term, which CZ does not have. Input files that enable
+       either with CZ now stop at the input check; no other input is
+       affected, and no shipped case.
+  fix: the Python tools name UTF-8 in every open() and subprocess, and
+       ctest runs them in UTF-8 mode (they failed under a non-UTF-8 code
+       page on Windows). Input files unaffected.
+  add: backend_agreement, an eighteenth ctest entry on builds with AMGCL:
+       five cases run with each backend agree to 1e-7 of each column's
+       scale (largest 7.5e-11), and both conserve to 1e-11. Input files
+       unaffected.
+  add: ready-built binaries for Linux, macOS (arm64) and Windows attached
+       to each release. Input files unaffected.
+  add: tools/wm_cz_evaporation.py, the well-mixed and the CZ model on one
+       evaporating film at Pe = 0.1, 1, 10 (evaporated volume CZ/WM 0.998,
+       0.975, 0.655). Input files unaffected.
+  doc: the WM-CZ table (tab:wm-cz-pe) and the Marangoni instability of the
+       stratified CZ film it found (What has not been verified); the
+       Cox-Voinov slope against the precursor thickness (tab:cv-hstar).
+  doc: the Zenodo DOIs and the preprint in the README and CITATION.cff.
+  no case changed; compare.py reads 0.000e+00 throughout.
+\end{plain}
+
 \section{Version 1.0}
 \label{sec:rev:1-0}
 
@@ -199,10 +234,10 @@ that a user whose input file is stopped on the old one finds the new one; a
 changed default must be named with both values, because nothing in the parser
 can tell a user about that (\cref{sec:policy:compat}).
 
-The format is then unambiguous:
+The format is then unambiguous. An invented entry:
 
 \begin{plain}
-1.0.1  2026-10-03
+1.0.9  2027-01-15
   fix: the evaporation cap was applied after the source term instead of before
        it, so a cell under the nozzle could lose more than half its thickness
        in one step.  allphys_1d_reg: History.dat Volume 1.1e-5, field maxH

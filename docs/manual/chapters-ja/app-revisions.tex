@@ -9,6 +9,41 @@
 \textbf{最初の公開リリースはバージョン 1.0 であり}、番号はここから始まる。同じ項目はリポジトリ最上位の
 \file{CHANGELOG.md}にも記録しており、そのバージョンごとの節が GitHub 上の各リリースの本文になる。
 
+\section{バージョン 1.0.1}
+\label{sec:rev:1-0-1}
+
+\textbf{リリース日：}\code{v1.0.1}タグの日付。
+
+パッチリリースである。1.0.0 が受け付けたまま黙って計算していなかった二つの入力の組み合わせを、
+拒否するようにした。1.0.0 で正しく計算できていた入力はすべてそのまま動き、入力ファイルを書き換える
+必要はない。
+
+\begin{plain}
+1.0.1
+  fix: Physics.ConcField.Model = "CZ" refuses [Physics.DisjoiningPressure]
+       and [Physics.Source] with Enable = true. 1.0.0 accepted both and ran
+       without the term, which CZ does not have. Input files that enable
+       either with CZ now stop at the input check; no other input is
+       affected, and no shipped case.
+  fix: the Python tools name UTF-8 in every open() and subprocess, and
+       ctest runs them in UTF-8 mode (they failed under a non-UTF-8 code
+       page on Windows). Input files unaffected.
+  add: backend_agreement, an eighteenth ctest entry on builds with AMGCL:
+       five cases run with each backend agree to 1e-7 of each column's
+       scale (largest 7.5e-11), and both conserve to 1e-11. Input files
+       unaffected.
+  add: ready-built binaries for Linux, macOS (arm64) and Windows attached
+       to each release. Input files unaffected.
+  add: tools/wm_cz_evaporation.py, the well-mixed and the CZ model on one
+       evaporating film at Pe = 0.1, 1, 10 (evaporated volume CZ/WM 0.998,
+       0.975, 0.655). Input files unaffected.
+  doc: the WM-CZ table (tab:wm-cz-pe) and the Marangoni instability of the
+       stratified CZ film it found (What has not been verified); the
+       Cox-Voinov slope against the precursor thickness (tab:cv-hstar).
+  doc: the Zenodo DOIs and the preprint in the README and CITATION.cff.
+  no case changed; compare.py reads 0.000e+00 throughout.
+\end{plain}
+
 \section{バージョン 1.0}
 \label{sec:rev:1-0}
 
@@ -155,10 +190,10 @@
 既定値を変えた場合は新旧両方の値を記す。パーサーにはこの変更を利用者に知らせる手段がないからである
 （\cref{sec:policy:compat}）。
 
-こうすれば、書式に曖昧さがなくなる。
+こうすれば、書式に曖昧さがなくなる。架空の項目で例を示す。
 
 \begin{plain}
-1.0.1  2026-10-03
+1.0.9  2027-01-15
   fix: the evaporation cap was applied after the source term instead of before
        it, so a cell under the nozzle could lose more than half its thickness
        in one step.  allphys_1d_reg: History.dat Volume 1.1e-5, field maxH

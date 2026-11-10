@@ -13,7 +13,7 @@
 # yuzen-version	Yuzen-1.0.0
 # executable	build-amg/bin/yuzen
 # omp-proc-bind	close
-# note	bench1d_n02000 amgcl re-measured 2026-10-13 on mc003 (same CPU, with the AMGCL coarse-level fix that 1.0.0 contains)
+# note	measured with a pre-release source of 1.0.0 that lacked only the AMGCL coarse-level fix; bench1d_n02000 amgcl, the one condition the fix affects, re-measured 2026-10-13 on mc003 (same CPU) with the fix, which 1.0.0 contains
 #
 # One row per run. wall_s is the time-step loop only (JobInfo.txt
 # 'Time loop [s]'), which excludes grid construction and start-up.

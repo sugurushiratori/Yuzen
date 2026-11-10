@@ -1261,13 +1261,18 @@ $\hstar = \SI{0.2}{\micro\metre}$、$\thetae = 10^\circ$。
 
 \begin{yzntable}{\file{stress\_*}ケースにおける外側反復の費用\label{tab:couplingstress}}{@{}L{0.19\textwidth} L{0.29\textwidth} d d d d@{}}
 \textsf{\bfseries ケース} & \textsf{\bfseries 変更点} &
-\textsf{\bfseries ステップ数} & \textsf{\bfseries NK平均} &
+\textsf{\bfseries 求解回数} & \textsf{\bfseries NK平均} &
 \textsf{\bfseries NK最大} & \textsf{\bfseries 濃度支配} \\ \midrule
 \file{stress\_evap}     & 蒸発係数を$\times 100$ & 675 & 3.01 & 4 & 68.0 \% \\
 \file{stress\_coupling} & 粘度指数を 10から 30へ。表面張力の濃度係数を$\times 10$ & 675 & 2.19 & 4 & 2.2 \% \\
 \file{stress\_dt}       & $\Delta t \times 100$で固定（刻み制御なし） & 21 & 4.29 & 6 & 14.4 \% \\
 \file{stress\_all}      & 上記すべて & 21 & 5.05 & 6 & 0.0 \% \\
 \end{yzntable}
+
+求解回数とは、一つのステップを試みた回数である。\file{stress\_evap}と\file{stress\_coupling}では、
+675回のうち12回を打ち切り誤差の判定が棄却し、刻みを縮めて解き直す。そのため計算は663ステップで進む
+（\file{JobInfo.txt}）。表では、棄却されたものも含めてすべての求解を数えている。
+\cref{tab:couplingspread}では棄却される求解はなく、二つの数は一致する。
 
 \subsection{この測定で裏付けられること、裏付けられないこと}
 

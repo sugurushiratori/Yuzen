@@ -1454,13 +1454,20 @@ four.
 
 \begin{yzntable}{Outer-iteration cost on the \file{stress\_*} cases\label{tab:couplingstress}}{@{}L{0.19\textwidth} L{0.29\textwidth} d d d d@{}}
 \textsf{\bfseries Case} & \textsf{\bfseries What is changed} &
-\textsf{\bfseries steps} & \textsf{\bfseries mean NK} &
+\textsf{\bfseries solves} & \textsf{\bfseries mean NK} &
 \textsf{\bfseries max NK} & \textsf{\bfseries conc.\ dom.} \\ \midrule
 \file{stress\_evap}     & Evaporation coefficient $\times 100$ & 675 & 3.01 & 4 & 68.0 \% \\
 \file{stress\_coupling} & Viscosity exponent 10 to 30; concentration coefficient of surface tension $\times 10$ & 675 & 2.19 & 4 & 2.2 \% \\
 \file{stress\_dt}       & $\Delta t \times 100$, fixed (step control off) & 21 & 4.29 & 6 & 14.4 \% \\
 \file{stress\_all}      & All of the above & 21 & 5.05 & 6 & 0.0 \% \\
 \end{yzntable}
+
+A solve is one attempt at a step. In \file{stress\_evap} and
+\file{stress\_coupling} the truncation-error test rejects 12 of the 675 and
+the step is taken again shorter, so the runs advance in 663 steps
+(\file{JobInfo.txt}); every solve, rejected or not, is counted in the
+table. In \cref{tab:couplingspread} no solve is rejected and the two counts
+agree.
 
 \subsection{What this measurement does and does not support}
 

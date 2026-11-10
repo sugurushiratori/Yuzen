@@ -10,8 +10,8 @@ rather than merely the cost, and because both are easy to make carelessly.
 Yuzen offers two concentration models. \val{"WM"} is well mixed and treats the
 concentration as uniform across the film thickness; \val{"CZ"} resolves the
 distribution through the thickness. Both are available in one and two
-dimensions. The first supports every physics term; the second gives up two of
-them. Which one is right
+dimensions. The first supports every physics term; the second gives up three of
+them (the disjoining pressure, the nozzle and slip). Which one is right
 depends on a single dimensionless number, and \cref{sec:conc:wm} says which.
 
 \section{The well-mixed model}
@@ -127,7 +127,7 @@ layer to slow its own drying, the effect the well-mixed model is missing.
   \caption{What the \val{"CZ"} model resolves that the well-mixed one cannot,
     from \file{concz\_2d.toml} on the plane $y = 0$ at the end of the run.
     \textbf{Left:} the film over the substrate relief, colored by $c$ less
-    the value $c_0$ it started at; the departure is in the seventh decimal.
+    the value $c_0$ it started at; the departure is of order $10^{-6}$.
     The solute sits in
     a layer hugging the free surface, and it is visible on the two shoulders
     and nowhere else. \textbf{Center:} the free-surface value, the depth average and the

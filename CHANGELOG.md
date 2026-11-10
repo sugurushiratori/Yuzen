@@ -43,8 +43,8 @@ unchanged, with bit-identical output. No input file needs editing.
   the same evaporating film at Péclet numbers 0.1, 1 and 10 (on the film
   thickness). At 0.1 they agree to 0.4 % in evaporated volume; at 10 the CZ
   skin halves the evaporated volume (0.494 of the well-mixed one). The manual gives the table, and the
-  limit it found: with the solutal Marangoni stress, the stratified CZ film
-  is unstable in the model at Pe ≥ 1 and the result depends on the grid.
+  limit it found: with the solutal Marangoni stress at Pe ≥ 1, CZ shows
+  waves a few cells long that do not converge on the grids tried.
 - **Manual:** how the Cox–Voinov slope moves with the precursor thickness
   (each doubling of h\* lowers it by 5.93–5.95, against 9 ln 2 = 6.24).
 - The Zenodo DOIs (all versions: 10.5281/zenodo.23502846) and the preprint

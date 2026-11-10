@@ -8,8 +8,8 @@ Six runs, all made from cases/concz_1d_reg.toml: a one-
 dimensional film 5 um thick over a substrate step 5 um high (the free
 surface at 5 um on one side and 10 um on the other), resin fraction 0.5 at
 the start, evaporating at E0 = 1 um/s (Raoult), capillary leveling on,
-solutal Marangoni off (with it, the stratified film is unstable in the model
-at Pe >= 1; see the manual, "What has not been verified"), for 1.5 s. The
+solutal Marangoni off (with it, CZ shows waves that do not converge on the
+grids tried at Pe >= 1; see the manual, "What has not been verified"), for 1.5 s. The
 diffusivity D is constant and takes three values, D = 5e-11, 5e-12,
 5e-13 m^2/s, so that the Peclet number Pe = E0 h / D on the film thickness
 h = 5 um is 0.1, 1 and 10. Each D is run with the CZ

@@ -142,8 +142,11 @@ step toward a verification is known, it is named.
     $\Pen = 1$ the surface concentration shows waves a few cells long, of
     amplitude 0.06 to 0.07 at $N_x = 60$ and 120 and 0.02 at 240, which do
     not converge on these grids; at $\Pen = 10$ ($N_x = 120$) waves appear
-    as well. Whether they are an instability of the model or of its
-    discretization is not settled.
+    as well. Without the Marangoni stress the same films are smooth at every
+    $\Pen$. Whether the waves are an instability of the model or of its
+    discretization is not settled; one hypothesis is solutal
+    B\'enard--Marangoni cells about as wide as the film is thick, which the
+    long-wave model cannot resolve.
     Nor has it been verified that the truncation-error estimate driving the
     adaptive time step corresponds to the actual error, beyond
     \code{adaptive\_dt} (\cref{sec:verification:features}).

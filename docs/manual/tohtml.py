@@ -390,6 +390,8 @@ SIUNITS = {
     r"\hour": "h",
 }
 
+SIPREFIX = {"nano": "n", "micro": "µ", "milli": "m", "kilo": "k", "mega": "M", "giga": "G"}
+
 #  Text-mode accents, as combining characters: \'e is e + U+0301.
 ACCENTS = {"'": "́", "`": "̀", "^": "̂", '"': "̈",
            "~": "̃", "=": "̄"}
@@ -414,6 +416,11 @@ def si_unit(u):
     """\\si / \\SI unit argument -> the text siunitx would set."""
     for k, v in sorted(SIUNITS.items(), key=lambda kv: -len(kv[0])):
         u = u.replace(k, v)
+    # A prefix left in front of a unit a longer key took first
+    # (\micro\metre\per\second -> \micro + m/s, \milli\newton\per\metre
+    # -> \milli + N/m) is set as the prefix's symbol.
+    u = re.sub(r"\\(%s)(?=[A-Za-z])" % "|".join(SIPREFIX),
+               lambda m: SIPREFIX[m.group(1)], u)
     # an unknown unit macro must not be silently flattened into prose
     # ("kilogrampermcubed"); report it like any other unhandled command.
     UNKNOWN_UNITS.update(re.findall(r"\\[a-zA-Z]+", u))

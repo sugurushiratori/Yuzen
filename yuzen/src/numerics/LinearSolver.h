@@ -121,6 +121,10 @@ public:
 
 	/** @brief Name of the backend currently selected. */
 	std::string BackendName() const;
+	/** @brief What the next solve takes from the ones before (ILinearSolverBackend::Memory). */
+	std::vector<double> Memory() const;
+	/** @brief Take back what Memory() gave. */
+	void SetMemory(const std::vector<double> &m);
 
 	//------------------------------------------------------------------
 	//  Individual settings, named and used exactly as in MyBiCGStab.

@@ -92,7 +92,7 @@ and, for a subset of the seeds:
 A violation prints the seed; --only SEED --keep reproduces it and leaves the
 input and outputs in the work directory. --quick runs a fixed slice of 20
 small seeds with every property, and the seeds that found a defect
-(REGRESSION_SEEDS), in well under a minute (the ctest entry `proptest`).
+(QUICK_CHECKS, REGRESSION_SEEDS), in well under a minute (the ctest entry `proptest`).
 
 Only the Python standard library is used.
 
@@ -906,6 +906,12 @@ QUICK_SEEDS = list(range(1, 21))
 REGRESSION_SEEDS = [1002, 1065, 1122, 1171, 2283, 2038, 2299, 2104, 1015, 1118, 1206, 1035,
                     1054, 2105, 1282]
 REGRESSION_CHECKS = {1035: ("restart",), 1206: ("restart",)}
+#  Seeds of the small generator kept with a check of their own. 2258: a CZ
+#  run continued from a state file, whose concentration solver had dropped
+#  its cheaper preconditioner a few solves before the stop; the restart has
+#  to keep that (ILinearSolverBackend::Memory), or the continued run tries
+#  it again at once and differs from the straight one by 1e-13.
+QUICK_CHECKS = {2258: ("restart",)}
 
 
 def main():
@@ -928,7 +934,7 @@ def main():
         return 0
     exe = os.path.abspath(a.exe)
     os.makedirs(a.workdir, exist_ok=True)
-    seeds = a.only or (QUICK_SEEDS + REGRESSION_SEEDS if a.quick else list(range(a.seed, a.seed + a.count)))
+    seeds = a.only or (QUICK_SEEDS + list(QUICK_CHECKS) + REGRESSION_SEEDS if a.quick else list(range(a.seed, a.seed + a.count)))
     nbad = 0
     stops = {}
     t0 = time.time()
@@ -937,7 +943,8 @@ def main():
         t1 = time.time()
         regression = a.quick and s in REGRESSION_SEEDS
         bad, m = one(exe, a.workdir, s, a.quick and not regression, a.keep, a.timeout,
-                     a.check if a.only else REGRESSION_CHECKS.get(s, ()) if regression else ())
+                     a.check if a.only else REGRESSION_CHECKS.get(s, ()) if regression
+                     else QUICK_CHECKS.get(s, ()) if a.quick else ())
         m["sec"] = round(time.time() - t1, 1)
         if regression and not bad and m.get("stop") != "ok":
             bad = ["ends: a regression seed that must end normally stopped with: %s" % m.get("stop")]

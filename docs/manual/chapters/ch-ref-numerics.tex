@@ -351,7 +351,8 @@ with the same number. It holds what the field file does not: the time to the
 bit, the step count, the time step and the one before it, the counters of the
 adaptive step, the output schedule, the running totals of
 \file{History.dat}, the steady-state count, the film and (in \val{"CZ"}) the
-concentration of the step before, and $h$, $s$ and $c$ with their ghost
+concentration of the step before, which preconditioner each linear solver
+tries first, and $h$, $s$ and $c$ with their ghost
 layers. When a restart finds this file beside \key{FileName}, written by the
 same model at \key{RestartTime} (the time stamp in the \file{.pvd} is
 enough, and so are six digits of it), the run continues exactly as if it had not been interrupted: the

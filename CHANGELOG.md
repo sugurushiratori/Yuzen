@@ -11,8 +11,10 @@ written for someone deciding whether to download it.
 ## [1.0.1]
 
 A patch release. Two input combinations that 1.0.0 accepted and silently
-did not compute are now refused; every input that 1.0.0 ran correctly runs
-unchanged, with bit-identical output. No input file needs editing.
+did not compute are now refused, and a run continued from a state file is
+again the run that was not stopped, to the bit; every input that 1.0.0 ran
+correctly runs unchanged, with bit-identical output. No input file needs
+editing.
 
 ### Fixed
 
@@ -23,6 +25,14 @@ unchanged, with bit-identical output. No input file needs editing.
   message naming the key, as `Physics.Slip` already did. If you ran CZ with
   either table enabled, those results did not contain the term; re-run with
   `"WM"` for a contact line or a nozzle. No shipped case is affected.
+- **A restarted run is the run that was not stopped, to the bit.** A linear
+  solver whose cheaper preconditioner failed skips it for the next solves;
+  1.0.0 did not keep that in `field*.state`, so a run continued from it tried
+  that preconditioner again at once and could differ from the uninterrupted
+  run at rounding level (1e-13 in CZ, found by `tools/proptest.py --check
+  restart`, seeds 2258, 2283, 2333 and 2364). The state file now keeps it; a
+  state file written by 1.0.0 is still read. Runs that were not restarted
+  are unchanged.
 - **The Python tools read and write UTF-8 on every platform.** On Windows
   with a non-UTF-8 code page (Japanese cp932, for example) some tools failed
   on the manual's sources and on solver output; every `open()` and
@@ -54,7 +64,7 @@ unchanged, with bit-identical output. No input file needs editing.
 ### Results
 
 No result changes. The solver differs from 1.0.0 only in the input check
-above and the version number; the shipped cases give output identical to
+and the restart state above and the version number; the shipped cases give output identical to
 1.0.0 in every column (`tools/compare.py`: 0.000e+00).
 
 ## [1.0.0]

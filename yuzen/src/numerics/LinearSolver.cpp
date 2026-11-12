@@ -53,6 +53,16 @@ std::string LinearSolver::BackendName() const
 	return _backend->Name();
 }
 
+std::vector<double> LinearSolver::Memory() const
+{
+	return _backend->Memory();
+}
+
+void LinearSolver::SetMemory(const std::vector<double> &m)
+{
+	_backend->SetMemory(m);
+}
+
 
 void LinearSolver::Build(int nRow, int nonZero, int nonZL, int nonZU)
 {

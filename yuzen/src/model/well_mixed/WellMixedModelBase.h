@@ -916,6 +916,9 @@ void WellMixed_ModelBase<T>::WriteState(const std::string &path)
 	}
 	st.SetVectorOf("height.old", _heightEq.GetXOld());
 	st.SetVectorOf("height.correction", _heightEq.LastCorrection());
+	//  Which preconditioner the next solves try first (ILinearSolverBackend::Memory)
+	st.SetVector("solver.height", _heightEq.SolverMemory());
+	st.SetVector("solver.conc", _concEq.SolverMemory());
 	st.SetField("field.h", _field.HH());
 	st.SetField("field.s", _field.SS());
 	st.SetField("field.c", _field.CC());
@@ -1214,6 +1217,8 @@ void WellMixed_ModelBase<T>::BuildRestart()
 			Vector<double> hold(_heightEq.GetXOld().size());
 			if(_rstate.GetVectorInto("height.old", hold)) _heightEq.SetXOld(hold);
 			if(_rstate.GetVectorInto("height.correction", hold)) _heightEq.SetLastCorrection(hold);
+			if(_rstate.HasVector("solver.height")) _heightEq.SetSolverMemory(_rstate.Vector("solver.height"));
+			if(_rstate.HasVector("solver.conc")) _concEq.SetSolverMemory(_rstate.Vector("solver.conc"));
 		}
 
 		_field_guess = _field;

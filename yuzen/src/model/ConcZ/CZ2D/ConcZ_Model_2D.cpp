@@ -588,6 +588,9 @@ void ConcZ_Model_2D::WriteState(const std::string &path)
 		st.Set("conc.previousDt", _heightEq.PreviousDt());
 		st.SetVectorOf("conc.previous", _heightEq.PreviousConc());
 	}
+	//  Which preconditioner the next solves try first (ILinearSolverBackend::Memory)
+	st.SetVector("solver.height", _heightEq.SolverMemory());
+	if(_swConcField) st.SetVector("solver.conc", _concEq.SolverMemory());
 	st.SetField("field.h", _field.HH());
 	st.SetField("field.s", _field.SS());
 	st.SetField("field.c", _field.CC());
@@ -674,6 +677,8 @@ void ConcZ_Model_2D::BuildRestart()
 			Vector<double> cprev(_concEq.GetX().size());
 			if(_rstate.Has("conc.previousDt") && _rstate.GetVectorInto("conc.previous", cprev))
 				_heightEq.SetPreviousConc(cprev, _rstate.Get("conc.previousDt"));
+			if(_rstate.HasVector("solver.height")) _heightEq.SetSolverMemory(_rstate.Vector("solver.height"));
+			if(_swConcField && _rstate.HasVector("solver.conc")) _concEq.SetSolverMemory(_rstate.Vector("solver.conc"));
 			//  The balance goes on against the initial state of the whole run
 			{
 				Field_CZ &f = _field;

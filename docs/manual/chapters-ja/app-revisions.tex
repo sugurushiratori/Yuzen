@@ -15,7 +15,8 @@
 \textbf{リリース日：}\code{v1.0.1}タグの日付。
 
 パッチリリースである。1.0.0 が受け付けたまま黙って計算していなかった二つの入力の組み合わせを、
-拒否するようにした。1.0.0 で正しく計算できていた入力はすべてそのまま動き、入力ファイルを書き換える
+拒否するようにした。また、状態ファイルから再開した計算が、止めずに続けた計算とビット単位で再び一致する
+ようにした。1.0.0 で正しく計算できていた入力はすべてそのまま動き、入力ファイルを書き換える
 必要はない。
 
 \begin{plain}
@@ -25,6 +26,13 @@
        without the term, which CZ does not have. Input files that enable
        either with CZ now stop at the input check; no other input is
        affected, and no shipped case.
+  fix: a run continued from a state file solves every step as the run
+       that was not stopped. A linear solver whose cheaper preconditioner
+       had failed skips it for the next solves; 1.0.0 did not keep that in
+       the .state, so a restarted run tried it again at once and could
+       differ at rounding level (1e-13 in CZ: tools/proptest.py seeds 2258,
+       2283, 2333, 2364 with --check restart). The .state now keeps it; a
+       .state written by 1.0.0 still reads. Runs not restarted unchanged.
   fix: the Python tools name UTF-8 in every open() and subprocess, and
        ctest runs them in UTF-8 mode (they failed under a non-UTF-8 code
        page on Windows). Input files unaffected.

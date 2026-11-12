@@ -77,6 +77,13 @@ public:
 	std::string BackendName() const { return _bcg.BackendName(); }
 
 	/**
+	 * @brief What the linear solver carries from one solve to the next, for
+	 *        the restart state (ILinearSolverBackend::Memory).
+	 */
+	std::vector<double> SolverMemory() const { return _bcg.Memory(); }
+	void SetSolverMemory(const std::vector<double> &m) { _bcg.SetMemory(m); }
+
+	/**
 	 * @brief Put the matrix and the initial values into a state from which
 	 *        the computation can start.
 	 *

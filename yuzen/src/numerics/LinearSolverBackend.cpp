@@ -264,6 +264,8 @@ struct TryBackoff
 	bool Try() { if(skip > 0) { --skip; return false; } return true; }
 	void Failed() { skip = wait; wait = (wait < 1024) ? 2 * wait : 1024; }
 	void Converged() { wait = 16; }
+	void Put(std::vector<double> &m) const { m.push_back(skip); m.push_back(wait); }
+	void Take(const std::vector<double> &m, size_t k) { skip = (int)m[k]; wait = (int)m[k+1]; }
 };
 
 class EigenBackend : public ILinearSolverBackend
@@ -481,6 +483,18 @@ public:
 		}
 	}
 
+	virtual std::vector<double> Memory() const
+	{
+		std::vector<double> m;
+		_offJacobi.Put(m); _offBlock.Put(m);
+		return m;
+	}
+	virtual void SetMemory(const std::vector<double> &m)
+	{
+		if(m.size() != 4) return;
+		_offJacobi.Take(m, 0); _offBlock.Take(m, 2);
+	}
+
 private:
 	typedef Eigen::BiCGSTAB<Eigen::SparseMatrix<double, Eigen::RowMajor, int>,
 	                        Eigen::IncompleteLUT<double, int> > IlutSolver;
@@ -651,6 +665,18 @@ public:
 		if(err <= s.epsilon) return 0;
 		if(!(err == err))    return 2;
 		return 1;
+	}
+
+	virtual std::vector<double> Memory() const
+	{
+		std::vector<double> m;
+		_offSpai.Put(m);
+		return m;
+	}
+	virtual void SetMemory(const std::vector<double> &m)
+	{
+		if(m.size() != 2) return;
+		_offSpai.Take(m, 0);
 	}
 
 private:

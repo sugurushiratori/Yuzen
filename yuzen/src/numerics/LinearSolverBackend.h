@@ -22,6 +22,7 @@
 #define _LINEAR_SOLVER_BACKEND_INCLUDED_
 
 #include <string>
+#include <vector>
 
 #include "Vector.h"
 
@@ -86,6 +87,19 @@ public:
 	virtual int Solve(const LinearSolverSettings &s, CRS_Matrix &crs,
 	                  Vector<double> &rhs, Vector<double> &x,
 	                  int &iter, double &resid) = 0;
+
+	/**
+	 * @brief What a solve takes from the solves before it, as numbers.
+	 *
+	 * A cheaper preconditioner that failed is not tried again for a while
+	 * (TryBackoff in LinearSolverBackend.cpp), so which preconditioner a
+	 * solve uses, and the rounding of its result, depends on the solves
+	 * before it. The restart state keeps these numbers, so that a run
+	 * continued from it solves every step as the run that was not stopped.
+	 */
+	virtual std::vector<double> Memory() const { return std::vector<double>(); }
+	/** @brief Take back what Memory() gave; one of another length (another backend) is ignored. */
+	virtual void SetMemory(const std::vector<double> &m) { (void)m; }
 };
 
 /**

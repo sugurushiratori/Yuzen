@@ -44,7 +44,7 @@ keywords:
   - computational fluid dynamics
 license: Apache-2.0
 version: 1.0.1
-date-released: 2026-11-10
+date-released: 2026-11-12
 references:
   - type: article
     title: "Yuzen: a finite-difference solver for thin liquid films of evaporating binary solutions in the lubrication approximation"

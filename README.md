@@ -384,6 +384,8 @@ Every release is archived on Zenodo:
   [10.5281/zenodo.23502847](https://doi.org/10.5281/zenodo.23502847)
 - Yuzen 1.0.1, the version the paper describes:
   [10.5281/zenodo.24168133](https://doi.org/10.5281/zenodo.24168133)
+- Yuzen 1.0.2:
+  [10.5281/zenodo.24548875](https://doi.org/10.5281/zenodo.24548875)
 
 ## Author
 

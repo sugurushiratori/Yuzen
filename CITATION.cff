@@ -20,6 +20,9 @@ identifiers:
   - type: doi
     value: 10.5281/zenodo.24168133
     description: "Yuzen 1.0.1 (the version described in the SoftwareX paper)"
+  - type: doi
+    value: 10.5281/zenodo.24548875
+    description: "Yuzen 1.0.2"
 abstract: >-
   Yuzen solves the long-wave (lubrication) equation for the height of a thin
   liquid film on a substrate, coupled to a transport equation for the solute

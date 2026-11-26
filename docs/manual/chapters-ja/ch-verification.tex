@@ -276,6 +276,8 @@ AMGCL を含むビルドでは、\code{ctest}が\file{tools/backend\_agreement.p
 
 差は\cref{tab:backendagreement}と同じく線形ソルバーの許容誤差の大きさである。$10^{-7}$という上限は、計算機が変わっても余裕があり、異なる系を解いたバックエンドは捉えられる。
 
+続いてこのスクリプトは、AMGCLのBiCGStabをわざと破綻させる（\cref{sec:linsolve:amgcl}）。\file{allphys\_2d\_reg}では\env{YUZEN\_FAULT\_AMGCL}を\val{30:2}、\file{concz\_1d\_reg}では\val{40:3}にして、それぞれ二回と三回の求解に、破綻したときのAMGCLと同じ例外を投げさせる。どちらの実行も\key{EndTime}まで正常に計算しなければならない。破綻させない実行と共通する最後の場ファイルはその$10^{-2}$以内（1.8e-3と2.9e-3。短い刻みで解き直したステップの打切り誤差である）、\code{VolErr}と\code{ResinVolErr}は$10^{-11}$未満でなければならず、\file{Warnings.txt}には破綻が記録されていなければならない。
+
 \subsection{\val{"amgcl"}はスレッド数を変えると結果が変わる}
 \label{sec:verification:amgclthreads}
 

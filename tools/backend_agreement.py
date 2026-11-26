@@ -19,6 +19,15 @@ term but the disjoining pressure (allphys_*), and the CZ model in one and
 two dimensions. Needs a build with AMGCL (-DYUZEN_WITH_AMGCL=ON); ctest
 registers it as backend_agreement only then.
 
+Then a breakdown of AMGCL's BiCGStab, which AMGCL reports by throwing
+("Zero rho in BiCGStab"), is made to happen (YUZEN_FAULT_AMGCL=k:m: m solves
+from the k-th throw) in a well-mixed and a CZ case (FAULTS). The run must not
+stop: the solves count as not converged, the steps are solved again, and the
+run reaches EndTime, its balances within
+ABS_BALANCE and its fields within FAULT_TOL of the run without it (a step
+solved again at a shorter step moves the result by the truncation error).
+Warnings.txt must name the breakdown.
+
 Copyright 2017-2026 Suguru Shiratori, Tokyo City University
 SPDX-License-Identifier: Apache-2.0
 """
@@ -42,6 +51,10 @@ PLAN = [("leveling_1d_reg", None),
         ("concz_2d", "5e-4")]
 
 TOL = 1e-7              # physical columns, relative to the column's scale
+FAULT_TOL = 1e-2        # the same, a run with breakdowns against one without
+#  (case, YUZEN_FAULT_AMGCL): the breakdowns made to happen
+FAULTS = [("allphys_2d_reg", "30:2"),
+          ("concz_1d_reg", "40:3")]
 ABS_BALANCE = 1e-11     # VolErr, ResinVolErr: absolute, both runs
 BALANCE = {"VolErr", "ResinVolErr"}
 #  How the solve went, not what it found: reported, not judged
@@ -65,7 +78,7 @@ def with_backend(text, backend, end_time):
     return text
 
 
-def run(exe, d, name, text):
+def run(exe, d, name, text, env_extra=None):
     os.makedirs(d, exist_ok=True)
     with open(os.path.join(d, name + ".toml"), "w", encoding="utf-8") as f:
         f.write(text)
@@ -73,6 +86,7 @@ def run(exe, d, name, text):
         if os.path.exists(os.path.join(CASES, dat)):
             shutil.copy(os.path.join(CASES, dat), d)
     env = dict(os.environ, OMP_NUM_THREADS="1")
+    env.update(env_extra or {})
     r = subprocess.run([exe, name + ".toml"], cwd=d, capture_output=True, text=True,
                        encoding="utf-8", errors="replace", env=env, timeout=1800)
     if r.returncode != 0:
@@ -107,6 +121,62 @@ def compare(pa, pb):
     return out
 
 
+def check_fault(args, case, fault, ref):
+    """The case with breakdowns made to happen, against ref (without)."""
+    end = dict(PLAN)[case]
+    src = open(os.path.join(CASES, case + ".toml"), encoding="utf-8").read()
+    d = os.path.join(args.workdir, case, "amgcl-fault")
+    shutil.rmtree(d, ignore_errors=True)
+    tag = "%s breakdown %s" % (case, fault)
+    try:
+        got = run(args.exe, d, case, with_backend(src, "amgcl", end), {"YUZEN_FAULT_AMGCL": fault})
+    except RuntimeError as e:
+        print("FAIL %-16s %s" % (tag, e))
+        return 1
+    problems, worst, worst_col = [], 0.0, ""
+    try:
+        warn = open(os.path.join(got, "Warnings.txt"), encoding="utf-8").read()
+    except OSError:
+        warn = ""
+    if 'LinearSolver (amgcl): "Zero rho in BiCGStab' not in warn:
+        problems.append("Warnings.txt does not name the breakdown")
+    #  The last field file both runs wrote (the run without may write one
+    #  more, at the end of a step that passed EndTime after an output time)
+    fa = sorted(glob.glob(os.path.join(ref, "field*.dat")))
+    fb = sorted(glob.glob(os.path.join(got, "field*.dat")))
+    both = sorted(set(os.path.basename(p) for p in fa) & set(os.path.basename(p) for p in fb))
+    if len(both) < 2:
+        problems.append("no field file after the first in both runs")
+    else:
+        c = compare(os.path.join(ref, both[-1]), os.path.join(got, both[-1]))
+        if c is None:
+            problems.append("%s: layout differs" % both[-1])
+        else:
+            for col, (rel, _) in c.items():
+                if col in ("Time", "time"):
+                    continue
+                if rel > worst:
+                    worst, worst_col = rel, "%s %s" % (both[-1], col)
+                if rel > FAULT_TOL:
+                    problems.append("%s %s differs by %.2e of its scale" % (both[-1], col, rel))
+    head, rows = table(os.path.join(got, "History.dat"))
+    href, rref = table(os.path.join(ref, "History.dat"))
+    end_ref = float(re.search(r"^EndTime = ([^\n]*)$", with_backend(src, "amgcl", end), re.M).group(1))
+    if rows[-1][0] < end_ref * (1 - 1e-9):
+        problems.append("ended at t = %.6e, before EndTime %.6e" % (rows[-1][0], end_ref))
+    for col in BALANCE:
+        if col in head:
+            v = max(abs(r[head.index(col)]) for r in rows)
+            if v > ABS_BALANCE:
+                problems.append("History %s reaches %.2e" % (col, v))
+    if problems:
+        print("FAIL %-16s %s" % (tag, "; ".join(problems)))
+        return 1
+    print("ok   %-16s ran through; Warnings.txt names it; largest difference from the run"
+          " without %.1e (%s)" % (tag, worst, worst_col))
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--exe", required=True)
@@ -115,6 +185,7 @@ def main():
     args = ap.parse_args()
     args.exe = os.path.abspath(args.exe)
     bad = 0
+    clean = {}      # case -> the amgcl run, for the breakdown checks
     for case, end in PLAN:
         if args.only and case not in args.only:
             continue
@@ -157,6 +228,11 @@ def main():
             bad += 1
         else:
             print("ok   %-16s largest difference %.1e (%s)" % (case, worst, worst_col))
+        clean[case] = res["amgcl"]
+    for case, fault in FAULTS:
+        if case not in clean:
+            continue
+        bad += check_fault(args, case, fault, clean[case])
     print("%d failure(s)" % bad)
     return 1 if bad else 0
 

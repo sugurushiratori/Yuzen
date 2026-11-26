@@ -12,6 +12,30 @@ public release}, and the numbering starts here. The same entries are kept in
 \file{CHANGELOG.md} at the top of the repository, whose section for a version
 is the text of that release on GitHub.
 
+\section{Version 1.0.2}
+\label{sec:rev:1-0-2}
+
+\textbf{Release date:} the date of the \code{v1.0.2} tag.
+
+A patch release. A run with the \val{"amgcl"} linear solver no longer stops
+when its BiCGStab breaks down; every run that 1.0.1 completed runs unchanged,
+and no input file needs editing.
+
+\begin{plain}
+1.0.2
+  fix: a breakdown of AMGCL's BiCGStab ("Zero rho in BiCGStab") is a
+       solve that did not converge: the step is solved again, at a
+       shorter step if need be, instead of the run ending with FATAL
+       ERROR. The first one of a run is written to Warnings.txt. Runs
+       without a breakdown are bit-identical to 1.0.1. Input files
+       unaffected.
+  test: backend_agreement makes breakdowns happen (YUZEN_FAULT_AMGCL) in
+       allphys_2d_reg and concz_1d_reg; both runs go through, within
+       1e-2 of the runs without (largest 2.9e-3).
+  no case changed: a run without a breakdown is byte for byte that of
+       1.0.1 (the five cases of backend_agreement, both backends).
+\end{plain}
+
 \section{Version 1.0.1}
 \label{sec:rev:1-0-1}
 

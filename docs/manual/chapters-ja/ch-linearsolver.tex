@@ -41,6 +41,9 @@ but this build has no AMGCL. Falling back to "eigen".}と書かれるので、\c
 
 \val{"ILU"}のとき、AMGCLのBiCGStabには、SPAI0平滑化を用いる平滑化集約AMGで前処理をかける。前処理は求解のたびに構築し直す。未知数が3000を超える系では、階層を500まで粗くする（AMGCL自身の既定値は3000）。最も粗いレベルは直接法で逐次的に解くためである。$128^2$の膜では、階層を深くしたことで求解が2.9倍速くなった。未知数が3000以下の系はAMGCLの既定値に任せ、直接法により一回の反復で解く。この系を500まで粗くすると、2000セルの四階の1-Dの膜では一回の求解に80回のBiCGStab反復を要し、1スレッドで6.5倍遅くなった。
 
+BiCGStabは破綻することがある。割り算に使う内積がちょうどゼロになると、AMGCLは例外を投げる（\code{Zero rho in BiCGStab}、\code{Zero omega in
+BiCGStab}）。このような求解と、前処理を構築できなかった求解は、そこまでに得た解がすでに許容誤差を満たしていない限り\val{2}を返す（\cref{sec:linsolve:contract}）。そのステップは、収束しなかったほかの線形求解と同じように解き直す（\cref{sec:time:newton}）。実行中の最初の破綻は\file{Warnings.txt}に書き出す。1.0.1までは、ここで\code{FATAL ERROR}として実行が止まっていた。
+
 \subsection{濃度の式}
 \label{sec:linsolve:conc}
 

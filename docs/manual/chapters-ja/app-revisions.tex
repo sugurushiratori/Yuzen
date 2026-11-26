@@ -9,6 +9,29 @@
 \textbf{最初の公開リリースはバージョン 1.0 であり}、番号はここから始まる。同じ項目はリポジトリ最上位の
 \file{CHANGELOG.md}にも記録しており、そのバージョンごとの節が GitHub 上の各リリースの本文になる。
 
+\section{バージョン 1.0.2}
+\label{sec:rev:1-0-2}
+
+\textbf{リリース日：}\code{v1.0.2}タグの日付。
+
+パッチリリースである。\val{"amgcl"}の線形ソルバーでBiCGStabが破綻しても、計算が止まらないようにした。
+1.0.1 で最後まで計算できた実行はすべてそのまま動き、入力ファイルを書き換える必要はない。
+
+\begin{plain}
+1.0.2
+  fix: a breakdown of AMGCL's BiCGStab ("Zero rho in BiCGStab") is a
+       solve that did not converge: the step is solved again, at a
+       shorter step if need be, instead of the run ending with FATAL
+       ERROR. The first one of a run is written to Warnings.txt. Runs
+       without a breakdown are bit-identical to 1.0.1. Input files
+       unaffected.
+  test: backend_agreement makes breakdowns happen (YUZEN_FAULT_AMGCL) in
+       allphys_2d_reg and concz_1d_reg; both runs go through, within
+       1e-2 of the runs without (largest 2.9e-3).
+  no case changed: a run without a breakdown is byte for byte that of
+       1.0.1 (the five cases of backend_agreement, both backends).
+\end{plain}
+
 \section{バージョン 1.0.1}
 \label{sec:rev:1-0-1}
 

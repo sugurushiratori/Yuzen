@@ -90,6 +90,15 @@ $128^2$ film the deeper hierarchy made the solve 2.9 times faster. A system of
 one iteration; coarsened to 500, the fourth-order 1-D film of 2000 cells took
 80 BiCGStab iterations a solve and ran 6.5 times slower on one thread.
 
+BiCGStab can break down: an inner product it divides by comes out exactly
+zero, and AMGCL throws (\code{Zero rho in BiCGStab}, \code{Zero omega in
+BiCGStab}). Such a solve, and one whose preconditioner could not be built,
+returns \val{2} (\cref{sec:linsolve:contract}) unless what it reached already
+meets the tolerance, and the step is solved again as after any linear solve
+that did not converge (\cref{sec:time:newton}); the first breakdown of a run
+is written to \file{Warnings.txt}. Up to 1.0.1 it ended the run with
+\code{FATAL ERROR}.
+
 \subsection{The concentration equation}
 \label{sec:linsolve:conc}
 

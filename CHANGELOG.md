@@ -8,6 +8,41 @@ moved a number, the case and the size of the difference) is set out there.
 The section of a release is used as the text of its GitHub release, so it is
 written for someone deciding whether to download it.
 
+## [1.0.2]
+
+A patch release. A run with the AMGCL linear solver no longer stops when
+its BiCGStab breaks down; every run that 1.0.1 completed runs unchanged, with
+bit-identical output. No input file needs editing.
+
+### Fixed
+
+- **A breakdown of AMGCL's BiCGStab no longer ends the run.** With
+  `Backend = "amgcl"`, which `"auto"` chooses for a 2-D film on a build
+  with AMGCL, BiCGStab can break down: an inner product it divides by comes
+  out exactly zero, and AMGCL throws (`Zero rho in BiCGStab`). 1.0.0 and
+  1.0.1 ended the run there with `FATAL ERROR`, part-way through a run that
+  was going well. The solve now counts as one that did not converge, and
+  the step is solved again, at a shorter step if need be, as after any
+  linear solve that did not converge; with a fixed step the run stops with
+  that reason. The first breakdown of a run is written to `Warnings.txt`.
+  Seen in 2-D well-mixed runs, a spreading drop and a spin-coated film over
+  topography, after many minutes of computing.
+
+### Added
+
+- **`backend_agreement` makes the breakdown happen.** The environment
+  variable `YUZEN_FAULT_AMGCL` (for the test suite only) makes chosen AMGCL
+  solves throw as at a breakdown; in a well-mixed 2-D and a CZ 1-D case the
+  runs must reach their end time, stay within 1e-2 of the run without
+  breakdowns (largest 2.9e-3, the truncation error of the steps solved again)
+  and keep volume and solute to 1e-11.
+
+### Results
+
+No result changes. A run in which no breakdown happens gives output
+identical to 1.0.1 in every file (the five cases of `backend_agreement`,
+with each backend: `cmp`, byte for byte).
+
 ## [1.0.1]
 
 A patch release. Two input combinations that 1.0.0 accepted and silently

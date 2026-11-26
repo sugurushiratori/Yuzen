@@ -26,6 +26,7 @@
 #include <memory>
 #include <tuple>
 #include <stdexcept>
+#include <string>
 
 #include "YuzenUtil.h"
 using namespace yuzen::util;
@@ -617,39 +618,98 @@ public:
 				for(int i = 0; i < n; ++i) xx[(size_t)i] = x0[i];
 			}
 		}
-		if(done) {}
-		else if(s.precondition == LinearSolverSettings::tp_None
-		|| s.precondition == LinearSolverSettings::tp_Jacobi)
+		//  AMGCL reports a breakdown of BiCGStab (rho or omega exactly zero)
+		//  and a failure to build the preconditioner by throwing. Either is a
+		//  solve that did not converge (return 2), so that the caller cuts
+		//  the step and solves it again as after a residual that went NaN;
+		//  uncaught, it ended the run. What x holds when it threw is kept if
+		//  it already meets the tolerance.
+		std::string broke;
+		try
 		{
-			typedef amgcl::make_solver<
-				amgcl::relaxation::as_preconditioner<Backend, amgcl::relaxation::damped_jacobi>,
-				amgcl::solver::bicgstab<Backend> > Solver;
-			Solver::params prm;
-			prm.solver.maxiter = s.maxIteration;
-			prm.solver.tol     = s.epsilon;
-			std::unique_ptr<Solver> solve;
-			{ YUZEN_PROF("lin.precond"); solve.reset(new Solver(std::tie(n, ptr, col, val), prm)); }
-			{ YUZEN_PROF("lin.iterate"); std::tie(it, err) = (*solve)(b, xx); }
+			//  Fault injection for the test of this path (backend_agreement):
+			//  YUZEN_FAULT_AMGCL=k:m makes m solves of the run with the
+			//  preconditioner of the input, from the k-th on, throw before
+			//  they iterate, as AMGCL does at a breakdown (m = 1 if left out)
+			static long faultAt = 0, faultCount = 0, solveCount = 0;
+			static const bool faultRead = [&]() {
+				if(const char *e = std::getenv("YUZEN_FAULT_AMGCL"))
+				{
+					char *end = 0;
+					faultAt = std::strtol(e, &end, 10);
+					faultCount = (end && *end == ':') ? std::strtol(end + 1, 0, 10) : 1;
+				}
+				return true; }();
+			(void)faultRead;
+			if(!done && faultAt > 0 && ++solveCount >= faultAt && solveCount < faultAt + faultCount)
+				throw std::runtime_error("Zero rho in BiCGStab (YUZEN_FAULT_AMGCL)");
+			if(done) {}
+			else if(s.precondition == LinearSolverSettings::tp_None
+			|| s.precondition == LinearSolverSettings::tp_Jacobi)
+			{
+				typedef amgcl::make_solver<
+					amgcl::relaxation::as_preconditioner<Backend, amgcl::relaxation::damped_jacobi>,
+					amgcl::solver::bicgstab<Backend> > Solver;
+				Solver::params prm;
+				prm.solver.maxiter = s.maxIteration;
+				prm.solver.tol     = s.epsilon;
+				std::unique_ptr<Solver> solve;
+				{ YUZEN_PROF("lin.precond"); solve.reset(new Solver(std::tie(n, ptr, col, val), prm)); }
+				{ YUZEN_PROF("lin.iterate"); std::tie(it, err) = (*solve)(b, xx); }
+			}
+			else
+			{
+				typedef amgcl::make_solver<
+					amgcl::amg<Backend, amgcl::coarsening::smoothed_aggregation, amgcl::relaxation::spai0>,
+					amgcl::solver::bicgstab<Backend> > Solver;
+				Solver::params prm;
+				prm.solver.maxiter = s.maxIteration;
+				prm.solver.tol     = s.epsilon;
+				//  opt amgcoarse (util/Opt.h): coarsen to 500 unknowns before the
+				//  direct (sequential) solve of the coarsest level, not 3000 --
+				//  only for a system larger than 3000. One that small AMGCL solves
+				//  directly, in one iteration; coarsened to 500 the fourth-order
+				//  1-D film took 80 BiCGStab iterations a solve and ran 6.5
+				//  times slower on one thread (tools/scaling bench1d_n02000)
+				if(yuzen::opt::On(yuzen::opt::AmgCoarse) && (size_t)n > prm.precond.coarse_enough)
+					prm.precond.coarse_enough = 500;
+				std::unique_ptr<Solver> solve;
+				{ YUZEN_PROF("lin.precond"); solve.reset(new Solver(std::tie(n, ptr, col, val), prm)); }
+				{ YUZEN_PROF("lin.iterate"); std::tie(it, err) = (*solve)(b, xx); }
+			}
 		}
-		else
+		catch(const std::exception &e) { broke = e.what(); if(broke.empty()) broke = "unknown"; }
+		if(!broke.empty())
 		{
-			typedef amgcl::make_solver<
-				amgcl::amg<Backend, amgcl::coarsening::smoothed_aggregation, amgcl::relaxation::spai0>,
-				amgcl::solver::bicgstab<Backend> > Solver;
-			Solver::params prm;
-			prm.solver.maxiter = s.maxIteration;
-			prm.solver.tol     = s.epsilon;
-			//  opt amgcoarse (util/Opt.h): coarsen to 500 unknowns before the
-			//  direct (sequential) solve of the coarsest level, not 3000 --
-			//  only for a system larger than 3000. One that small AMGCL solves
-			//  directly, in one iteration; coarsened to 500 the fourth-order
-			//  1-D film took 80 BiCGStab iterations a solve and ran 6.5
-			//  times slower on one thread (tools/scaling bench1d_n02000)
-			if(yuzen::opt::On(yuzen::opt::AmgCoarse) && (size_t)n > prm.precond.coarse_enough)
-				prm.precond.coarse_enough = 500;
-			std::unique_ptr<Solver> solve;
-			{ YUZEN_PROF("lin.precond"); solve.reset(new Solver(std::tie(n, ptr, col, val), prm)); }
-			{ YUZEN_PROF("lin.iterate"); std::tie(it, err) = (*solve)(b, xx); }
+			//  The residual of what x holds, relative to the right-hand side,
+			//  as AMGCL measures it
+			double rr = 0.0, bb = 0.0;
+			for(int i = 0; i < n; ++i)
+			{
+				double ax = 0.0;
+				for(int k = rowPtr[i]; k < rowPtr[i+1]; ++k) ax += _val[(size_t)k] * xx[(size_t)colInd[k]];
+				const double d = _b[(size_t)i] - ax;
+				rr += d*d; bb += _b[(size_t)i]*_b[(size_t)i];
+			}
+			const double rel = (bb > 0.0) ? std::sqrt(rr/bb) : std::sqrt(rr);
+			if(rel <= s.epsilon && rel == rel)
+			{
+				it = 0; err = rel;
+			}
+			else
+			{
+				if(!_warnedBreak)
+				{
+					Global::Warning<<"LinearSolver (amgcl): \""<<broke<<"\"; the solve is counted as not"
+					                 " converged, and the step is cut and solved again (with a fixed step the"
+					                 " run stops). Later breakdowns are not reported here; each still appears"
+					                 " as a solve that did not converge."<<nl;
+					_warnedBreak = true;
+				}
+				iter  = (int)itTried;
+				resid = rel;
+				return 2;
+			}
 		}
 
 		{
@@ -686,6 +746,7 @@ private:
 	std::vector<double, yuzen::util::FirstTouchAllocator<double> > _val;
 	std::vector<double> _b, _x;
 	TryBackoff _offSpai;		// opt concpc: SPAI0 tried first
+	bool _warnedBreak = false;	// a breakdown reported to Warnings.txt
 };
 #endif //YUZEN_WITH_AMGCL
 

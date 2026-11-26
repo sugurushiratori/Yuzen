@@ -317,6 +317,15 @@ The differences are of the order of the linear solvers' tolerances, as in
 \cref{tab:backendagreement}, and the bound of $10^{-7}$ leaves room for a
 different machine while catching a backend that solved a different system.
 
+The script then makes AMGCL's BiCGStab break down (\cref{sec:linsolve:amgcl}).
+With \env{YUZEN\_FAULT\_AMGCL} set to \val{30:2} in \file{allphys\_2d\_reg}
+and to \val{40:3} in \file{concz\_1d\_reg}, two and three solves throw as
+AMGCL does at a breakdown. Both runs must end normally at \key{EndTime}, the
+last field file they share with the run without the breakdowns within
+$10^{-2}$ of it (1.8e-3 and 2.9e-3, the truncation error of the steps solved
+again at a shorter step), \code{VolErr} and \code{ResinVolErr} below
+$10^{-11}$, and \file{Warnings.txt} naming the breakdown.
+
 \subsection{\val{"amgcl"} is not thread-invariant}
 \label{sec:verification:amgclthreads}
 

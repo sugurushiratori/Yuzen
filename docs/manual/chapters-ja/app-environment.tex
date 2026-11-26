@@ -22,6 +22,7 @@ Yuzenは、モデルや数値計算の設定を環境変数から読むことは
 \env{YUZEN\_DEBUG\_FLOOR}   & 設定すると、修正量の下限を決める量（$A\varphi$、右辺、解それぞれの大きさ）を報告する。どこで桁落ちが起きているかを確認できる（\cref{sec:convergence:floor}）。 \\
 \env{YUZEN\_DEBUG\_COUPLING}& 設定すると、マランゴニ項を含む\val{"CZ"}モデルで、連成パスごとに一行を標準エラー出力に書く。内容は、\code{[couple]}、時間刻み開始時の無次元時刻、パス番号（最初が0）、中点濃度の変化量、それを最初のパスの変化量で割った値、次のパスの緩和係数（パスが落ち着いた後は0）である。あるパスの変化量と前のパスの変化量の比が、\cref{sec:verification:czpasses}のゲインである。 \\
 \env{YUZEN\_ILUT\_FILL}     & Eigenの\code{IncompleteLUT}のフィルファクターを上書きする。行列全体に対するものと、ブロック・ヤコビILUTの各ブロックに対するものの両方に効く（既定値10）。下げると前処理は安くなるが、下げすぎると分解が破綻し、解がNaNになる。値を1にすると1次元でも失敗する。 \\
+\env{YUZEN\_FAULT\_AMGCL}  & テストスイート（\file{tools/backend\_agreement.py}）が使うもので、実際の計算では設定しない。\val{k:m}とすると、入力で指定した前処理を用いる\val{"amgcl"}の求解のうち$k$回目から$m$回を、BiCGStabが破綻したときと同じように例外で終わらせる（\val{:m}を省くと$m = 1$）。計算が止まらずに続くことを確かめるためのものである（\cref{sec:verification:backendsci}）。 \\
 \env{YUZEN\_DBG\_EQ}        & ソルバーではなくテストスイートが読む。設定すると、\file{test\_disjoining.cpp}が格子ごとの残留速度と、それが液滴上のどこで生じるかを表示する（\cref{sec:verification:disjoining}）。 \\
 \end{yzntable}
 

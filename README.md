@@ -9,6 +9,13 @@ under surface tension, how it is driven by gravity and rotation, how the
 solvent evaporates and the film thickens and solidifies, and how the contact
 line advances or recedes.
 
+https://github.com/user-attachments/assets/8f44ca9b-748e-4243-a470-edaf9c0a117c
+
+*Spinodal dewetting: a flat film 1 µm thick on a surface it does not wet
+(contact angle 10°) breaks up into droplets within 0.8 s. Capillary and
+disjoining pressure, 224 × 224 cells, periodic edges 0.64 mm apart; heights
+exaggerated 17×.*
+
 The name is written 釉然 (*Yuzen*): 釉 (*yū*) is the glaze on a ceramic, and
 然 (*zen*) means "as it is, of itself".
 

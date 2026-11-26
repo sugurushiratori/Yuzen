@@ -1,6 +1,6 @@
 <img src="docs/logo/yuzen-lockup-h.svg" alt="Yuzen" height="72">
 
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23502846.svg)](https://doi.org/10.5281/zenodo.23502846)
+[![DOI](https://img.shields.io/badge/DOI-10.5281%2Fzenodo.23502846-blue)](https://doi.org/10.5281/zenodo.23502846)
 
 **A thin liquid film flow solver based on the lubrication approximation.**
 
@@ -9,7 +9,7 @@ under surface tension, how it is driven by gravity and rotation, how the
 solvent evaporates and the film thickens and solidifies, and how the contact
 line advances or recedes.
 
-<video src="https://github.com/user-attachments/assets/8f44ca9b-748e-4243-a470-edaf9c0a117c" width="480" controls autoplay loop muted playsinline></video>
+https://github.com/user-attachments/assets/8f44ca9b-748e-4243-a470-edaf9c0a117c
 
 *Spinodal dewetting: a flat film 1 µm thick on a surface it does not wet
 (contact angle 10°) breaks up into droplets within 0.8 s. Capillary and

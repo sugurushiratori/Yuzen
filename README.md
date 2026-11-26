@@ -368,7 +368,7 @@ Versions, license texts and the toml++ change are in
 If you use Yuzen in published work, please cite the paper that describes it:
 
 > S. Shiratori, Yuzen: A finite-difference solver for thin liquid films of
-> evaporating binary solutions in the lubrication approximation, SoftwareX
+> evaporating binary solutions in the lubrication approximation, SoftwareX 36
 > (2026) 103272.
 > [10.1016/j.softx.2026.103272](https://doi.org/10.1016/j.softx.2026.103272)
 

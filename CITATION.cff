@@ -60,7 +60,9 @@ preferred-citation:
       affiliation: "Tokyo City University"
       orcid: "https://orcid.org/0000-0003-0158-6798"
   journal: "SoftwareX"
+  volume: 36
   year: 2026
+  month: 12
   start: 103272
   doi: 10.1016/j.softx.2026.103272
   url: "https://doi.org/10.1016/j.softx.2026.103272"

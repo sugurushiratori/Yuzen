@@ -9,7 +9,7 @@ under surface tension, how it is driven by gravity and rotation, how the
 solvent evaporates and the film thickens and solidifies, and how the contact
 line advances or recedes.
 
-https://github.com/user-attachments/assets/8f44ca9b-748e-4243-a470-edaf9c0a117c
+https://github.com/user-attachments/assets/629f5f68-62cb-4c5d-9bd4-ae538f863046
 
 *Spinodal dewetting: a flat film 1 µm thick on a surface it does not wet
 (contact angle 10°) breaks up into droplets within 0.8 s. Capillary and

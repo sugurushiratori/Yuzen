@@ -365,22 +365,25 @@ Versions, license texts and the toml++ change are in
 
 ## Citing Yuzen
 
-If you use Yuzen in published work, please cite it using the metadata in
-[`CITATION.cff`](CITATION.cff) (GitHub's "Cite this repository" button
-produces APA and BibTeX from it). Every release is archived on Zenodo:
+If you use Yuzen in published work, please cite the paper that describes it:
+
+> S. Shiratori, Yuzen: A finite-difference solver for thin liquid films of
+> evaporating binary solutions in the lubrication approximation, SoftwareX
+> (2026) 103272.
+> [10.1016/j.softx.2026.103272](https://doi.org/10.1016/j.softx.2026.103272)
+
+[`CITATION.cff`](CITATION.cff) holds the same reference (GitHub's "Cite this
+repository" button produces APA and BibTeX from it).
+
+To make a result reproducible, cite also the DOI of the version you used.
+Every release is archived on Zenodo:
 
 - all versions (resolves to the latest):
   [10.5281/zenodo.23502846](https://doi.org/10.5281/zenodo.23502846)
 - Yuzen 1.0.0:
   [10.5281/zenodo.23502847](https://doi.org/10.5281/zenodo.23502847)
-
-To make a result reproducible, cite the DOI of the version you used.
-
-The paper describing Yuzen (preprint, submitted to SoftwareX):
-
-> S. Shiratori, Yuzen: a finite-difference solver for thin liquid films of
-> evaporating binary solutions in the lubrication approximation (2026).
-> [10.5281/zenodo.23537972](https://doi.org/10.5281/zenodo.23537972)
+- Yuzen 1.0.1, the version the paper describes:
+  [10.5281/zenodo.24168133](https://doi.org/10.5281/zenodo.24168133)
 
 ## Author
 

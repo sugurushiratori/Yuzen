@@ -25,5 +25,13 @@
     "Marangoni",
     "evaporation",
     "computational fluid dynamics"
+  ],
+  "related_identifiers": [
+    {
+      "identifier": "10.1016/j.softx.2026.103272",
+      "relation": "isDocumentedBy",
+      "scheme": "doi",
+      "resource_type": "publication-article"
+    }
   ]
 }
